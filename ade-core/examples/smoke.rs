@@ -466,6 +466,17 @@ fn main() {
         Arc::new(settings.clone()),
         wt_git.clone(),
     );
+    // A real workspace row (the task create flow makes one) so the
+    // ensure/remove DB writes are exercised, not no-oped.
+    db.conn()
+        .lock()
+        .unwrap()
+        .execute(
+            "INSERT INTO workspaces (id, type, kind, location)
+             VALUES ('smoke-ws-1', 'local', 'project-root', 'local')",
+            [],
+        )
+        .unwrap();
     let wt = wt_manager
         .ensure_worktree(&ade_core::projects::worktrees::EnsureWorktreeOptions {
             project: &dup,
@@ -522,6 +533,14 @@ fn main() {
     check(
         dup.path.exists(),
         "project root untouched by worktree removal",
+    );
+    check(
+        !wt_git
+            .worktree_list(&dup.path)
+            .unwrap()
+            .iter()
+            .any(|e| real_of(&e.path) == real_of(&wt.path)),
+        "worktree metadata pruned after remove",
     );
 
     println!(
