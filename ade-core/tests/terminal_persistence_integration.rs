@@ -16,8 +16,12 @@ use ade_core::conversations::{
 use ade_core::db::{Db, SqliteDb};
 use ade_core::dependencies::HostDependencyStore;
 use ade_core::events::BroadcastEventBus;
-use ade_core::pty::launcher::{AgentLaunchContext, AgentLauncher, RehydrateTarget};
+use ade_core::projects::DbProjectStore;
+use ade_core::pty::launcher::{
+    AgentLaunchContext, AgentLauncher, NoopRemoteRehydrate, RehydrateTarget, Rehydrator,
+};
 use ade_core::pty::tmux::{make_tmux_session_name, parse_tmux_session_name};
+use ade_core::tasks::DbTaskStore;
 use ade_terminal::PortablePtyManager;
 
 /// Restores the process env on drop (PATH mutations).
@@ -240,4 +244,129 @@ fn tmux_session_name_roundtrip() {
     assert!(name.starts_with("ade-"));
     assert_eq!(parse_tmux_session_name(&name).as_deref(), Some("conv-123"));
     assert_eq!(parse_tmux_session_name("not-ours"), None);
+}
+
+/// E2-07 boot orchestration: `Rehydrator::rehydrate_all` walks
+/// projects → tasks → PTY conversations, rebuilds each launch context from
+/// the DB (worktree from the workspace row), and resumes with provider
+/// flags. Skipped: never-spawned conversations and tasks without a worktree.
+#[test]
+fn boot_rehydrator_walks_projects_tasks_conversations() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    let bin_dir = tempfile::tempdir().unwrap();
+    write_fake_amp(bin_dir.path());
+    let path = std::env::var("PATH").unwrap_or_default();
+    let _guard = EnvGuard::set(
+        "PATH",
+        &format!("{}:{}", bin_dir.path().to_string_lossy(), path),
+    );
+
+    let db = SqliteDb::init_in_memory().unwrap();
+    let bus = Arc::new(BroadcastEventBus::new(32));
+    let conversations: Arc<DbConversationStore> =
+        Arc::new(DbConversationStore::new(db.clone(), bus.clone()));
+    let tasks: Arc<DbTaskStore> = Arc::new(DbTaskStore::new(db.clone(), bus.clone()));
+    let projects: Arc<DbProjectStore> = Arc::new(DbProjectStore::new(
+        db.clone(),
+        Arc::new(ade_core::settings::DbSettingsStore::new(db.clone())),
+        Arc::new(ade_git::CliGit),
+        bus.clone(),
+    ));
+
+    // Project + task + a real worktree dir on disk (the workspace row's path).
+    let worktree = tempfile::tempdir().unwrap();
+    db.conn()
+        .lock()
+        .unwrap()
+        .execute_batch(&format!(
+            "INSERT INTO projects (id, name, path) VALUES ('p1', 'demo', '/tmp/demo');
+             INSERT INTO tasks (id, project_id, name, status, workspace_id)
+                 VALUES ('task-1', 'p1', 'boot', 'in_progress', 'ws-1');
+             INSERT INTO workspaces (id, type, kind, location, path, config)
+                 VALUES ('ws-1', 'local', 'worktree', 'local', '{}', '{{}}');",
+            worktree.path().display()
+        ))
+        .unwrap();
+
+    // Resumable conversation: native session id recorded (prior run).
+    let conv = conversations
+        .create(CreateConversationParams {
+            id: Some("conv-boot".into()),
+            project_id: "p1".into(),
+            task_id: Some("task-1".into()),
+            scope: Some(ConversationScopeDto::Task),
+            provider: Some("amp".into()),
+            title: "Boot me".into(),
+            auto_approve: None,
+            model: None,
+            initial_prompt: Some("hi".into()),
+            initial_queue: None,
+            is_initial_conversation: false,
+            r#type: Some(ConversationTypeDto::Pty),
+        })
+        .unwrap();
+    // A prior run recorded a NATIVE session id (resumable).
+    conversations
+        .set_session_id(&conv.id, "amp-native-boot")
+        .unwrap();
+
+    // A row with a NULL session id (pre-E2-05 rows / ACP-style) is skipped.
+    conversations
+        .create(CreateConversationParams {
+            id: Some("conv-fresh-boot".into()),
+            project_id: "p1".into(),
+            task_id: Some("task-1".into()),
+            scope: Some(ConversationScopeDto::Task),
+            provider: Some("amp".into()),
+            title: "Never spawned".into(),
+            auto_approve: None,
+            model: None,
+            initial_prompt: None,
+            initial_queue: None,
+            is_initial_conversation: false,
+            r#type: Some(ConversationTypeDto::Pty),
+        })
+        .unwrap();
+    db.conn()
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE conversations SET session_id = NULL WHERE id = 'conv-fresh-boot'",
+            [],
+        )
+        .unwrap();
+
+    let rehydrator = Rehydrator::new(
+        Arc::new(PortablePtyManager),
+        Arc::new(HostDependencyStore::new(
+            db.clone(),
+            Arc::new(ade_core::dependencies::ProcessInstallRunner),
+        )),
+        Arc::new(BroadcastEventBus::new(16)),
+        conversations.clone(),
+        tasks.clone(),
+        projects.clone(),
+        db.clone(),
+        false,
+        Arc::new(NoopRemoteRehydrate),
+    );
+
+    let summary = rehydrator.rehydrate_all().unwrap();
+    assert_eq!(summary.resumed, 1, "{summary:?}");
+    assert_eq!(
+        summary.skipped, 1,
+        "NULL-session conversation skipped: {summary:?}"
+    );
+    assert_eq!(summary.failed, 0, "{summary:?}");
+
+    // The resumed conversation's launch carried the resume flag + native id.
+    let report = std::fs::read_to_string(worktree.path().join("amp-report.txt")).unwrap();
+    assert!(
+        report.contains("threads continue") && report.contains("amp-native-boot"),
+        "boot resume flags in args: {report}"
+    );
+    // Session id was re-persisted by the launch (with_conversation_store).
+    let stored = conversations.get("conv-boot").unwrap().unwrap();
+    assert_eq!(stored.session_id.as_deref(), Some("amp-native-boot"));
 }

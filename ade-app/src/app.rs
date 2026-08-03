@@ -8,9 +8,11 @@ use std::sync::Arc;
 
 use ade_core::conversations::DbConversationStore;
 use ade_core::db::{Db, SqliteDb};
+use ade_core::dependencies::{HostDependencyStore, ProcessInstallRunner};
 use ade_core::events::EventBus;
 use ade_core::events::{BroadcastEventBus, InternalEvent};
 use ade_core::projects::DbProjectStore;
+use ade_core::pty::launcher::{NoopRemoteRehydrate, Rehydrator};
 use ade_core::settings::DbSettingsStore;
 use ade_core::tasks::DbTaskStore;
 
@@ -26,6 +28,9 @@ pub struct App {
     pub settings: Arc<DbSettingsStore>,
     #[allow(dead_code)]
     pub conversations: Arc<DbConversationStore>,
+    /// E2-07 boot rehydration orchestration (call `rehydrate_all` on a
+    /// background thread after init).
+    pub rehydrator: Rehydrator,
 }
 
 impl App {
@@ -46,6 +51,24 @@ impl App {
         let tasks = Arc::new(DbTaskStore::new(db.clone(), event_bus.clone()));
         let conversations = Arc::new(DbConversationStore::new(db.clone(), event_bus.clone()));
 
+        // E2-07 boot rehydration: previously-spawned PTY conversations are
+        // resumed after DB init (reference boot order). The app shell calls
+        // `rehydrate_all` on a background thread (each launch blocks).
+        let rehydrator = Rehydrator::new(
+            Arc::new(ade_terminal::PortablePtyManager),
+            Arc::new(HostDependencyStore::new(
+                db.clone(),
+                Arc::new(ProcessInstallRunner),
+            )),
+            event_bus.clone(),
+            conversations.clone(),
+            tasks.clone(),
+            projects.clone(),
+            db.clone(),
+            false, // auto-approve defaults off on boot
+            Arc::new(NoopRemoteRehydrate),
+        );
+
         Ok(Arc::new(Self {
             db,
             settings,
@@ -53,6 +76,7 @@ impl App {
             tasks,
             conversations,
             event_bus,
+            rehydrator,
         }))
     }
 }

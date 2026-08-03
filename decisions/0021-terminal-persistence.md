@@ -41,7 +41,27 @@ without losing work. The restart-survival contract.
   rehydrated sessions identically — resume is a normal launch with resume
   flags.
 - The tmux path needs the `tmux` binary at runtime; absence falls back to
-  the non-tmux rehydration path.
+  the non-tmux rehydration path. `kill_tmux_session` (best-effort
+  kill-session) is the teardown side; the naming + shell-line contract is
+  pinned in tests.
 - Full tmux attach/kill wiring into the terminal UI lands with the
   interactive shell (E2-08+); the naming + shell-line contract is pinned
   here.
+
+## Addendum — boot orchestration (same ticket, later pass)
+
+- **`Rehydrator`** (ade-core::pty::launcher): walks projects → tasks → PTY
+  conversations, rebuilds each launch context from the DB (worktree path
+  from the workspace row; provider from the conversation), and resumes via
+  `AgentLauncher::rehydrate` on per-conversation threads (blocking, joined
+  for the summary). Skips with a warn: NULL-session rows, conversations
+  without a provider, tasks without a worktree row, worktree paths missing
+  on disk (the non-tmux degradation). Note a PTY conversation's
+  `session_id = its own id` (E2-05 create) counts as "previously spawned"
+  and IS resumed at boot — reference-consistent (the CLI reconnects by
+  that id; in non-tmux mode it effectively restarts fresh).
+- **`RemoteRehydrate` trait + `NoopRemoteRehydrate`**: the Phase-3 SSH
+  reconnect hook, invoked after each local resume (no-op today).
+- **App boot**: `ade-app` builds the Rehydrator in `App::init` and the
+  setup hook spawns `rehydrate_all` on a background thread (after DB init,
+  reference boot order; the window never blocks on agent spawns).

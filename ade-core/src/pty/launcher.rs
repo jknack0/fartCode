@@ -13,13 +13,19 @@ use std::time::Duration;
 
 use ade_providers::{PromptStrategy, ProviderDescriptor};
 
-use crate::conversations::model::Conversation;
-use crate::conversations::{resolve_agent_session_command_args, ConversationStore};
+use crate::conversations::ConversationTypeDto as ConversationType;
+use crate::conversations::{
+    model::Conversation, resolve_agent_session_command_args, ConversationStore,
+};
+use crate::db::Db;
 use crate::dependencies::HostDependencyStore;
 use crate::events::{BroadcastEventBus, EventBus, InternalEvent};
+use crate::projects::ProjectStore;
+use crate::tasks::TaskStore;
 use crate::terminals::lifecycle::task_env;
 use crate::terminals::pty::{EnvPolicy, PtyHandle, PtyManager, PtySize};
 use crate::Error;
+use rusqlite::OptionalExtension;
 
 use super::env_allowlist;
 use super::{
@@ -500,6 +506,168 @@ impl AgentLauncher {
             }
         }
         Ok(())
+    }
+}
+
+/// Phase-3 hook (E2-07): rehydrate a remote terminal session after an SSH
+/// reconnect. Phase 0 ships the stub — remote sessions are out of scope until
+/// `ade-ssh` lands.
+pub trait RemoteRehydrate: Send + Sync {
+    fn rehydrate_remote(&self, session_id: &str) -> Result<(), Error>;
+}
+
+/// Phase-0 stub: no remote rehydration.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoopRemoteRehydrate;
+impl RemoteRehydrate for NoopRemoteRehydrate {
+    fn rehydrate_remote(&self, _session_id: &str) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+/// Boot rehydration orchestration (E2-07, reference boot order: rehydrate
+/// after DB init): for every project → task → PTY conversation that was
+/// previously spawned, relaunch the agent with resume flags in its worktree.
+///
+/// Blocking (joins all launches); the app shell calls it on a background
+/// thread so the window never blocks on agent spawns. Skipped with a warn:
+/// conversations without a provider, tasks without a worktree row, and
+/// worktree paths that no longer exist on disk (the non-tmux degradation).
+#[derive(Clone)]
+pub struct Rehydrator {
+    launcher: Arc<AgentLauncher>,
+    conversations: Arc<dyn ConversationStore>,
+    tasks: Arc<dyn TaskStore>,
+    projects: Arc<dyn ProjectStore>,
+    db: Arc<dyn Db>,
+    /// Trust-state fallback for auto-approve (the conversation's own toggle
+    /// wins; see `AgentLauncher::rehydrate`).
+    default_auto_approve: bool,
+    /// Phase-3 remote hook (stub).
+    remote: Arc<dyn RemoteRehydrate>,
+}
+
+/// Result of a boot rehydration pass.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RehydrateSummary {
+    pub resumed: usize,
+    pub skipped: usize,
+    pub failed: usize,
+}
+
+impl Rehydrator {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        pty: Arc<dyn PtyManager>,
+        deps: Arc<HostDependencyStore>,
+        events: Arc<BroadcastEventBus>,
+        conversations: Arc<dyn ConversationStore>,
+        tasks: Arc<dyn TaskStore>,
+        projects: Arc<dyn ProjectStore>,
+        db: Arc<dyn Db>,
+        default_auto_approve: bool,
+        remote: Arc<dyn RemoteRehydrate>,
+    ) -> Self {
+        Self {
+            launcher: Arc::new(
+                AgentLauncher::new(pty, deps, events)
+                    .with_conversation_store(conversations.clone()),
+            ),
+            conversations,
+            tasks,
+            projects,
+            db,
+            default_auto_approve,
+            remote,
+        }
+    }
+
+    /// Rehydrates every previously-spawned PTY conversation (blocking).
+    pub fn rehydrate_all(&self) -> Result<RehydrateSummary, Error> {
+        let mut summary = RehydrateSummary::default();
+        let mut handles = Vec::new();
+
+        for project in self.projects.list()? {
+            for task in self.tasks.list_by_project(&project.id)? {
+                for conv in self.conversations.list_by_task(&task.id)? {
+                    if conv.r#type != ConversationType::Pty {
+                        continue; // ACP sessions are Phase 2
+                    }
+                    if conv.session_id.is_none() {
+                        summary.skipped += 1; // never spawned
+                        continue;
+                    }
+                    let Some(provider_id) = conv.provider.clone() else {
+                        tracing::warn!(conversation = %conv.id, "rehydrate skipped: no provider");
+                        summary.skipped += 1;
+                        continue;
+                    };
+                    let Some(workspace_id) = &task.workspace_id else {
+                        summary.skipped += 1; // byoi/project-root: no worktree to resume in
+                        continue;
+                    };
+                    let worktree_path: String = self
+                        .db
+                        .conn()
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .query_row(
+                            "SELECT path FROM workspaces WHERE id = ?1",
+                            [workspace_id],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .optional()
+                        .map_err(Error::from)?
+                        .unwrap_or_default();
+                    if worktree_path.is_empty() || !Path::new(&worktree_path).is_dir() {
+                        tracing::warn!(
+                            conversation = %conv.id,
+                            path = %worktree_path,
+                            "rehydrate skipped: worktree missing on disk"
+                        );
+                        summary.skipped += 1;
+                        continue;
+                    }
+                    let target = RehydrateTarget {
+                        provider_id,
+                        task_id: task.id.clone(),
+                        task_name: task.name.clone(),
+                        worktree: PathBuf::from(&worktree_path),
+                        root_path: project.path.clone(),
+                        auto_approve: self.default_auto_approve,
+                    };
+                    let launcher = self.launcher.clone();
+                    let conv = conv.clone();
+                    let remote = self.remote.clone();
+                    handles.push(std::thread::spawn(move || {
+                        // Phase-3 hook: after a SUCCESSFUL local resume,
+                        // notify the remote side (SSH reconnect re-attaches
+                        // the terminal).
+                        let result = launcher.rehydrate(&conv, &target);
+                        if result.is_ok() {
+                            if let Some(sid) = conv.session_id.as_deref() {
+                                let _ = remote.rehydrate_remote(sid);
+                            }
+                        }
+                        result
+                    }));
+                    summary.resumed += 1;
+                }
+            }
+        }
+        for handle in handles {
+            match handle.join() {
+                Ok(Ok(_)) => {}
+                Ok(Err(_)) => summary.failed += 1,
+                Err(_) => {
+                    // One panicked conversation thread must not abort the
+                    // pass or discard the rest of the accounting.
+                    tracing::warn!("rehydrate thread panicked");
+                    summary.failed += 1;
+                }
+            }
+        }
+        Ok(summary)
     }
 }
 

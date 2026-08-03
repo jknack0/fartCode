@@ -23,7 +23,7 @@ use ade_core::settings::{
     DbSettingsStore, DefaultBranch, KvStore, ProjectGroup, SettingsStore, DEFAULT_AGENT,
     LOCAL_PROJECT, PROJECT, PROJECT_CONFIG_FILE,
 };
-use ade_core::tasks::{CreateTaskOptions, DbTaskStore, TaskStatus, TaskStore};
+use ade_core::tasks::{CreateTaskOptions, TaskStatus, TaskStore};
 
 fn main() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -1041,6 +1041,46 @@ fn main() {
     check(
         persist_store.set_session_id("smoke-missing", "").is_err(),
         "set_session_id errors on an empty id",
+    );
+
+    // -- 26. Boot rehydration orchestration (E2-07) --------------------------
+    use ade_core::projects::DbProjectStore;
+    use ade_core::pty::launcher::{NoopRemoteRehydrate, RehydrateSummary, Rehydrator};
+    use ade_core::tasks::DbTaskStore;
+    let rh_db = ade_core::db::SqliteDb::init_in_memory().unwrap();
+    let rh_bus = Arc::new(ade_core::events::BroadcastEventBus::new(16));
+    let rh_convs = DbConversationStore::new(rh_db.clone(), rh_bus.clone());
+    let rh_tasks = DbTaskStore::new(rh_db.clone(), rh_bus.clone());
+    let rh_projects = DbProjectStore::new(
+        rh_db.clone(),
+        Arc::new(DbSettingsStore::new(rh_db.clone())),
+        Arc::new(ade_git::CliGit),
+        rh_bus.clone(),
+    );
+    let rehydrator = Rehydrator::new(
+        Arc::new(ade_terminal::PortablePtyManager),
+        Arc::new(ade_core::dependencies::HostDependencyStore::new(
+            rh_db.clone(),
+            Arc::new(ade_core::dependencies::ProcessInstallRunner),
+        )),
+        Arc::new(ade_core::events::BroadcastEventBus::new(16)),
+        Arc::new(rh_convs),
+        Arc::new(rh_tasks),
+        Arc::new(rh_projects),
+        rh_db.clone(),
+        false,
+        Arc::new(NoopRemoteRehydrate),
+    );
+    // Empty DB -> nothing to resume, no errors.
+    let empty_summary = rehydrator.rehydrate_all().unwrap();
+    check(
+        empty_summary == RehydrateSummary::default(),
+        "boot rehydration on an empty DB is a clean no-op",
+    );
+    use ade_core::pty::launcher::RemoteRehydrate;
+    check(
+        NoopRemoteRehydrate.rehydrate_remote("any-session").is_ok(),
+        "Phase-3 remote-rehydrate hook is a no-op stub",
     );
 
     println!(

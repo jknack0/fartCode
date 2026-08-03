@@ -12,6 +12,7 @@ version = "0.1.0"
 dependencies = [
  "ade-core",
  "ade-git",
+ "ade-terminal",
  "serde",
  "serde_json",
  "tauri",

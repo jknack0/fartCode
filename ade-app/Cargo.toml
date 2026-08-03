@@ -12,6 +12,7 @@ tauri-build = { workspace = true }
 tauri = { workspace = true }
 ade-core = { path = "../ade-core" }
 ade-git = { path = "../ade-git" }
+ade-terminal = { path = "../ade-terminal" }
 tauri-plugin-shell = { workspace = true }
 tauri-plugin-process = { workspace = true }
 tauri-plugin-os = { workspace = true }

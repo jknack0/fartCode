@@ -44,6 +44,19 @@ pub fn run() {
                 app_state.conversations.clone(),
                 app_state.event_bus.clone(),
             );
+            // E2-07: rehydrate previously-spawned agent sessions AFTER DB
+            // init (reference boot order). Each launch blocks, so this runs
+            // on a background thread — the window never waits on agents.
+            let rehydrator = app_state.rehydrator.clone();
+            std::thread::spawn(move || match rehydrator.rehydrate_all() {
+                Ok(summary) => tracing::info!(
+                    resumed = summary.resumed,
+                    skipped = summary.skipped,
+                    failed = summary.failed,
+                    "boot rehydration complete"
+                ),
+                Err(e) => tracing::warn!(error = %e, "boot rehydration failed"),
+            });
             app.manage(app_state);
             Ok(())
         })

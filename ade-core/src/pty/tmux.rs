@@ -60,6 +60,23 @@ pub fn build_tmux_shell_line(session_name: &str, command_line: &str) -> String {
     script
 }
 
+/// `tmux kill-session -t <name>` — the teardown side of the durability path
+/// (conversation delete / task stop). Best-effort: a session that already
+/// died is not an error.
+pub fn kill_tmux_session(session_name: &str) -> Result<(), std::io::Error> {
+    let quoted_name =
+        serde_json::to_string(session_name).unwrap_or_else(|_| format!("\"{session_name}\""));
+    let status = std::process::Command::new("tmux")
+        .args(["kill-session", "-t", quoted_name.trim_matches('"')])
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        // Exit 1 = "no such session" — already gone, not an error.
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,6 +126,17 @@ mod tests {
         assert!(line.contains("\"x & y\""), "{line}");
         // The base64url session name (our own format) never carries `$`.
         assert!(!make_tmux_session_name("a; rm -rf /").contains('$'));
+    }
+
+    #[test]
+    fn kill_uses_quoted_session_name() {
+        // The kill command passes the session name as a single arg.
+        let name = make_tmux_session_name("conv-kill");
+        assert_eq!(parse_tmux_session_name(&name).as_deref(), Some("conv-kill"));
+        // kill_tmux_session itself shells out — this test pins the contract:
+        // the name we generate is exactly what parse recovers (i.e. the kill
+        // targets OUR session namespace).
+        assert!(name.starts_with(TMUX_SESSION_PREFIX));
     }
 
     #[test]
