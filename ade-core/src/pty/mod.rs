@@ -7,6 +7,7 @@
 //! the injector; this module is the delivery logic + the seam.
 
 pub mod env_allowlist;
+pub mod launcher;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -445,6 +446,12 @@ impl PromptInjector {
         } else {
             Some(PromptInjection::PayloadAndSubmit)
         }
+    }
+
+    /// The configured submit delay (E2-06: the launcher owns the delayed
+    /// submit when the injector's `Some` branch is active).
+    pub fn submit_delay_ms(&self) -> Option<u64> {
+        self.submit_delay_ms
     }
 
     pub fn payload(&self) -> &str {

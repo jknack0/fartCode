@@ -14,7 +14,7 @@ use crate::events::{BroadcastEventBus, EventBus, InternalEvent};
 use crate::tasks::naming::sanitize_name;
 use crate::Error;
 
-use super::pty::{PtyManager, PtySize};
+use super::pty::{EnvPolicy, PtyManager, PtySize};
 
 /// Reference `LIFECYCLE_SCRIPT_TERMINAL_ID_PREFIX`.
 pub const LIFECYCLE_SCRIPT_TERMINAL_ID_PREFIX: &str = "script-lifecycle-";
@@ -389,9 +389,14 @@ impl LifecycleScriptService {
             let input = terminal_input_for_script(&combined, options.exit, cfg!(windows));
             let input = input.as_bytes();
 
-            let mut handle = self
-                .pty
-                .spawn(&self.shell, &[], cwd, env, PtySize::default())?;
+            let mut handle = self.pty.spawn(
+                &self.shell,
+                &[],
+                cwd,
+                env,
+                PtySize::default(),
+                EnvPolicy::Inherit,
+            )?;
             handle.write(&String::from_utf8_lossy(input))?;
 
             let timeout = options

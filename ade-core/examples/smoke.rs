@@ -969,6 +969,38 @@ fn main() {
     );
     std::env::remove_var("ADE_SMOKE_SECRET");
 
+    // -- 24. Agent launcher (E2-06) ------------------------------------------
+    use ade_core::pty::launcher::{find_on_path, AgentLaunchContext, MAX_RESPAWNS};
+    use ade_core::terminals::pty::EnvPolicy;
+    check(
+        EnvPolicy::Inherit != EnvPolicy::AllowlistedOnly,
+        "env policy: inherit vs allowlist-only are distinct",
+    );
+    check(
+        find_on_path("sh").is_some(),
+        "find_on_path resolves a shell on PATH",
+    );
+    check(
+        find_on_path("definitely-not-a-real-binary-xyz").is_none(),
+        "find_on_path misses absent binaries",
+    );
+    check(MAX_RESPAWNS == 2, "respawn budget is initial + 2");
+    let _launcher_shape = AgentLaunchContext {
+        provider_id: "codex".into(),
+        conversation_id: "c".into(),
+        session_id: None,
+        is_resuming: false,
+        auto_approve: false,
+        model: None,
+        initial_prompt: Some("hi".into()),
+        worktree: lc_cwd.path().to_path_buf(),
+        task_env: env.clone(),
+        hook_env: None,
+        respawn_resume: false,
+        tmux_enabled: false,
+    };
+    check(true, "launcher context carries the full launch surface");
+
     println!(
         "\n== SMOKE {} ==",
         if failures == 0 { "OK" } else { "FAILED" }

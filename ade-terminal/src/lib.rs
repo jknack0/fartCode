@@ -10,9 +10,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use ade_core::terminals::pty::{PtyExit, PtyHandle, PtyManager, PtySize};
+use ade_core::terminals::pty::{EnvPolicy, PtyExit, PtyHandle, PtyManager, PtySize};
 use ade_core::Error;
-use portable_pty::{native_pty_system, Child, CommandBuilder, PtyPair};
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtyPair};
 
 /// Concrete `PtyManager` backed by portable-pty.
 #[derive(Default)]
@@ -24,6 +24,7 @@ pub struct PortablePtyManager;
 const READER_BUFFER_CAP: usize = 1024 * 1024;
 
 struct PortablePtyHandle {
+    master: Box<dyn MasterPty + Send>,
     writer: Option<Box<dyn std::io::Write + Send>>,
     reader_buffer: Arc<Mutex<Vec<u8>>>,
     reader_thread: Option<JoinHandle<()>>,
@@ -38,6 +39,7 @@ impl PtyManager for PortablePtyManager {
         cwd: &Path,
         env: &[(String, String)],
         size: PtySize,
+        env_policy: EnvPolicy,
     ) -> Result<Box<dyn PtyHandle>, Error> {
         let pty_system = native_pty_system();
         let pair: PtyPair = pty_system
@@ -50,6 +52,11 @@ impl PtyManager for PortablePtyManager {
             .map_err(|e| Error::Pty(format!("openpty: {e}")))?;
 
         let mut builder = CommandBuilder::new(cmd);
+        if matches!(env_policy, EnvPolicy::AllowlistedOnly) {
+            // Security (E2-06/E3-08): without this the child inherits the
+            // FULL parent env and the allowlist is cosmetic.
+            builder.env_clear();
+        }
         for arg in args {
             builder.arg(arg);
         }
@@ -100,6 +107,7 @@ impl PtyManager for PortablePtyManager {
         };
 
         Ok(Box::new(PortablePtyHandle {
+            master: pair.master,
             writer: Some(writer),
             reader_buffer,
             reader_thread: Some(reader_thread),
@@ -156,6 +164,30 @@ impl PtyHandle for PortablePtyHandle {
         }
     }
 
+    fn resize(&mut self, cols: u16, rows: u16) -> Result<(), Error> {
+        let cols = cols.max(2);
+        let rows = rows.max(1);
+        self.master
+            .resize(portable_pty::PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| Error::Pty(format!("pty resize: {e}")))
+    }
+
+    fn try_wait_exit(&mut self) -> Result<Option<PtyExit>, Error> {
+        match self.child.try_wait() {
+            Ok(Some(status)) => Ok(Some(PtyExit {
+                exit_code: status.exit_code().into(),
+                signal: status.signal().map(|s| s.to_string()),
+            })),
+            Ok(None) => Ok(None),
+            Err(e) => Err(Error::Pty(format!("pty try_wait: {e}"))),
+        }
+    }
+
     fn flush(&mut self) -> Result<(), Error> {
         // Give the reader a bounded grace to land the child's final chunk
         // (child reap and pty EOF are separate kernel events). The wait is
@@ -207,6 +239,83 @@ impl Drop for PortablePtyHandle {
 
 #[cfg(test)]
 mod tests {
+    use super::{EnvPolicy, PortablePtyManager, PtySize};
+    use std::time::Duration;
+
+    /// Restores the process env on drop (panic-safe).
+    struct EnvGuard(Vec<(&'static str, Option<String>)>);
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self(vec![(key, prev)])
+        }
+    }
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, prev) in &self.0 {
+                match prev {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    /// E2-06 security regression: `AllowlistedOnly` must strip the parent env
+    /// (the allowlist is cosmetic otherwise); `Inherit` keeps it (lifecycle
+    /// parity).
+    #[test]
+    fn env_policy_controls_inheritance() {
+        let _guard = EnvGuard::set("ADE_PTY_LEAK_PROBE", "secret-value");
+        let tmp = tempfile::tempdir().unwrap();
+        let mgr = PortablePtyManager;
+
+        // Inherit: child sees the parent's var.
+        let mut h = mgr
+            .spawn(
+                "/bin/bash",
+                &[
+                    "-c".to_string(),
+                    "echo -n \"$ADE_PTY_LEAK_PROBE\" > probe.txt".to_string(),
+                ],
+                tmp.path(),
+                &[],
+                PtySize::default(),
+                EnvPolicy::Inherit,
+            )
+            .unwrap();
+        let _ = h.wait_exit(Duration::from_secs(10));
+        let _ = h.flush();
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("probe.txt")).unwrap(),
+            "secret-value",
+            "Inherit must pass the parent env through"
+        );
+
+        // AllowlistedOnly: child sees NOTHING of the parent env.
+        let mut h2 = mgr
+            .spawn(
+                "/bin/bash",
+                &[
+                    "-c".to_string(),
+                    "echo -n \"$ADE_PTY_LEAK_PROBE\" > probe2.txt".to_string(),
+                ],
+                tmp.path(),
+                &[],
+                PtySize::default(),
+                EnvPolicy::AllowlistedOnly,
+            )
+            .unwrap();
+        let _ = h2.wait_exit(Duration::from_secs(10));
+        let _ = h2.flush();
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("probe2.txt")).unwrap(),
+            "",
+            "AllowlistedOnly must strip the parent env"
+        );
+    }
+
     use super::*;
     use std::sync::Arc;
 
@@ -215,7 +324,14 @@ mod tests {
         let mgr = PortablePtyManager;
         let tmp = tempfile::tempdir().unwrap();
         let mut handle = mgr
-            .spawn("/bin/bash", &[], tmp.path(), &[], PtySize::default())
+            .spawn(
+                "/bin/bash",
+                &[],
+                tmp.path(),
+                &[],
+                PtySize::default(),
+                EnvPolicy::Inherit,
+            )
             .unwrap();
         handle.write("echo hello-from-pty\nexit\n").unwrap();
         let exit = handle
@@ -243,6 +359,7 @@ mod tests {
                 tmp.path(),
                 &[("ADE_TEST_VAR".into(), "is-here".into())],
                 PtySize::default(),
+                EnvPolicy::Inherit,
             )
             .unwrap();
         handle.write("echo $ADE_TEST_VAR\nexit\n").unwrap();
@@ -261,7 +378,14 @@ mod tests {
         let mgr = PortablePtyManager;
         let tmp = tempfile::tempdir().unwrap();
         let mut handle = mgr
-            .spawn("/bin/bash", &[], tmp.path(), &[], PtySize::default())
+            .spawn(
+                "/bin/bash",
+                &[],
+                tmp.path(),
+                &[],
+                PtySize::default(),
+                EnvPolicy::Inherit,
+            )
             .unwrap();
         handle.write("sleep 5\n").unwrap();
         let err = handle.wait_exit(Duration::from_millis(200)).unwrap_err();
@@ -277,7 +401,14 @@ mod tests {
         let mgr = PortablePtyManager;
         let tmp = tempfile::tempdir().unwrap();
         let mut handle = mgr
-            .spawn("/bin/bash", &[], tmp.path(), &[], PtySize::default())
+            .spawn(
+                "/bin/bash",
+                &[],
+                tmp.path(),
+                &[],
+                PtySize::default(),
+                EnvPolicy::Inherit,
+            )
             .unwrap();
         // >1 MiB of output (exercises the cap) + a backgrounded grandchild
         // that keeps the slave open after the shell exits.
@@ -313,7 +444,14 @@ mod tests {
         let mgr = PortablePtyManager;
         let tmp = tempfile::tempdir().unwrap();
         let h = mgr
-            .spawn("/bin/bash", &[], tmp.path(), &[], PtySize::default())
+            .spawn(
+                "/bin/bash",
+                &[],
+                tmp.path(),
+                &[],
+                PtySize::default(),
+                EnvPolicy::Inherit,
+            )
             .unwrap();
         assert_send(&h);
         let _ = Arc::new(mgr); // PtyManager must be Sync for Arc<dyn PtyManager>

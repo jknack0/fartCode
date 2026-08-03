@@ -48,6 +48,12 @@ pub trait PtyHandle: Send {
     fn try_read(&mut self, buf: &mut Vec<u8>) -> Result<bool, Error>;
     /// Blocks until the child exits; `Err(TimedOut)` after `timeout`.
     fn wait_exit(&mut self, timeout: Duration) -> Result<PtyExit, Error>;
+    /// Resizes the pty (E2-06): cols clamped to >= 2, rows to >= 1 (the
+    /// reference's resize clamping — agents misbehave below those).
+    fn resize(&mut self, cols: u16, rows: u16) -> Result<(), Error>;
+    /// Polls the child's exit status without blocking (E2-06 keystroke pump
+    /// uses it to stop early when the agent dies before producing output).
+    fn try_wait_exit(&mut self) -> Result<Option<PtyExit>, Error>;
     /// Blocks until the background reader has drained everything the child
     /// wrote before exiting (call after `wait_exit` to avoid a tail race).
     fn flush(&mut self) -> Result<(), Error>;
@@ -55,9 +61,22 @@ pub trait PtyHandle: Send {
     fn kill(&mut self) -> Result<(), Error>;
 }
 
+/// How the child's env is built (E2-06 security: the agent allowlist is
+/// only meaningful if the child does NOT inherit the parent env).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnvPolicy {
+    /// Inherit the parent env, overlaying the given pairs (shells,
+    /// lifecycle scripts — reference parity).
+    Inherit,
+    /// `env_clear` first: the child sees ONLY the given pairs (agent
+    /// launches — the E3-08 allowlist is the sole env source).
+    AllowlistedOnly,
+}
+
 /// Spawns shell PTYs (object-safe — services hold `Arc<dyn PtyManager>`).
 pub trait PtyManager: Send + Sync {
-    /// Spawns `cmd` with `args` in `cwd` with `env`, attached to a fresh pty.
+    /// Spawns `cmd` with `args` in `cwd` with `env` (see `EnvPolicy`),
+    /// attached to a fresh pty.
     fn spawn(
         &self,
         cmd: &str,
@@ -65,5 +84,6 @@ pub trait PtyManager: Send + Sync {
         cwd: &Path,
         env: &[(String, String)],
         size: PtySize,
+        env_policy: EnvPolicy,
     ) -> Result<Box<dyn PtyHandle>, Error>;
 }
