@@ -427,20 +427,38 @@ impl SqliteDb {
 
 ### 6.2 SettingsStore (in `ade-core::settings`)
 
+> **Implemented (E1-02/E1-03).** The trait below is object-safe — ARCHITECTURE §7
+> stores it as `Arc<dyn SettingsStore>`, so `get`/`set` take/return JSON rather
+> than the generic `SettingKey<T>` sketch. Typed access (`settings::get(&PROJECT)`,
+> `settings::set(&TERMINAL, group)`) lives on the concrete `DbSettingsStore` via
+> `SettingKey<T>` wrappers. The project-settings surface was added so
+> `ade-core::projects` can seed/read settings through the trait object.
+
 ```rust
-/// Layered settings with precedence: local > .ade.json > defaults.
+/// Object-safe settings store. JSON surface (typed wrappers on DbSettingsStore).
 pub trait SettingsStore: Send + Sync {
-    /// Get the effective value for a typed setting key.
-    fn get<T: SettingValue>(&self, key: SettingKey<T>) -> Result<T, Error>;
+    /// Effective value for an app-setting key (deep-merged with defaults).
+    fn get_json(&self, key: &str) -> Result<serde_json::Value, Error>;
 
-    /// Set a local override. If the value equals the default, the row is deleted.
-    fn set<T: SettingValue>(&self, key: SettingKey<T>, value: T) -> Result<(), Error>;
+    /// Validates and stores `value`, computing the delta vs defaults and
+    /// deleting the row when the delta is empty.
+    fn set_json(&self, key: &str, value: serde_json::Value) -> Result<(), Error>;
 
-    /// Clear all local overrides (restore defaults + .ade.json).
+    /// Clear all local overrides. `None` clears `app_settings`; `Some(project_id)`
+    /// clears the project's `project_settings` row (`.ade.json` untouched).
     fn reset(&self, project_id: Option<&str>) -> Result<(), Error>;
 
-    /// Move local values to .ade.json and clear them from DB.
+    /// Move local shareable values into the repo's `.ade.json` and clear the DB.
     fn share_with_team(&self, project_id: &str) -> Result<(), Error>;
+
+    // -- project settings (used by `projects`) --
+    fn seed_project_settings(&self, project_id: &str, repo_dir: &Path) -> Result<(), Error>;
+    fn get_project_settings(&self, project_id: &str, repo_dir: &Path)
+        -> Result<ProjectSettings, Error>;
+    fn update_project_settings(&self, project_id: &str, repo_dir: &Path,
+        settings: &ProjectSettings) -> Result<(), Error>;
+    fn migrate_legacy_project_settings(&self, project_id: &str, repo_dir: &Path)
+        -> Result<(), Error>;
 }
 ```
 
@@ -494,11 +512,19 @@ pub struct PtyHandle {
 
 ### 6.4 GitOps (in `ade-git`)
 
+> **Implemented (E1-03).** The **trait lives in `ade-core::git`** — not here — so
+> that `ade-core` domain modules (`projects`, later `workspaces`) can use it
+> without violating the crate-graph rule that `ade-core` is the leaf (depends on
+> nothing internal). `ade-git` provides the implementation (`CliGit`) and
+> re-exports the trait. Phase 0 uses the **`git` CLI** (via `Command` arg arrays,
+> no shell/quoting) — git2 worktree lifecycle bindings land with E2-02. The trait
+> adds E1-03 ops beyond the sketch below (`init`, `clone`, `show_toplevel`,
+> `git_dir`, `remotes`, `current_branch`, `remote_head`, `verify_ref`, `branches`);
+> `remote_head` is local-only (symbolic-ref) — the reference's `git remote show`
+> fallback is a network call and was dropped to avoid hangs.
+
 ```rust
-/// Low-level git operations. In Phase 0, shells out to `git` CLI.
-/// Uses git2 for all operations. git2 was chosen over gix because gix
-/// (as of 0.86) does not expose worktree lifecycle operations (add/list/prune)
-/// while git2 has full Worktree support via libgit2.
+/// Low-level git operations. Phase 0 implementation: ade_git::CliGit (git CLI).
 pub trait GitOps: Send + Sync {
     /// Run `git worktree list --porcelain` and parse the output.
     fn worktree_list(&self, repo_path: &Path) -> Result<Vec<WorktreeEntry>, Error>;
@@ -2131,3 +2157,24 @@ No `clipboard` plugin — xterm.js handles copy/paste internally.
 - **rusqlite** with `bundled` feature compiles SQLite from source — no system dependency. This is the safest option for cross-platform consistency.
 - **portable-pty** has no external deps on macOS/Linux (uses libc forkpty). On Windows it needs no extra deps beyond the ConPTY API.
 
+
+---
+
+## 18. Decision log (E1-01 → E1-03)
+
+Each decision is also documented at its code site; this log is the scan-able
+index. Items marked *deviation* change this document or the ticket text.
+
+| # | Ticket | Decision | Where it lives |
+|---|---|---|---|
+| D1 | E1-01 | Migration runner tracks progress by `MAX(created_at)` (journal `when`), records `sha256(sql)`, and **hash-verifies already-applied migrations on every init** (stricter than the reference, which records but never checks) — "hand-edit of a numbered migration is not possible". | `ade-core/src/db/migrations.rs` |
+| D2 | E1-01 | FTS tables live **outside** migrations, version-gated via `kv` (`fts_version='3'`, `file_index_version='4'`) exactly as later tickets read them. | `ade-core/src/db/migrations.rs` |
+| D3 | E1-01 | Legacy DB copy (`emdash4/3.db` → `ade.db` via `VACUUM INTO`, secrets cleared) is per-spec, but a copied reference DB is *not* schema-identical to Phase 0 — real data migration is a later-phase concern; init fails loudly rather than corrupting. | `ade-core/src/db/connection.rs` |
+| D4 | E1-02 | **Deviation (§6.2):** `SettingsStore` is object-safe (JSON surface) so §7's `Arc<dyn SettingsStore>` works; typed `SettingKey<T>` wrappers live on `DbSettingsStore`. Trait extended with the project-settings surface for `projects`. | `ade-core/src/settings/service.rs` (§6.2 here) |
+| D5 | E1-02 | App settings are **delta-vs-defaults**: updating to the default deletes the row; reads deep-merge defaults. Values validated by canonical round-trip (unknown keys stripped, zod-parse behavior). | `ade-core/src/settings/service.rs` |
+| D6 | E1-02 | Effective project-settings precedence: `defaults < .ade.json < DB-shareable` (later wins, reference `mergeShareableProjectSettings`). `update_project_settings` is **full-replace** (reference `update()`), so callers read-modify-write. | `ade-core/src/settings/service.rs` |
+| D7 | E1-02 | Legacy `.emdash.json` migration is a **one-shot at first access** (marked done even without a file, single marker covers base+shareable). Shareable merge is unconditional — the reference gates it on git-tracking (needs `ade-git`). | `ade-core/src/settings/service.rs` |
+| D8 | E1-03 | **Deviation (§6.4):** `GitOps` trait lives in `ade-core::git` (leaf rule); `ade-git::CliGit` implements it and re-exports. Phase 0 is git **CLI** (Command arg arrays, no shell) — git2 bindings with E2-02. | `ade-core/src/git.rs`, `ade-git/src/lib.rs` (§6.4 here) |
+| D9 | E1-03 | Base-ref resolution ports reference `computeBaseRef` `normalize()` exactly: slash-branches stay bare (`feature/x`), plain branches get the remote prefix; refinement derives the remote from the *detected* ref. `remote_head` is local-only (symbolic-ref) — the `git remote show` fallback (a network call that can hang) was dropped. | `ade-core/src/projects/mod.rs`, `ade-git/src/lib.rs` |
+| D10 | E1-03 | `.ade/` git exclusion writes `.git/info/exclude` (never a tracked `.gitignore`); in linked worktrees the entry lands in the per-worktree exclude (reference writes the common dir — E2-02 can align). `worktree_remove` is `rm -rf`+prune until E2-02 switches to `git worktree remove`. | `ade-core/src/projects/provider.rs`, `ade-git/src/lib.rs` |
+| D11 | E1-03 | `close_project` is a Phase 0 stub — session/workspace/preview teardown (tmux `detach` vs `terminate`) lands with E2-05/E2-02/E13. `RepoHostProvider` stubs GitHub repo creation (E8). | `ade-core/src/projects/provider.rs` |
