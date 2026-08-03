@@ -22,6 +22,7 @@ use ade_core::settings::{
     DbSettingsStore, DefaultBranch, KvStore, ProjectGroup, SettingsStore, DEFAULT_AGENT,
     LOCAL_PROJECT, PROJECT, PROJECT_CONFIG_FILE,
 };
+use ade_core::tasks::{CreateTaskOptions, DbTaskStore, TaskStatus, TaskStore};
 
 fn main() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -356,6 +357,73 @@ fn main() {
         clone.path.ends_with("repositories/bare"),
         "clone lands in configured projects dir (named after the URL)",
     );
+
+    // -- 11. Tasks (E2-01): atomic create, status, provision, delete ---------
+    let task_store = DbTaskStore::new(db.clone(), bus.clone());
+    let task = task_store
+        .create(
+            CreateTaskOptions::new(dup.id.clone(), "fix smoke bug")
+                .with_initial_conversation("Fix smoke bug", Some("claude")),
+        )
+        .unwrap();
+    check(
+        task.status == TaskStatus::InProgress,
+        "task defaults to in_progress",
+    );
+    check(
+        task.workspace_id.is_some(),
+        "task created with a workspace row",
+    );
+    check(
+        task_store.list_by_project(&dup.id).unwrap().len() == 1,
+        "task listed by project",
+    );
+    // Pin status_changed_at to an old value so the bump is observable
+    // (datetime('now') has 1s resolution).
+    db.conn()
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE tasks SET status_changed_at = '2020-01-01 00:00:00' WHERE id = ?1",
+            [&task.id],
+        )
+        .unwrap();
+    let done = task_store
+        .update_status(&task.id, TaskStatus::Done)
+        .unwrap();
+    check(
+        done.status == TaskStatus::Done,
+        "status transition persists",
+    );
+    check(
+        done.status_changed_at.as_deref() != Some("2020-01-01 00:00:00"),
+        "status change bumps status_changed_at",
+    );
+    task_store.provision(&task.id).unwrap();
+    task_store.provision(&task.id).unwrap();
+    check(true, "provision is idempotent");
+    task_store.archive(&task.id).unwrap();
+    check(
+        task_store
+            .get(&task.id)
+            .unwrap()
+            .unwrap()
+            .archived_at
+            .is_some(),
+        "archive sets archived_at",
+    );
+    task_store.restore(&task.id).unwrap();
+    check(
+        task_store
+            .get(&task.id)
+            .unwrap()
+            .unwrap()
+            .archived_at
+            .is_none(),
+        "restore clears archived_at",
+    );
+    task_store.delete(&task.id).unwrap();
+    check(task_store.get(&task.id).unwrap().is_none(), "task deleted");
 
     println!(
         "\n== SMOKE {} ==",

@@ -2160,7 +2160,7 @@ No `clipboard` plugin — xterm.js handles copy/paste internally.
 
 ---
 
-## 18. Decision log (E1-01 → E1-03)
+## 18. Decision log (E1-01 → E2-01)
 
 Each decision is also documented at its code site; this log is the scan-able
 index. Numbered records (with context + rationale) live in `decisions/`
@@ -2180,3 +2180,6 @@ index. Numbered records (with context + rationale) live in `decisions/`
 | D9 | E1-03 | Base-ref resolution ports reference `computeBaseRef` `normalize()` exactly: slash-branches stay bare (`feature/x`), plain branches get the remote prefix; refinement derives the remote from the *detected* ref. `remote_head` is local-only (symbolic-ref) — the `git remote show` fallback (a network call that can hang) was dropped. | `ade-core/src/projects/mod.rs`, `ade-git/src/lib.rs` |
 | D10 | E1-03 | `.ade/` git exclusion writes `.git/info/exclude` (never a tracked `.gitignore`); in linked worktrees the entry lands in the per-worktree exclude (reference writes the common dir — E2-02 can align). `worktree_remove` is `rm -rf`+prune until E2-02 switches to `git worktree remove`. | `ade-core/src/projects/provider.rs`, `ade-git/src/lib.rs` |
 | D11 | E1-03 | `close_project` is a Phase 0 stub — session/workspace/preview teardown (tmux `detach` vs `terminate`) lands with E2-05/E2-02/E13. `RepoHostProvider` stubs GitHub repo creation (E8). | `ade-core/src/projects/provider.rs` |
+| D12 | E2-01 | **No status-transition allowlist** (reference-faithful) — any lifecycle status change is allowed; guards are same-status no-op + not-found. `InvalidStatusTransition` reserved for a future state machine. | `ade-core/src/tasks/` (ADR-0005) |
+| D13 | E2-01 | Create is **atomic** (task + workspace + initial conversation in one tx, rollback on failure); events fire post-commit, non-fatal. `tasks.workspace_intent` is legacy, never written. | `ade-core/src/tasks/mod.rs` (ADR-0005) |
+| D14 | E2-01 | **Provision fast-path contract**: idempotent re-fire of `task:provisioned` + recency touch; real workspace bootstrap is E2-02. Delete is hard (FK cascade); archive is non-destructive. | `ade-core/src/tasks/mod.rs` (ADR-0005) |
