@@ -65,11 +65,10 @@ pub fn resolve_auto_approve(
     worktree_is_trusted || conversation_auto_approve || auto_approve_by_default
 }
 
-/// Convenience removed deliberately: a settings-group wrapper here would
-/// pass the raw `autoTrustWorktrees` setting into `resolve_auto_approve`,
-/// which defaults to true and would auto-approve every launch. E2-06 must
-/// pass the *resolved* trust state (E2-04's `should_auto_trust` / trust row)
-/// instead.
+// Convenience wrapper deliberately removed: a settings-group version of
+// resolve_auto_approve would pass the raw autoTrustWorktrees setting
+// (default true) and auto-approve every launch. E2-06 must pass the
+// *resolved* trust state (E2-04's should_auto_trust / trust row) instead.
 /// Spill a long prompt to `<worktree>/.ade/prompts/<uuid>.md` and return the
 /// path. Callers must `cleanup_spilled_prompt` it when the agent exits
 /// (acceptance 2: "file is cleaned on exit").
