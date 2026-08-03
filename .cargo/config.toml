@@ -1,0 +1,10 @@
+# ── Build support ───────────────────────────────────────────
+[build]
+jobs = 8
+
+# ── Dependency caching / offline (uncomment if vendored) ───
+# [source.crates-io]
+# replace-with = "vendored-sources"
+#
+# [source.vendored-sources]
+# directory = "vendor"

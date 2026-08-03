@@ -1,0 +1,85 @@
+[workspace]
+resolver = "2"
+members = [
+    "emdash-core",
+    "emdash-git",
+    "emdash-providers",
+    "emdash-acp",
+    "emdash-terminal",
+    "emdash-ssh",
+    "emdash-scheduler",
+    "emdash-integrations",
+    "emdash-telemetry",
+    "emdash-server",
+    "emdash-runtime",
+    "emdash-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.85"
+
+[workspace.dependencies]
+# ── Async runtime ──────────────────────────────────────────
+tokio = { version = "1", features = ["full"] }
+
+# ── Serialization ──────────────────────────────────────────
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# ── Database ───────────────────────────────────────────────
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# ── Git ────────────────────────────────────────────────────
+git2 = "0.21"
+
+# ── Terminal / PTY ─────────────────────────────────────────
+portable-pty = "0.9"
+
+# ── SSH (Phase 3, declared for emdash-ssh) ─────────────────
+russh = "0.50"
+russh-sftp = "0.50"
+
+# ── Filesystem ─────────────────────────────────────────────
+notify = "8"
+ignore = "0.4"
+glob = "0.3"
+
+# ── Security / secrets (Phase 3, declared for later) ───────
+keyring = "3"
+
+# ── Scheduling (Phase 2, declared for emdash-scheduler) ────
+croner = "2"
+
+# ── Observability ──────────────────────────────────────────
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ── HTTP (Phase 2, declared for integrations/telemetry) ────
+reqwest = { version = "0.12", features = ["json"] }
+
+# ── System ─────────────────────────────────────────────────
+sysinfo = "0.30"
+
+# ── Crypto / encoding ──────────────────────────────────────
+sha2 = "0.10"
+base64 = "0.22"
+
+# ── Errors ─────────────────────────────────────────────────
+thiserror = "2"
+
+# ── Tauri 2 ────────────────────────────────────────────────
+tauri = { version = "2", features = [] }
+tauri-build = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-os = "2"
+
+# ── Dev ────────────────────────────────────────────────────
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
