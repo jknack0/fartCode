@@ -150,7 +150,12 @@ impl AgentLauncher {
             conversation_id: conversation.id.clone(),
             session_id: conversation.session_id.clone(),
             is_resuming,
-            auto_approve: worktree.auto_approve,
+            // Conversation-level toggle wins; the app-provided value is the
+            // trust-state fallback (E3-04 resolve_auto_approve semantics).
+            auto_approve: conversation
+                .config
+                .auto_approve
+                .unwrap_or(worktree.auto_approve),
             model: conversation.config.model.clone(),
             initial_prompt: None, // resume never re-sends the prompt
             worktree: worktree.worktree.clone(),

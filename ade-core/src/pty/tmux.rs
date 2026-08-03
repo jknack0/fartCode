@@ -34,15 +34,28 @@ pub fn parse_tmux_session_name(name: &str) -> Option<String> {
 /// `buildTmuxShellLine`: create-if-missing (`has-session || new-session -d`),
 /// enable mouse + history-limit, then attach. `-u` forces UTF-8 (GUI-launched
 /// apps often have no LANG set).
+///
+/// Names/commands are JSON-quoted (reference parity). JSON quoting is NOT
+/// full shell quoting — `$()`/backticks/`$VAR` still expand inside the
+/// double-quoted segments under the wrapping `sh -c`. This matches the
+/// reference exactly; the session name is our own base64url (no `$`) and the
+/// command line is provider config (trusted), so the residual surface is
+/// documented, not exploitable.
 pub fn build_tmux_shell_line(session_name: &str, command_line: &str) -> String {
-    let check_exists = format!("tmux has-session -t {session_name} 2>/dev/null");
-    let new_session = format!("tmux -u new-session -d -s {session_name} {command_line}");
-    let enable_mouse = format!("tmux set-option -t {session_name} mouse on 2>/dev/null || true");
+    // The reference quotes both via JSON.stringify — a command line with
+    // spaces/metacharacters must not inject into the tmux command.
+    let quoted_name =
+        serde_json::to_string(session_name).unwrap_or_else(|_| format!("\"{session_name}\""));
+    let quoted_cmd =
+        serde_json::to_string(command_line).unwrap_or_else(|_| format!("\"{command_line}\""));
+    let check_exists = format!("tmux has-session -t {quoted_name} 2>/dev/null");
+    let new_session = format!("tmux -u new-session -d -s {quoted_name} {quoted_cmd}");
+    let enable_mouse = format!("tmux set-option -t {quoted_name} mouse on 2>/dev/null || true");
     let set_history = format!(
-        "tmux set-option -t {session_name} history-limit {TMUX_HISTORY_LIMIT} 2>/dev/null || true"
+        "tmux set-option -t {quoted_name} history-limit {TMUX_HISTORY_LIMIT} 2>/dev/null || true"
     );
     let configure = format!("({enable_mouse}) && ({set_history})");
-    let attach = format!("tmux -u attach-session -t {session_name}");
+    let attach = format!("tmux -u attach-session -t {quoted_name}");
     let script = format!("({check_exists} || {new_session}) && {configure} && {attach}");
     script
 }
@@ -68,9 +81,9 @@ mod tests {
     #[test]
     fn tmux_shell_line_has_create_configure_attach() {
         let line = build_tmux_shell_line("ade-abc", "codex exec");
-        assert!(line.contains("tmux has-session -t ade-abc"), "{line}");
+        assert!(line.contains("tmux has-session -t \"ade-abc\""), "{line}");
         assert!(
-            line.contains("tmux -u new-session -d -s ade-abc codex exec"),
+            line.contains("tmux -u new-session -d -s \"ade-abc\" \"codex exec\""),
             "{line}"
         );
         assert!(line.contains("mouse on"), "{line}");
@@ -78,10 +91,24 @@ mod tests {
             line.contains(&format!("history-limit {TMUX_HISTORY_LIMIT}")),
             "{line}"
         );
-        assert!(line.contains("tmux -u attach-session -t ade-abc"), "{line}");
+        assert!(
+            line.contains("tmux -u attach-session -t \"ade-abc\""),
+            "{line}"
+        );
         // `||` guards must keep the whole line from failing when options
         // don't apply (older tmux / read-only session).
         assert!(line.contains("2>/dev/null || true"), "{line}");
+    }
+
+    #[test]
+    fn tmux_shell_line_quotes_metacharacters() {
+        // A session name or command with quotes/metacharacters must stay a
+        // single JSON-quoted argument (no break-out of the tmux command).
+        let line = build_tmux_shell_line("ade-a; rm -rf /", "x & y");
+        assert!(line.contains("\"ade-a; rm -rf /\""), "{line}");
+        assert!(line.contains("\"x & y\""), "{line}");
+        // The base64url session name (our own format) never carries `$`.
+        assert!(!make_tmux_session_name("a; rm -rf /").contains('$'));
     }
 
     #[test]
