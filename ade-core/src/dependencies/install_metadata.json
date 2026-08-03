@@ -1,0 +1,194 @@
+{
+ "amp": {
+  "install_type": "npm",
+  "package": "@ampcode/cli"
+ },
+ "antigravity": {
+  "binaries": [
+   "agy",
+   "antigravity"
+  ],
+  "command": "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+  "install_type": "curl"
+ },
+ "auggie": {
+  "install_type": "npm",
+  "package": "@augmentcode/auggie"
+ },
+ "autohand": {
+  "install_type": "npm",
+  "package": "autohand-cli"
+ },
+ "charm": {
+  "install_type": "npm",
+  "package": "@charmland/crush"
+ },
+ "claude": {
+  "binaries": [
+   "claude"
+  ],
+  "command": "curl -fsSL https://claude.ai/install.sh | bash",
+  "install_type": "curl",
+  "uninstall_command": "claude uninstall",
+  "update_repo": "anthropics/claude-code"
+ },
+ "cline": {
+  "install_type": "npm",
+  "package": "cline"
+ },
+ "codebuddy": {
+  "install_type": "npm",
+  "package": "@tencent-ai/codebuddy-code"
+ },
+ "codebuff": {
+  "install_type": "npm",
+  "package": "codebuff"
+ },
+ "codex": {
+  "install_type": "npm",
+  "package": "@openai/codex"
+ },
+ "commandcode": {
+  "install_type": "npm",
+  "package": "command-code"
+ },
+ "continue": {
+  "binaries": [
+   "cn"
+  ],
+  "command": "npm i -g @continuedev/cli",
+  "install_type": "npm"
+ },
+ "copilot": {
+  "install_type": "npm",
+  "package": "@github/copilot"
+ },
+ "cursor": {
+  "binaries": [
+   "cursor-agent"
+  ],
+  "command": "curl https://cursor.com/install -fsS | bash",
+  "install_type": "curl"
+ },
+ "devin": {
+  "binaries": [
+   "devin"
+  ],
+  "command": "curl -fsSL https://cli.devin.ai/install.sh | bash",
+  "install_type": "curl"
+ },
+ "droid": {
+  "binaries": [
+   "droid"
+  ],
+  "command": "curl -fsSL https://app.factory.ai/cli | sh",
+  "install_type": "curl"
+ },
+ "freebuff": {
+  "install_type": "npm",
+  "package": "freebuff"
+ },
+ "goose": {
+  "binaries": [
+   "goose"
+  ],
+  "command": "curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | bash",
+  "install_type": "curl",
+  "uninstall_command": "curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/uninstall.sh | bash",
+  "update_repo": "aaif-goose/goose"
+ },
+ "grok": {
+  "binaries": [
+   "grok"
+  ],
+  "command": "curl -fsSL https://x.ai/cli/install.sh | bash",
+  "install_type": "curl"
+ },
+ "hermes": {
+  "binaries": [
+   "hermes"
+  ],
+  "command": "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
+  "install_type": "curl"
+ },
+ "jules": {
+  "install_type": "npm",
+  "package": "@google/jules"
+ },
+ "junie": {
+  "binaries": [
+   "junie"
+  ],
+  "command": "curl -fsSL https://junie.jetbrains.com/install.sh | bash",
+  "install_type": "curl"
+ },
+ "kilocode": {
+  "install_type": "npm",
+  "package": "@kilocode/cli"
+ },
+ "kimi": {
+  "binaries": [
+   "kimi"
+  ],
+  "command": "curl -LsSf https://code.kimi.com/install.sh | bash",
+  "install_type": "curl",
+  "update_repo": "moonshotai/kimi-cli"
+ },
+ "kiro": {
+  "binaries": [
+   "kiro-cli"
+  ],
+  "command": "curl -fsSL https://cli.kiro.dev/install | bash",
+  "install_type": "curl"
+ },
+ "letta": {
+  "install_type": "npm",
+  "package": "@letta-ai/letta-code"
+ },
+ "mimocode": {
+  "install_type": "npm",
+  "package": "@mimo-ai/cli"
+ },
+ "mistral": {
+  "binaries": [
+   "vibe"
+  ],
+  "command": "curl -LsSf https://mistral.ai/vibe/install.sh | bash",
+  "install_type": "curl",
+  "update_repo": "mistralai/mistral-vibe"
+ },
+ "oh-my-pi": {
+  "binaries": [
+   "omp"
+  ],
+  "command": "curl -fsSL https://omp.sh/install | sh",
+  "install_type": "curl",
+  "update_repo": "can1357/oh-my-pi"
+ },
+ "opencode": {
+  "install_type": "npm",
+  "package": "opencode-ai"
+ },
+ "pi": {
+  "install_type": "npm",
+  "package": "@earendil-works/pi-coding-agent"
+ },
+ "qoder": {
+  "install_type": "npm",
+  "package": "@qoder-ai/qodercli"
+ },
+ "qwen": {
+  "install_type": "npm",
+  "package": "@qwen-code/qwen-code"
+ },
+ "rovo": {
+  "binaries": [
+   "rovodev",
+   "acli"
+  ]
+ },
+ "zero": {
+  "install_type": "npm",
+  "package": "@gitlawb/zero"
+ }
+}

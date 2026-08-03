@@ -747,6 +747,31 @@ fn main() {
         "DTO model list starts with the Default model sentinel",
     );
 
+    // -- 17. Host dependencies (E3-02) ----------------------------------------
+    let deps_store = ade_core::dependencies::HostDependencyStore::new(
+        db.clone(),
+        Arc::new(ade_core::dependencies::ProcessInstallRunner),
+    );
+    let claude_status = deps_store.get_status("claude").unwrap();
+    let codex_status = deps_store.get_status("codex").unwrap();
+    check(claude_status.installed, "detection finds claude on PATH");
+    check(
+        !codex_status.installed || claude_status.checked_at.is_some(),
+        "detection results are cached",
+    );
+    check(
+        deps_store.install_instructions("codex").as_deref() == Some("npm install -g @openai/codex"),
+        "not-installed providers carry install instructions",
+    );
+    let claude_plan = ade_core::dependencies::host_dependency::host_dependency("claude")
+        .unwrap()
+        .install_plan
+        .unwrap();
+    check(
+        claude_plan.install_type == ade_core::dependencies::host_dependency::InstallType::Curl,
+        "claude installs via curl",
+    );
+
     println!(
         "\n== SMOKE {} ==",
         if failures == 0 { "OK" } else { "FAILED" }
