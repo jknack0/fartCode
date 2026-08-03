@@ -2163,7 +2163,9 @@ No `clipboard` plugin — xterm.js handles copy/paste internally.
 ## 18. Decision log (E1-01 → E1-03)
 
 Each decision is also documented at its code site; this log is the scan-able
-index. Items marked *deviation* change this document or the ticket text.
+index. Numbered records (with context + rationale) live in `decisions/`
+(0001–0004, see `decisions/README.md` for the convention). Items marked
+*deviation* change this document or the ticket text.
 
 | # | Ticket | Decision | Where it lives |
 |---|---|---|---|

@@ -52,6 +52,8 @@ make check       # full merge gate: fmt + clippy + test
 - `cargo clippy -D warnings`
 - `cargo test` green
 - Ticket's acceptance criteria + restart-survival test where noted
+- Architectural decisions (esp. deviations from ARCHITECTURE.md or the
+  reference) recorded as ADRs in `decisions/` — see `decisions/README.md`
 
 ## Conventions (short version — ARCHITECTURE.md is authoritative)
 
@@ -64,6 +66,9 @@ make check       # full merge gate: fmt + clippy + test
 - Migrations are append-only; never hand-edit an applied migration.
 - `git2::Repository` is `!Sync` — all git ops go through the serialized GitOps impl.
 - Tests use `tempfile` / `:memory:`; never touch real app data paths.
+- Architectural decisions (esp. deviations from ARCHITECTURE.md / the
+  reference) get an ADR in `decisions/` (0001–0004 backfill the first tickets);
+  record before merge, not after.
 
 ## Git strategy (decided)
 
