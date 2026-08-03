@@ -98,8 +98,8 @@ jobs:
 
       - name: Test migrations (if present)
         run: |
-          if [ -f emdash-core/tests/migrations.rs ]; then
-            cargo test --package emdash-core --test migrations
+          if [ -f ade-core/tests/migrations.rs ]; then
+            cargo test --package ade-core --test migrations
           else
             echo "migrations test binary arrives with E1-01 — skipping"
           fi

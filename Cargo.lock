@@ -3,6 +3,66 @@
 version = 4
 
 [[package]]
+name = "ade-acp"
+version = "0.1.0"
+
+[[package]]
+name = "ade-app"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-os",
+ "tauri-plugin-process",
+ "tauri-plugin-shell",
+ "tauri-plugin-updater",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "ade-core"
+version = "0.1.0"
+
+[[package]]
+name = "ade-git"
+version = "0.1.0"
+
+[[package]]
+name = "ade-integrations"
+version = "0.1.0"
+
+[[package]]
+name = "ade-providers"
+version = "0.1.0"
+
+[[package]]
+name = "ade-runtime"
+version = "0.1.0"
+
+[[package]]
+name = "ade-scheduler"
+version = "0.1.0"
+
+[[package]]
+name = "ade-server"
+version = "0.1.0"
+
+[[package]]
+name = "ade-ssh"
+version = "0.1.0"
+
+[[package]]
+name = "ade-telemetry"
+version = "0.1.0"
+
+[[package]]
+name = "ade-terminal"
+version = "0.1.0"
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -726,66 +786,6 @@ name = "embed_plist"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ef6b89e5b37196644d8796de5268852ff179b44e96276cf4290264843743bb7"
-
-[[package]]
-name = "emdash-acp"
-version = "0.1.0"
-
-[[package]]
-name = "emdash-app"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-os",
- "tauri-plugin-process",
- "tauri-plugin-shell",
- "tauri-plugin-updater",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "emdash-core"
-version = "0.1.0"
-
-[[package]]
-name = "emdash-git"
-version = "0.1.0"
-
-[[package]]
-name = "emdash-integrations"
-version = "0.1.0"
-
-[[package]]
-name = "emdash-providers"
-version = "0.1.0"
-
-[[package]]
-name = "emdash-runtime"
-version = "0.1.0"
-
-[[package]]
-name = "emdash-scheduler"
-version = "0.1.0"
-
-[[package]]
-name = "emdash-server"
-version = "0.1.0"
-
-[[package]]
-name = "emdash-ssh"
-version = "0.1.0"
-
-[[package]]
-name = "emdash-telemetry"
-version = "0.1.0"
-
-[[package]]
-name = "emdash-terminal"
-version = "0.1.0"
 
 [[package]]
 name = "encoding_rs"

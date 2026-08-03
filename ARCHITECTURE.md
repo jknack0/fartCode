@@ -1,4 +1,4 @@
-# Architecture — Rust Emdash
+# Architecture — ade
 
 **Audience:** AI coding agents implementing Phase 0 tickets.
 **Companion to:** `PRD.md` (product spec), `tickets-phase0.md` (work breakdown).
@@ -12,14 +12,14 @@ contradicts this file, this file wins (update the ticket).
 
 ```
                     ┌──────────────────┐
-                    │    emdash-app     │  Tauri shell, command modules, events
+                    │    ade-app     │  Tauri shell, command modules, events
                     └────────┬─────────┘
                              │
         ┌────────────────────┼────────────────────┐
         │                    │                    │
         ▼                    ▼                    ▼
 ┌───────────────┐   ┌───────────────┐   ┌───────────────┐
-│  emdash-core  │   │emdash-terminal│   │  emdash-git    │
+│  ade-core  │   │ade-terminal│   │  ade-git    │
 │  (all domain) │   │  (PTY, tmux)  │   │ (worktrees,    │
 │               │   │               │   │  git ops, PR)  │
 └───────┬───────┘   └───────────────┘   └───────────────┘
@@ -27,29 +27,29 @@ contradicts this file, this file wins (update the ticket).
         │ depends on (Phase 0 subset shown):
         ▼
 ┌───────────────┐   ┌───────────────┐
-│emdash-providers│   │ emdash-telemetry│
+│ade-providers│   │ ade-telemetry│
 │ (35 agents,    │   │ (stub in Ph0)   │
 │  capabilities) │   │                 │
 └───────────────┘   └─────────────────┘
 ```
 
-**Phase 0 crates that exist but are mostly stubs:** `emdash-acp`, `emdash-ssh`,
-`emdash-scheduler`, `emdash-integrations`, `emdash-server`, `emdash-runtime`.
+**Phase 0 crates that exist but are mostly stubs:** `ade-acp`, `ade-ssh`,
+`ade-scheduler`, `ade-integrations`, `ade-server`, `ade-runtime`.
 They compile, export placeholder types/traits, and are filled in later phases.
 
 **Rule:** a crate may only depend on crates to its left or below in this graph.
-No circular dependencies. `emdash-core` is the leaf — it depends on nothing
+No circular dependencies. `ade-core` is the leaf — it depends on nothing
 except third-party crates.
 
 ---
 
-## 2. Module layout: `emdash-core`
+## 2. Module layout: `ade-core`
 
-`emdash-core` is the largest crate. It follows the reference's domain-per-directory
+`ade-core` is the largest crate. It follows the reference's domain-per-directory
 pattern (`src/main/core/<domain>/`). Every domain gets its own module:
 
 ```
-emdash-core/src/
+ade-core/src/
 ├── lib.rs                  // re-exports, prelude
 ├── error.rs                // the one Error enum (§3)
 ├── db/
@@ -102,7 +102,7 @@ emdash-core/src/
 
 ## 3. Error type — one to rule them all
 
-`emdash-core/src/error.rs` defines the single error enum used by every crate:
+`ade-core/src/error.rs` defines the single error enum used by every crate:
 
 ```rust
 use std::path::PathBuf;
@@ -189,7 +189,7 @@ impl From<Error> for String {
 ```
 
 **Rules for every crate:**
-- Every public fallible function returns `Result<T, emdash_core::Error>`.
+- Every public fallible function returns `Result<T, ade_core::Error>`.
 - If a domain needs a new variant, add it to the central `Error` enum — do not create per-domain error types.
 - `Internal(String)` is the escape hatch for one-off messages during prototyping. Refactor into a named variant before merging.
 - `#[from]` derives on `rusqlite::Error` and `std::io::Error` mean you can use `?` directly in functions that touch the DB or filesystem.
@@ -216,7 +216,7 @@ PTY I/O) goes through `block_on`.
 Long-lived tasks spawn on the tokio runtime:
 
 ```rust
-// In app startup (emdash-app/src/main.rs or emdash-core init):
+// In app startup (ade-app/src/main.rs or ade-core init):
 let handle = tokio::runtime::Handle::current();
 
 // PTY reader: pipes output to Tauri events
@@ -250,9 +250,9 @@ handle.spawn(async move {
 Every Tauri command follows this pattern:
 
 ```rust
-// In emdash-app/src/commands/projects.rs
-use emdash_core::projects;
-use emdash_core::Error;
+// In ade-app/src/commands/projects.rs
+use ade_core::projects;
+use ade_core::Error;
 
 #[tauri::command]
 fn add_project(path: String) -> Result<ProjectDto, String> {
@@ -280,7 +280,7 @@ Domain services ──→ InternalEvent ──→ EventBus ──→ Tauri emit 
                      (enum)            (channel)    (typed event name)
 ```
 
-### Internal event enum (in `emdash-core/src/events.rs`)
+### Internal event enum (in `ade-core/src/events.rs`)
 
 ```rust
 /// Events emitted by domain services, consumed by Tauri command layer.
@@ -347,7 +347,7 @@ Internal events are emitted to the frontend as Tauri events with the same name
 ### Event emission
 
 ```rust
-// In emdash-app, wrap the core event bus:
+// In ade-app, wrap the core event bus:
 pub struct AppEventBus {
     app_handle: tauri::AppHandle,
 }
@@ -385,7 +385,7 @@ export function onTaskCreated(cb: (payload: TaskCreatedPayload) => void) {
 These traits define the boundaries between crates. Implementations live in
 the owning crate; consumers depend on the trait.
 
-### 6.1 Db (in `emdash-core::db`)
+### 6.1 Db (in `ade-core::db`)
 
 ```rust
 /// Single connection to the SQLite database.
@@ -425,10 +425,10 @@ impl SqliteDb {
 }
 ```
 
-### 6.2 SettingsStore (in `emdash-core::settings`)
+### 6.2 SettingsStore (in `ade-core::settings`)
 
 ```rust
-/// Layered settings with precedence: local > .emdash.json > defaults.
+/// Layered settings with precedence: local > .ade.json > defaults.
 pub trait SettingsStore: Send + Sync {
     /// Get the effective value for a typed setting key.
     fn get<T: SettingValue>(&self, key: SettingKey<T>) -> Result<T, Error>;
@@ -436,15 +436,15 @@ pub trait SettingsStore: Send + Sync {
     /// Set a local override. If the value equals the default, the row is deleted.
     fn set<T: SettingValue>(&self, key: SettingKey<T>, value: T) -> Result<(), Error>;
 
-    /// Clear all local overrides (restore defaults + .emdash.json).
+    /// Clear all local overrides (restore defaults + .ade.json).
     fn reset(&self, project_id: Option<&str>) -> Result<(), Error>;
 
-    /// Move local values to .emdash.json and clear them from DB.
+    /// Move local values to .ade.json and clear them from DB.
     fn share_with_team(&self, project_id: &str) -> Result<(), Error>;
 }
 ```
 
-### 6.3 PtyManager (in `emdash-terminal`)
+### 6.3 PtyManager (in `ade-terminal`)
 
 ```rust
 /// Spawns and controls PTY processes.
@@ -492,7 +492,7 @@ pub struct PtyHandle {
 }
 ```
 
-### 6.4 GitOps (in `emdash-git`)
+### 6.4 GitOps (in `ade-git`)
 
 ```rust
 /// Low-level git operations. In Phase 0, shells out to `git` CLI.
@@ -535,7 +535,7 @@ pub struct WorktreeEntry {
 }
 ```
 
-### 6.5 AgentRegistry (in `emdash-providers`)
+### 6.5 AgentRegistry (in `ade-providers`)
 
 ```rust
 /// Registry of all known agent CLIs.
@@ -596,7 +596,7 @@ pub enum PromptStrategy {
 }
 ```
 
-### 6.6 EventBus (in `emdash-core::events`)
+### 6.6 EventBus (in `ade-core::events`)
 
 ```rust
 /// Internal event bus. Domain services push events; the Tauri layer subscribes
@@ -632,41 +632,41 @@ impl EventBus for BroadcastEventBus {
 
 ## 7. Application bootstrap (the `App` struct)
 
-Every domain service is created in `emdash-app` at startup and shared via `Arc`.
+Every domain service is created in `ade-app` at startup and shared via `Arc`.
 This is the single place where concrete implementations are wired together:
 
 ```rust
-// emdash-app/src/app.rs
+// ade-app/src/app.rs
 use std::sync::Arc;
 
 pub struct App {
-    pub db: Arc<emdash_core::db::SqliteDb>,
-    pub settings: Arc<dyn emdash_core::settings::SettingsStore>,
-    pub projects: Arc<dyn emdash_core::projects::ProjectStore>,
-    pub tasks: Arc<dyn emdash_core::tasks::TaskStore>,
-    pub conversations: Arc<dyn emdash_core::conversations::ConversationStore>,
-    pub agent_registry: Arc<dyn emdash_providers::AgentRegistry>,
-    pub pty_manager: Arc<dyn emdash_terminal::PtyManager>,
-    pub git: Arc<dyn emdash_git::GitOps>,
-    pub event_bus: Arc<dyn emdash_core::events::EventBus>,
+    pub db: Arc<ade_core::db::SqliteDb>,
+    pub settings: Arc<dyn ade_core::settings::SettingsStore>,
+    pub projects: Arc<dyn ade_core::projects::ProjectStore>,
+    pub tasks: Arc<dyn ade_core::tasks::TaskStore>,
+    pub conversations: Arc<dyn ade_core::conversations::ConversationStore>,
+    pub agent_registry: Arc<dyn ade_providers::AgentRegistry>,
+    pub pty_manager: Arc<dyn ade_terminal::PtyManager>,
+    pub git: Arc<dyn ade_git::GitOps>,
+    pub event_bus: Arc<dyn ade_core::events::EventBus>,
 }
 
 impl App {
     pub fn init(db_path: Option<&str>) -> Result<Arc<Self>, Error> {
-        let db = emdash_core::db::SqliteDb::init(db_path)?;
-        let event_bus = Arc::new(emdash_core::events::BroadcastEventBus::new(256));
-        let settings = Arc::new(emdash_core::settings::DbSettingsStore::new(db.clone()));
-        let agent_registry = Arc::new(emdash_providers::StaticRegistry::default());
-        let git = Arc::new(emdash_git::CliGit::new());
-        let pty_manager = Arc::new(emdash_terminal::PortablePtyManager::new());
+        let db = ade_core::db::SqliteDb::init(db_path)?;
+        let event_bus = Arc::new(ade_core::events::BroadcastEventBus::new(256));
+        let settings = Arc::new(ade_core::settings::DbSettingsStore::new(db.clone()));
+        let agent_registry = Arc::new(ade_providers::StaticRegistry::default());
+        let git = Arc::new(ade_git::CliGit::new());
+        let pty_manager = Arc::new(ade_terminal::PortablePtyManager::new());
 
-        let projects = Arc::new(emdash_core::projects::DbProjectStore::new(
+        let projects = Arc::new(ade_core::projects::DbProjectStore::new(
             db.clone(), settings.clone(), git.clone(), event_bus.clone(),
         ));
-        let tasks = Arc::new(emdash_core::tasks::DbTaskStore::new(
+        let tasks = Arc::new(ade_core::tasks::DbTaskStore::new(
             db.clone(), event_bus.clone(),
         ));
-        let conversations = Arc::new(emdash_core::conversations::DbConversationStore::new(
+        let conversations = Arc::new(ade_core::conversations::DbConversationStore::new(
             db.clone(), event_bus.clone(),
         ));
 
@@ -681,11 +681,11 @@ impl App {
 Tauri's `setup` hook initializes the app and manages it as Tauri state:
 
 ```rust
-// emdash-app/src/main.rs
+// ade-app/src/main.rs
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
-            let app_state = App::init(std::env::var("EMDASH_DB_FILE").ok().as_deref())?;
+            let app_state = App::init(std::env::var("ADE_DB_FILE").ok().as_deref())?;
 
             // Forward internal events to the frontend
             let app_handle = app.handle().clone();
@@ -726,7 +726,7 @@ fn add_project(state: tauri::State<'_, Arc<App>>, path: String) -> Result<Projec
 ### 8.1 Migration runner
 
 ```rust
-// emdash-core/src/db/migrations.rs
+// ade-core/src/db/migrations.rs
 
 /// Embedded migration: (number, label, SQL text).
 /// The label is used for the migration journal, SQL is the raw DDL.
@@ -789,7 +789,7 @@ pub fn run_migrations(conn: &rusqlite::Connection) -> Result<(), Error> {
 ### 8.2 PTY agent launch flow
 
 ```rust
-// emdash-terminal/src/manager.rs
+// ade-terminal/src/manager.rs
 
 /// The complete agent launch sequence.
 /// Called by the conversation supervisor (E2-06).
@@ -809,7 +809,7 @@ pub fn launch_agent(
     let cmd = build_command(provider, &config, &executable)?;
 
     // 4. Build the env allowlist
-    let env = emdash_core::pty::env_allowlist::build_agent_env(
+    let env = ade_core::pty::env_allowlist::build_agent_env(
         &config.provider_id,
         &config.task_env,
         None, // hook_env — Phase 0: None
@@ -878,7 +878,7 @@ fn build_command(
 ### 8.3 Worktree create flow
 
 ```rust
-// emdash-core/src/projects/worktrees.rs
+// ade-core/src/projects/worktrees.rs
 
 /// Create a new worktree from a source branch.
 pub fn checkout_branch_worktree(
@@ -920,9 +920,9 @@ pub fn checkout_branch_worktree(
 ### 8.4 Settings precedence resolution
 
 ```rust
-// emdash-core/src/settings/service.rs
+// ade-core/src/settings/service.rs
 
-/// Effective value = local override > .emdash.json > default.
+/// Effective value = local override > .ade.json > default.
 pub fn get_effective<T: SettingValue>(
     db: &dyn Db,
     project_id: &str,
@@ -933,7 +933,7 @@ pub fn get_effective<T: SettingValue>(
         return Ok(value);
     }
 
-    // 2. Try .emdash.json (shareable_project_settings_json in project_settings)
+    // 2. Try .ade.json (shareable_project_settings_json in project_settings)
     if let Some(value) = get_shareable_value(db, project_id, &key)? {
         return Ok(value);
     }
@@ -950,7 +950,7 @@ pub fn set_local<T: SettingValue>(
     value: T,
 ) -> Result<(), Error> {
     if value == *key.default_value() {
-        // Remove the override — fall back to .emdash.json or default
+        // Remove the override — fall back to .ade.json or default
         delete_local_override(db, project_id, &key)?;
     } else {
         // Store the override
@@ -966,7 +966,7 @@ pub fn set_local<T: SettingValue>(
 ### 8.5 Versioned JSON helper
 
 ```rust
-// emdash-core/src/db/versioned_json.rs
+// ade-core/src/db/versioned_json.rs
 
 /// A column value that carries a version number and upgrade chain.
 /// Stored as JSON: {"version": N, "data": ...}
@@ -1019,7 +1019,7 @@ struct VersionedWrapper {
 One file. One function. Security-reviewed. Any addition = PR + review.
 
 ```rust
-// emdash-core/src/pty/env_allowlist.rs
+// ade-core/src/pty/env_allowlist.rs
 
 /// Returns the final environment map for an agent process.
 /// Starts with base env, merges only allowlisted vars from the host,
@@ -1034,7 +1034,7 @@ pub fn build_agent_env(
     // -- Base env (always set) --
     env.insert("TERM".into(), "xterm-256color".into());
     env.insert("COLORTERM".into(), "truecolor".into());
-    env.insert("TERM_PROGRAM".into(), "emdash".into());
+    env.insert("TERM_PROGRAM".into(), "ade".into());
 
     // -- Inherit allowlisted vars from the host process --
     let allowlist: &[&str] = &[
@@ -1076,7 +1076,7 @@ pub fn build_agent_env(
         }
     }
 
-    // Overlay task env (EMDASH_TASK_ID, etc.)
+    // Overlay task env (ADE_TASK_ID, etc.)
     for (k, v) in task_env {
         env.insert(k.clone(), v.clone());
     }
@@ -1099,7 +1099,7 @@ pub fn build_agent_env(
 Every PR must satisfy these. If a ticket asks for something that violates a pattern,
 the pattern wins — update the ticket.
 
-1. **`Result<T, emdash_core::Error>` everywhere.** No `unwrap()`, no `expect()`, no panics across crate boundaries. Use `?` pervasively. The only `unwrap()` allowed is in `main()` and tests.
+1. **`Result<T, ade_core::Error>` everywhere.** No `unwrap()`, no `expect()`, no panics across crate boundaries. Use `?` pervasively. The only `unwrap()` allowed is in `main()` and tests.
 
 2. **Versioned JSON for all JSON columns.** No raw `JSON.parse`/`JSON.stringify` at call sites. Use the `read_versioned`/`write_versioned` helpers. Corrupt data returns `None`, never panics.
 
@@ -1109,7 +1109,7 @@ the pattern wins — update the ticket.
 
 5. **DTOs at the boundary.** DB row types never cross the Tauri IPC boundary. Every domain exports `ModelDto` with `Serialize`.
 
-6. **Shell quoting via the shared module.** No ad-hoc `format!("'{}'", path)` or manual escaping. Call `emdash_core::shell_escape::quote(input)`.
+6. **Shell quoting via the shared module.** No ad-hoc `format!("'{}'", path)` or manual escaping. Call `ade_core::shell_escape::quote(input)`.
 
 7. **Path validation via realpath containment.** Before deleting or operating in a directory, verify it's inside the expected root. Never delete project root.
 
@@ -1723,7 +1723,7 @@ When "Create Task" is clicked, the task's initial prompt is constructed as:
 You are reviewing code in a git diff.
 
 FILE: src/auth/middleware.rs
-BRANCH: emdash/fix-error-handling-a3f2
+BRANCH: ade/fix-error-handling-a3f2
 ENCLOSING FUNCTION: fn validate_token(token: &str) -> Result<Claims, AuthError>
 
 SELECTED CODE (lines 42-56):
@@ -1858,8 +1858,8 @@ Every ticket's merge gate includes `cargo test`. These are the patterns to use.
 ### DB integration tests
 
 ```rust
-// emdash-core/tests/db_integration.rs
-use emdash_core::db::SqliteDb;
+// ade-core/tests/db_integration.rs
+use ade_core::db::SqliteDb;
 use std::sync::Arc;
 
 #[test]
@@ -1892,8 +1892,8 @@ fn test_kv_roundtrip() {
 ### Git/worktree integration tests
 
 ```rust
-// emdash-git/tests/worktree_integration.rs
-use emdash_git::GitOps;
+// ade-git/tests/worktree_integration.rs
+use ade_git::GitOps;
 use std::process::Command;
 
 fn init_temp_repo() -> (tempfile::TempDir, PathBuf) {
@@ -1953,8 +1953,8 @@ fn test_worktree_create_and_prune() {
 ### PTY/agent integration test
 
 ```rust
-// emdash-terminal/tests/agent_launch.rs
-use emdash_terminal::PtyManager;
+// ade-terminal/tests/agent_launch.rs
+use ade_terminal::PtyManager;
 
 #[test]
 fn test_spawn_shell_and_read_output() {
@@ -1996,8 +1996,8 @@ fn test_env_allowlist_does_not_leak_secrets() {
 ### Migration test (separate test binary)
 
 ```rust
-// emdash-core/tests/migrations.rs
-use emdash_core::db::SqliteDb;
+// ade-core/tests/migrations.rs
+use ade_core::db::SqliteDb;
 
 #[test]
 fn test_fresh_install_creates_all_tables() {
@@ -2035,7 +2035,7 @@ fn test_migration_upgrade_path() {
 ### Test helper: in-memory DB
 
 ```rust
-// emdash-core/src/db/connection.rs
+// ade-core/src/db/connection.rs
 impl SqliteDb {
     /// Creates an in-memory database for tests.
     /// Runs all migrations, returns a fully-initialized DB.

@@ -1,18 +1,18 @@
 [workspace]
 resolver = "2"
 members = [
-    "emdash-core",
-    "emdash-git",
-    "emdash-providers",
-    "emdash-acp",
-    "emdash-terminal",
-    "emdash-ssh",
-    "emdash-scheduler",
-    "emdash-integrations",
-    "emdash-telemetry",
-    "emdash-server",
-    "emdash-runtime",
-    "emdash-app",
+    "ade-core",
+    "ade-git",
+    "ade-providers",
+    "ade-acp",
+    "ade-terminal",
+    "ade-ssh",
+    "ade-scheduler",
+    "ade-integrations",
+    "ade-telemetry",
+    "ade-server",
+    "ade-runtime",
+    "ade-app",
 ]
 
 [workspace.package]
@@ -38,7 +38,7 @@ git2 = "0.21"
 # ── Terminal / PTY ─────────────────────────────────────────
 portable-pty = "0.9"
 
-# ── SSH (Phase 3, declared for emdash-ssh) ─────────────────
+# ── SSH (Phase 3, declared for ade-ssh) ─────────────────
 russh = "0.50"
 russh-sftp = "0.50"
 
@@ -50,7 +50,7 @@ glob = "0.3"
 # ── Security / secrets (Phase 3, declared for later) ───────
 keyring = "3"
 
-# ── Scheduling (Phase 2, declared for emdash-scheduler) ────
+# ── Scheduling (Phase 2, declared for ade-scheduler) ────
 croner = "2"
 
 # ── Observability ──────────────────────────────────────────

@@ -42,14 +42,14 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 - Reference CI: `reference/emdash/.github/workflows/code-consistency-check.yml`
 
 **Subtasks:**
-- [ ] `cargo init` workspace root with `[workspace]` members: `emdash-core`, `emdash-git`, `emdash-providers`, `emdash-acp`, `emdash-terminal`, `emdash-ssh`, `emdash-scheduler`, `emdash-integrations`, `emdash-telemetry`, `emdash-server`, `emdash-runtime`, `emdash-app`.
-- [ ] `emdash-app`: scaffold via `cargo tauri init` (Tauri 2); configure `tauri.conf.json` with app identifier, window defaults, security CSP, and plugin allowlist (`shell`, `process`, `updater`, `os`).
+- [ ] `cargo init` workspace root with `[workspace]` members: `ade-core`, `ade-git`, `ade-providers`, `ade-acp`, `ade-terminal`, `ade-ssh`, `ade-scheduler`, `ade-integrations`, `ade-telemetry`, `ade-server`, `ade-runtime`, `ade-app`.
+- [ ] `ade-app`: scaffold via `cargo tauri init` (Tauri 2); configure `tauri.conf.json` with app identifier, window defaults, security CSP, and plugin allowlist (`shell`, `process`, `updater`, `os`).
 - [ ] `app-frontend/`: scaffold via `npm create vite@latest` with React + TypeScript; configure Vite for Tauri's `devUrl`/`frontendDist`; add `xterm.js`, CodeMirror 6, Tailwind CSS as dependencies.
 - [ ] `Cargo.toml` root: add workspace dependencies for `tokio`, `serde`, `serde_json`, `rusqlite` (with `bundled` feature), `git2`, `portable-pty`, `russh`, `notify`, `keyring`, `croner`, `tracing`, `reqwest`, `sysinfo`, `sha2`, `base64`, `glob`, `ignore`.
 - [ ] `.cargo/config.toml`: enable `rustfmt` edition 2024; configure `clippy` lints matching the reference's oxlint rules (correctness + pedantic).
 - [ ] CI: GitHub Actions workflow `.github/workflows/ci.yml` — `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test` on push/PR; matrix macOS + Linux (Windows later). A working file already exists at `.github/workflows/ci.yml` with 3 jobs: `rust` (fmt+clippy+test), `frontend` (typecheck+lint), `db` (migration tests).
 - [ ] `justfile` or `Makefile`: `dev` (tauri dev), `build`, `test`, `lint`, `fmt`, `clean` targets — one command to run the app.
-- [ ] `.gitignore`: `target/`, `node_modules/`, `dist/`, `*.db`, `.env`, `.emdash/`.
+- [ ] `.gitignore`: `target/`, `node_modules/`, `dist/`, `*.db`, `.env`, `.ade/`.
 - [ ] `AGENTS.md` (root): project overview, build commands, crate map, conventions (Result<T,E> everywhere, versioned JSON, provider pattern, no ad-hoc shell quoting).
 
 **Acceptance criteria:**
@@ -63,7 +63,7 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 ## E1-01 — SQLite init + migration runner + FTS bootstrap
 
-**Size:** L · **Depends on:** none · **Crate:** `emdash-core::db`
+**Size:** L · **Depends on:** none · **Crate:** `ade-core::db`
 
 **Story:** The app boots into a consistent local database on first run and every upgrade, without losing data or corrupting JSON blobs.
 
@@ -76,17 +76,17 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 **Subtasks:**
 - [ ] rusqlite connection singleton: `PRAGMA foreign_keys = ON`, `journal_mode = WAL`, `busy_timeout = 5000`.
-- [ ] DB path resolution: `~/Library/Application Support/emdash` (macOS), `%APPDATA%/emdash` (Win), `$XDG_CONFIG_HOME/emdash` (Linux); env override `EMDASH_DB_FILE`.
+- [ ] DB path resolution: `~/Library/Application Support/ade` (macOS), `%APPDATA%/ade` (Win), `$XDG_CONFIG_HOME/ade` (Linux); env override `ADE_DB_FILE`.
 - [ ] Migration runner: `migrations` table `(id INTEGER PK AUTOINCREMENT, hash TEXT, created_at)`; journal JSON + SQL files embedded at build; apply entries newer than `MAX(created_at)`; record `sha256(sql)` hash; SQL split on `--> statement-breakpoint`.
 - [ ] Create all Phase-0 tables from §11 of ARCHITECTURE.md (projects, project_remotes, project_settings, app_settings, tasks, workspaces, conversations, terminals, editor_buffers, kv, automation_runs, ssh_connections, messages, automations, provider_accounts, FTS tables) with the exact columns/defaults shown. Key notes: `conversations.task_id` is NULLABLE (for project-scoped conversations in Phase 1), `conversations.scope` defaults to `'task'`, `tasks.created_by` defaults to `'user'`.
 - [ ] FTS5 tables outside migrations, version-gated via `kv` keys: `search_index` (`item_type, item_id UNINDEXED, project_id UNINDEXED, task_id UNINDEXED, title, keywords`, trigram) gated by `fts_version='3'`; `workspace_file_index` + `workspace_file_index_meta` gated by `file_index_version='4'`.
-- [ ] Legacy DB migration: if `emdash.db` missing but prior-version DB exists, copy via `VACUUM INTO` (readonly source), then clear secrets table in the copy.
+- [ ] Legacy DB migration: if `ade.db` missing but prior-version DB exists, copy via `VACUUM INTO` (readonly source), then clear secrets table in the copy.
 - [ ] Versioned JSON column helper: `parse` never throws — corrupt/future/needs-context values return `None` with warning; writes always serialize latest version.
 
 **Acceptance criteria:**
 - [ ] Fresh install: schema created, FTS tables present, no errors.
 - [ ] Upgrade path: applying `N` new migrations updates journal; re-running is a no-op.
-- [ ] `EMDASH_DB_FILE=/tmp/foo.db` uses that file.
+- [ ] `ADE_DB_FILE=/tmp/foo.db` uses that file.
 - [ ] Restart: same DB file reused; WAL files present; `PRAGMA foreign_keys` enforced (FK violations raise).
 - [ ] A corrupt versioned-JSON cell reads as `None` and never panics.
 - [ ] Migration test fixture: applying 0000..0019-equivalent SQLs in order yields expected schema; hand-edit of a numbered migration is not possible by design (embedded + hashed).
@@ -97,33 +97,33 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 ## E1-02 — Settings store with layered precedence + KV
 
-**Size:** M · **Depends on:** E1-01 · **Crate:** `emdash-core::settings`
+**Size:** M · **Depends on:** E1-01 · **Crate:** `ade-core::settings`
 
-**Story:** Users configure the app once per project; teammates share the safe subset via `.emdash.json`; local UI settings always win.
+**Story:** Users configure the app once per project; teammates share the safe subset via `.ade.json`; local UI settings always win.
 
 **Ref:** `src/main/core/settings/settings-registry.ts`, `settings/schema.ts`, `settings/settings-service.ts`, `settings/providers/db-project-settings-provider.ts`, `settings/effective-task-settings.ts`, `shared/core/project-settings/project-settings.ts`
 
 **Subtasks:**
 - [ ] `app_settings` KV-backed settings service: typed keys with zod-like validation (serde + a validation pass); `update()` computes **delta vs defaults** and deletes the row when delta is empty; reads deep-merge defaults.
-- [ ] Registry + defaults (port exactly): `project {pushOnCreate:true, branchPrefix:'emdash', appendRandomBranchSuffix:true, tmuxByDefault:false}` · `tasks {autoGenerateName:true, autoApproveByDefault:false, autoTrustWorktrees:true, createBranchAndWorktree:true, deleteBranchByDefault:false, preserveNameCapitalization:false, includeIssueContextByDefault:true}` · `defaultAgent:'claude'` · `localProject {defaultProjectsDirectory:~/emdash/repositories, defaultWorktreeDirectory:~/emdash/worktrees, writeAgentConfigToGitIgnore:true}` · `terminal {defaultShell:'system', autoCopyOnSelection:false, macOptionIsMeta:false}` · `notifications {enabled:true, sound:true, osNotifications:true, ...}` · `browserPreview {enabled:true}` · `resourceMonitor {enabled:false}`.
-- [ ] Project settings storage: two JSON blobs in `project_settings` — `base_project_settings_json` (DB-backed fields) and `shareable_project_settings_json` (`.emdash.json`-shareable fields).
+- [ ] Registry + defaults (port exactly): `project {pushOnCreate:true, branchPrefix:'ade', appendRandomBranchSuffix:true, tmuxByDefault:false}` · `tasks {autoGenerateName:true, autoApproveByDefault:false, autoTrustWorktrees:true, createBranchAndWorktree:true, deleteBranchByDefault:false, preserveNameCapitalization:false, includeIssueContextByDefault:true}` · `defaultAgent:'claude'` · `localProject {defaultProjectsDirectory:~/ade/repositories, defaultWorktreeDirectory:~/ade/worktrees, writeAgentConfigToGitIgnore:true}` · `terminal {defaultShell:'system', autoCopyOnSelection:false, macOptionIsMeta:false}` · `notifications {enabled:true, sound:true, osNotifications:true, ...}` · `browserPreview {enabled:true}` · `resourceMonitor {enabled:false}`.
+- [ ] Project settings storage: two JSON blobs in `project_settings` — `base_project_settings_json` (DB-backed fields) and `shareable_project_settings_json` (`.ade.json`-shareable fields).
 - [ ] Base settings schema: `worktreeDirectory`, `defaultBranch` (string or `{name, remote:true}`), `baseRemote`, `pushRemote`, `githubAccountId`, `tmux`, `autoRunSetupScriptOnTaskCreation`, `autoRunRunScriptOnTaskCreation`, `workspaceProvider {type:'script', provisionCommand, terminateCommand}`.
-- [ ] Shareable subset (`.emdash.json`): `preservePatterns`, `shellSetup`, `scripts.{setup,run,teardown}` only. `DEFAULT_PRESERVE_PATTERNS = ['.env','.env.keys','.env.local','.env.*.local','.envrc','docker-compose.override.yml']`; `.emdash.json` filtered out of patterns.
-- [ ] Precedence: task `.emdash.json` (when parseable) > project settings > defaults (`effective-task-settings.ts` semantics). "Share with team" moves local values into `.emdash.json` and clears them locally.
-- [ ] Seed `baseProjectSettingsJson` + shareable with defaults on project row creation **unless** repo `.emdash.json` already defines them. Defaults: `defaultBranchFallback='main'`, `baseRemote = remoteNameFromQualifiedRef(defaultBranch) ?? 'origin'`, `tmux = appSettings('project').tmuxByDefault`.
+- [ ] Shareable subset (`.ade.json`): `preservePatterns`, `shellSetup`, `scripts.{setup,run,teardown}` only. `DEFAULT_PRESERVE_PATTERNS = ['.env','.env.keys','.env.local','.env.*.local','.envrc','docker-compose.override.yml']`; `.ade.json` filtered out of patterns.
+- [ ] Precedence: task `.ade.json` (when parseable) > project settings > defaults (`effective-task-settings.ts` semantics). "Share with team" moves local values into `.ade.json` and clears them locally.
+- [ ] Seed `baseProjectSettingsJson` + shareable with defaults on project row creation **unless** repo `.ade.json` already defines them. Defaults: `defaultBranchFallback='main'`, `baseRemote = remoteNameFromQualifiedRef(defaultBranch) ?? 'origin'`, `tmux = appSettings('project').tmuxByDefault`.
 
 **Acceptance criteria:**
 - [ ] Updating a setting to its default removes the stored row (delta check).
-- [ ] `.emdash.json` in repo is honored; a local UI value overrides it; clearing local value falls back to file.
+- [ ] `.ade.json` in repo is honored; a local UI value overrides it; clearing local value falls back to file.
 - [ ] Migration path: v1.1.15-era config with scripts/preserve patterns still works; local-only fields migrate once into base JSON.
 
 ---
 
 ## E1-03 — Project model: add local / clone GitHub / connect remote
 
-**Size:** L · **Depends on:** E1-01, E1-02 · **Crate:** `emdash-core::projects`
+**Size:** L · **Depends on:** E1-01, E1-02 · **Crate:** `ade-core::projects`
 
-**Story:** User adds a project to Emdash and gets a ready-to-task repo with a resolved default branch and git excluded for Emdash internals.
+**Story:** User adds a project to ade and gets a ready-to-task repo with a resolved default branch and git excluded for ade internals.
 
 **Ref:** `src/main/core/projects/operations/createProject.ts`, `create-local-project.ts`, `create-ssh-project.ts`, `create-project-utils.ts` (base-ref resolution), `project-manager.ts`, `project-provider.ts`, `create-project-provider.ts`, `core/project-setup/repository-setup.ts`, `core/git/repository/`
 
@@ -133,11 +133,11 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 - [ ] Clone path: `git clone` into configured dir, then same open flow. New-GitHub-repo path (E8 dependency): create via GitHub API, clone with remote creds — stub the GitHub call behind a trait in Phase 0.
 - [ ] SSH flow (Phase 3 detail, stub now): `workspace_provider='ssh'`, `ssh_connection_id`, provider timeout 60s.
 - [ ] Provider lifecycle: `openProject`/`closeProject` with timeouts (local 20s, SSH 60s, teardown 60s); `dispose()` teardown mode `tmux ? detach : terminate`; tears down sessions/workspaces/preview servers.
-- [ ] `ensureEmdashGitExcludedSafe`: add `.emdash/` to the repo's git excludes on project open.
+- [ ] `ensureadeGitExcludedSafe`: add `.ade/` to the repo's git excludes on project open.
 - [ ] Worktree pool path: local = `join(worktreeDirectory, safePathSegment(name, id))`; SSH = `join(worktreeDirectory, project.name)`.
 
 **Acceptance criteria:**
-- [ ] Add local dir → project row created, base ref resolved, `.emdash/` git-excluded, `project:created` emitted, duplicate add opens existing project.
+- [ ] Add local dir → project row created, base ref resolved, `.ade/` git-excluded, `project:created` emitted, duplicate add opens existing project.
 - [ ] Add with "initialize git repository" creates a repo when absent.
 - [ ] Close/open cycle restores project state (worktrees re-detected via `git worktree list`).
 - [ ] Project removed only when user deletes it; provider teardown respects tmux mode.
@@ -146,7 +146,7 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 ## E1-04 — Sidebar tree, pinned tasks, create/delete projects
 
-**Size:** M · **Depends on:** E1-03 · **Crate:** `app-frontend` (+ `emdash-core::projects` events)
+**Size:** M · **Depends on:** E1-03 · **Crate:** `app-frontend` (+ `ade-core::projects` events)
 
 **Story:** The left sidebar shows projects and their tasks in tree order, with pinning and quick create/delete, and drives task-switching navigation.
 
@@ -168,7 +168,7 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 ## E1-05 — Project Settings UI
 
-**Size:** L · **Depends on:** E1-02 · **Crate:** `app-frontend` + `emdash-core::projects/settings`
+**Size:** L · **Depends on:** E1-02 · **Crate:** `app-frontend` + `ade-core::projects/settings`
 
 **Story:** Per-project configuration visible and editable in-app, with validation and clear override semantics.
 
@@ -177,20 +177,20 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 **Subtasks:**
 - [ ] Settings panel fields: GitHub account picker (E8), worktree directory, default branch, base remote, push remote, tmux toggle, workspace provider (provision/terminate commands), preserve patterns, shell setup, lifecycle scripts, auto-run toggles.
 - [ ] Worktree directory validation: must be absolute (posix `/`, win drive/UNC); `~`/`~/` expanded via home dir; invalid → `invalid-worktree-directory` error; stored invalid value falls back to default on read.
-- [ ] "Share with team" dialog: writes selected shareable fields to `.emdash.json` in working dir, clears them locally.
-- [ ] Defaults shown for unset fields (main, origin, `~/emdash/worktrees`, …).
+- [ ] "Share with team" dialog: writes selected shareable fields to `.ade.json` in working dir, clears them locally.
+- [ ] Defaults shown for unset fields (main, origin, `~/ade/worktrees`, …).
 - [ ] Settings changed event → provider re-reads on next task creation.
 
 **Acceptance criteria:**
 - [ ] Every field persists and re-reads correctly (DB round-trip).
 - [ ] Invalid worktree directory rejected with clear error; `~` expands.
-- [ ] Share-with-team writes `.emdash.json` and clears local values; committing that file gives teammates the defaults.
+- [ ] Share-with-team writes `.ade.json` and clears local values; committing that file gives teammates the defaults.
 
 ---
 
 ## E1-06 — Lifecycle scripts (setup/run/teardown) + env contract + drawer logs
 
-**Size:** L · **Depends on:** E1-02, E2-02 · **Crate:** `emdash-core::terminals` + `emdash-terminal`
+**Size:** L · **Depends on:** E1-02, E2-02 · **Crate:** `ade-core::terminals` + `ade-terminal`
 
 **Story:** New tasks run the project's setup/run scripts so the agent starts in a working environment, with output visible in the terminal drawer.
 
@@ -201,38 +201,38 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 - [ ] Execution: type script lines into a PTY (`\r\n → \r`), optional trailing `; exit\r` (posix) / `\rexit\r` (cmd); defaults `waitForExit=false, exit=false, respawnAfterExit=false`; `respawnAfterExit:true, logFailure:true, surfaceFailure:true, continueOnFailure:false` for manual runs.
 - [ ] Status events: `running|succeeded|failed|stopped`; success = exit code 0/undefined and no signal; failure throws unless `continueOnFailure`; optional `timeoutMs`.
 - [ ] PTY session id = `makePtySessionId(projectId, workspaceId, createLifecycleScriptTerminalId(type))`; dedupe active sessions.
-- [ ] Env contract (exact): `EMDASH_TASK_ID`, `EMDASH_TASK_NAME` (slugified, fallback `'task'`), `EMDASH_TASK_PATH`, `EMDASH_ROOT_PATH`, `EMDASH_DEFAULT_BRANCH` (default `'main'`), **`EMDASH_PORT = 50000 + (hash32(portSeed) % 1000) * 10`** with `portSeed = workspace.path` (fallback taskId).
+- [ ] Env contract (exact): `ADE_TASK_ID`, `ADE_TASK_NAME` (slugified, fallback `'task'`), `ADE_TASK_PATH`, `ADE_ROOT_PATH`, `ADE_DEFAULT_BRANCH` (default `'main'`), **`ADE_PORT = 50000 + (hash32(portSeed) % 1000) * 10`** with `portSeed = workspace.path` (fallback taskId).
 - [ ] Output tail capped at 16 KiB; logs surfaced in terminal drawer (⌘J); `run` scripts additionally feed dev-server detection (E6-02 hook).
 
 **Acceptance criteria:**
 - [ ] Setup+run scripts execute in task worktree with correct env; output visible in drawer.
-- [ ] Port isolation: two tasks in same project get different `EMDASH_PORT`s; shell arithmetic (`$((EMDASH_PORT + 1))`) works.
+- [ ] Port isolation: two tasks in same project get different `ADE_PORT`s; shell arithmetic (`$((ADE_PORT + 1))`) works.
 - [ ] Failure of setup surfaces as `failed` status and blocks/continues per policy; timeout enforced.
 
 ---
 
 ## E1-07 — Preserve-pattern file copying into worktrees
 
-**Size:** S · **Depends on:** E1-02, E2-02 · **Crate:** `emdash-core::projects/worktrees`
+**Size:** S · **Depends on:** E1-02, E2-02 · **Crate:** `ade-core::projects/worktrees`
 
-**Story:** New tasks inherit untracked-but-needed files (`.env`, compose overrides) without copying tracked files or Emdash's own config.
+**Story:** New tasks inherit untracked-but-needed files (`.env`, compose overrides) without copying tracked files or ade's own config.
 
 **Ref:** `src/main/core/projects/worktrees/worktree-service.ts` (`copyPreservedFiles` 458-510), `settings/effective-task-settings.ts`
 
 **Subtasks:**
-- [ ] Glob `preservePatterns` from effective task settings at `<worktree>/.emdash.json`.
-- [ ] Skip git-tracked files (`git ls-files --error-unmatch -- <rel>`); never copy `.emdash.json` itself.
+- [ ] Glob `preservePatterns` from effective task settings at `<worktree>/.ade.json`.
+- [ ] Skip git-tracked files (`git ls-files --error-unmatch -- <rel>`); never copy `.ade.json` itself.
 - [ ] Copy untracked matches into worktree (relative paths preserved).
 
 **Acceptance criteria:**
-- [ ] `.env`/`.env.local`/`docker-compose.override.yml` appear in new worktrees; tracked files and `.emdash.json` never copied.
-- [ ] Patterns from task `.emdash.json` override project defaults.
+- [ ] `.env`/`.env.local`/`docker-compose.override.yml` appear in new worktrees; tracked files and `.ade.json` never copied.
+- [ ] Patterns from task `.ade.json` override project defaults.
 
 ---
 
 ## E1-08 — Onboarding + view-state persistence
 
-**Size:** M · **Depends on:** E1-03 · **Crate:** `emdash-core::view_state` + `app-frontend`
+**Size:** M · **Depends on:** E1-03 · **Crate:** `ade-core::view_state` + `app-frontend`
 
 **Story:** First-run experience guides the user from zero to their first task; window/layout state survives restarts.
 
@@ -252,7 +252,7 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 ## E1-09 — Command palette + FTS search + resource monitor view
 
-**Size:** M · **Depends on:** E1-01, E1-03 · **Crate:** `emdash-core::search` + `app-frontend`
+**Size:** M · **Depends on:** E1-01, E1-03 · **Crate:** `ade-core::search` + `app-frontend`
 
 **Story:** ⌘K finds anything (projects, tasks, conversations, commands); resource monitor shows machine health.
 
@@ -272,7 +272,7 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 ## E2-01 — Task model + lifecycle state machine
 
-**Size:** M · **Depends on:** E1-01 · **Crate:** `emdash-core::tasks`
+**Size:** M · **Depends on:** E1-01 · **Crate:** `ade-core::tasks`
 
 **Story:** Tasks exist as durable rows with well-defined statuses and lifecycle events that the rest of the app (UI, telemetry, automations) can rely on.
 
@@ -293,7 +293,7 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 ## E2-02 — Worktree manager
 
-**Size:** L · **Depends on:** E1-03, E2-03 · **Crate:** `emdash-core::projects/worktrees` (`git2` — confirmed: git2 0.21 has full worktree support via `worktree()`, `worktrees()`, `find_worktree()`, `Worktree::prune()`. gix 0.86 does not expose worktree add/list/prune.)
+**Size:** L · **Depends on:** E1-03, E2-03 · **Crate:** `ade-core::projects/worktrees` (`git2` — confirmed: git2 0.21 has full worktree support via `worktree()`, `worktrees()`, `find_worktree()`, `Worktree::prune()`. gix 0.86 does not expose worktree add/list/prune.)
 
 **Story:** Every task gets an isolated worktree on its own branch; the manager creates, validates, reuses, and cleans them safely.
 
@@ -305,16 +305,16 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 - [ ] Worktree validity check: `.git` file exists **and** `git -C <path> rev-parse --is-inside-work-tree` == true.
 - [ ] Branch-from-remote flow: `git fetch <remote>` when source is remote; create `git branch --no-track <branch> <sourceRef>`; `git worktree add <poolPath>/<branchName> <branchName>`; record `git config branch.<branchName>.base <ref>`.
 - [ ] Existing-branch flow: fetch candidates `[baseRemote, origin]`; `git branch --track <branch> <remote>/<branch>`.
-- [ ] Task branch name from E2-03 (prefix `emdash/`, random suffix, Linear exception).
+- [ ] Task branch name from E2-03 (prefix `ade/`, random suffix, Linear exception).
 - [ ] Remove: recursive rm + `git worktree prune`; **never** remove project root; sibling tasks block removal (`workspaceHasRemainingTasks`); `NON_INTERACTIVE_GIT_ENV` + 5s timeout on cleanup.
 - [ ] Workspace rows: `kind worktree|project-root|byoi`, `location local|remote`, `type local|project-ssh|byoi`; worktree-less tasks run in project root.
 - [ ] Preserve patterns integration (E1-07) runs as a setup step: `create-branch → set-branch-base → add-worktree → copy-preserved-files → push-branch` (push non-fatal).
-- [ ] **Shell escaping helper module** — single shared utility (`emdash-core::shell_escape`); all worktree paths, branch names, and git refs go through it; no ad-hoc quoting anywhere in the codebase. Used by E2-02 (worktree paths), E2-06 (PTY spawn), and E4 (git commands).
+- [ ] **Shell escaping helper module** — single shared utility (`ade-core::shell_escape`); all worktree paths, branch names, and git refs go through it; no ad-hoc quoting anywhere in the codebase. Used by E2-02 (worktree paths), E2-06 (PTY spawn), and E4 (git commands).
 - [ ] **Git strategy**: use `git2` for all worktree operations (`worktree()`, `worktrees()`, `find_worktree()`, `Worktree::prune()`). For operations git2 doesn't cover (or that are simpler via CLI), fall back to shelling out to the `git` CLI binary. `git2` is `!Sync` — all git ops must be serialized through a single-threaded queue (use `std::sync::Mutex` on a dedicated `std::thread` or `tokio::task::spawn_blocking`).
 - [ ] PR-source setup (Phase 1): fetch `refs/pull/<n>/head` or add fork remote.
 
 **Acceptance criteria:**
-- [ ] New task → worktree at `~/emdash/worktrees/<project>/<branch>` (or configured dir) on its own branch, isolated.
+- [ ] New task → worktree at `~/ade/worktrees/<project>/<branch>` (or configured dir) on its own branch, isolated.
 - [ ] Disable-worktree setting runs task directly in project root with isolation warning.
 - [ ] Deleting task removes worktree; deleting a task whose worktree has siblings does not remove shared workspace.
 - [ ] Restart: manager re-prunes and re-detects existing worktrees without duplicate worktrees.
@@ -323,7 +323,7 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 ## E2-03 — Task name + branch generation
 
-**Size:** S · **Depends on:** E1-02 · **Crate:** `emdash-core::tasks::naming`
+**Size:** S · **Depends on:** E1-02 · **Crate:** `ade-core::tasks::naming`
 
 **Story:** New tasks get human-friendly unique names and safe branch names automatically.
 
@@ -332,18 +332,18 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 **Subtasks:**
 - [ ] No-title names: human-id style (`separator:'-', capitalize:false`). With title: slug from title.
 - [ ] Sanitize to `[a-z0-9-]`, max length 64.
-- [ ] Branch name: `rawBranch + '-' + suffix` when `appendRandomBranchSuffix` (default true); prefix `branchPrefix ? branchPrefix/branch : branch` (default prefix `'emdash'`); Linear-issue branch names used verbatim (no suffix).
+- [ ] Branch name: `rawBranch + '-' + suffix` when `appendRandomBranchSuffix` (default true); prefix `branchPrefix ? branchPrefix/branch : branch` (default prefix `'ade'`); Linear-issue branch names used verbatim (no suffix).
 
 **Acceptance criteria:**
 - [ ] `autoGenerateName=true` produces `emoji-noun-verb`-style names; explicit title slugs correctly.
-- [ ] Branch names match `emdash/<name>-<suffix>`; toggling `appendRandomBranchSuffix` off disables suffix.
+- [ ] Branch names match `ade/<name>-<suffix>`; toggling `appendRandomBranchSuffix` off disables suffix.
 - [ ] Names/branches are shell-safe and ≤64 chars.
 
 ---
 
 ## E2-04 — Add Task flow (branch source) + provider/model pickers
 
-**Size:** M · **Depends on:** E2-01, E2-02, E2-03, E1-02 · **Crate:** `emdash-core::tasks` + `app-frontend`
+**Size:** M · **Depends on:** E2-01, E2-02, E2-03, E1-02 · **Crate:** `ade-core::tasks` + `app-frontend`
 
 **Story:** One dialog starts a task from a branch, with provider and model chosen, producing a provisioned worktree + seeded conversation.
 
@@ -365,7 +365,7 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 ## E2-05 — Conversation session supervisor (local vs SSH)
 
-**Size:** L · **Depends on:** E2-01 · **Crate:** `emdash-core::conversations`
+**Size:** L · **Depends on:** E2-01 · **Crate:** `ade-core::conversations`
 
 **Story:** Conversations are the durable handle for agent sessions; the supervisor owns session ids, resume state, and local/SSH execution.
 
@@ -388,7 +388,7 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 ## E2-06 — Terminal spawn + TUI agent launch
 
-**Size:** L · **Depends on:** E2-05, E3-01..04, E3-08 · **Crate:** `emdash-terminal` + `emdash-core::pty`
+**Size:** L · **Depends on:** E2-05, E3-01..04, E3-08 · **Crate:** `ade-terminal` + `ade-core::pty`
 
 **⚠️ Platform note:** On Windows, `portable-pty` requires the ConPTY API (Windows 10 version 1809+). UTF-8 output handling differs from the reference's `node-pty`. Test with both cmd and PowerShell; ensure resize/clamp behavior matches across platforms.
 
@@ -398,8 +398,8 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 **Subtasks:**
 - [ ] PTY layer (portable-pty): spawn with `name:'xterm-256color'`, defaults 80×24, cwd = worktree; resize clamps (cols≥2, rows≥1); exit normalization; kill via terminator.
-- [ ] Interactive terminal env: inherit process env; force `TERM=xterm-256color`, `COLORTERM=truecolor`, `TERM_PROGRAM=emdash`; `SHELL` from profile/`$SHELL`/`/bin/zsh`(darwin)/`/bin/bash`; inject `SSH_AUTH_SOCK` via `detectSshAuthSock()` when missing.
-- [ ] **Agent env allowlist** (port exactly): `TERM, COLORTERM, TERM_PROGRAM, HOME, USER, PATH, TMPDIR` + `GLOBAL_AGENT_ENV_VARS` (`EDITOR, VISUAL, GIT_EDITOR, HOSTNAME, LANG, TZ`) + `DISPLAY_ENV_VARS` + `SSH_AUTH_SOCK` + `AGENT_ENV_VARS` (~95 keys: `ANTHROPIC_*`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_*`, `GEMINI_*`, `GOOGLE_*`, `OPENAI_*`, `OPENROUTER_API_KEY`, `GITHUB_TOKEN`, `GH_TOKEN`, `AWS_*`, `AZURE_OPENAI_*`, `GOOSE_*`, `QWEN_*`, `PI_*`, `CODEX_HOME`, `COPILOT_CLI_TOKEN`, proxies…); Windows essential set incl. `PATHEXT` default; hook env when hook server up: `EMDASH_HOOK_PORT`, `EMDASH_PTY_ID`, `EMDASH_HOOK_NONCE`, `EMDASH_HOOK_TOKEN`.
+- [ ] Interactive terminal env: inherit process env; force `TERM=xterm-256color`, `COLORTERM=truecolor`, `TERM_PROGRAM=ade`; `SHELL` from profile/`$SHELL`/`/bin/zsh`(darwin)/`/bin/bash`; inject `SSH_AUTH_SOCK` via `detectSshAuthSock()` when missing.
+- [ ] **Agent env allowlist** (port exactly): `TERM, COLORTERM, TERM_PROGRAM, HOME, USER, PATH, TMPDIR` + `GLOBAL_AGENT_ENV_VARS` (`EDITOR, VISUAL, GIT_EDITOR, HOSTNAME, LANG, TZ`) + `DISPLAY_ENV_VARS` + `SSH_AUTH_SOCK` + `AGENT_ENV_VARS` (~95 keys: `ANTHROPIC_*`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_*`, `GEMINI_*`, `GOOGLE_*`, `OPENAI_*`, `OPENROUTER_API_KEY`, `GITHUB_TOKEN`, `GH_TOKEN`, `AWS_*`, `AZURE_OPENAI_*`, `GOOSE_*`, `QWEN_*`, `PI_*`, `CODEX_HOME`, `COPILOT_CLI_TOKEN`, proxies…); Windows essential set incl. `PATHEXT` default; hook env when hook server up: `ADE_HOOK_PORT`, `ADE_PTY_ID`, `ADE_HOOK_NONCE`, `ADE_HOOK_TOKEN`.
 - [ ] Launch flow: trust check (forced when autoApprove) → ensure hooks installed → provider override settings → resolve executable (host-dependency store / cached install) → build command (`{cli, extraArgs, autoApprove?, initialPrompt?, sessionId, providerSessionId: conversation.sessionId, isResuming, model}` per provider `behavior.prompt.buildCommand`) → **spill large prompts to temp markdown file** (fresh sessions; cleaned on exit) → spawn with merged env + task env vars.
 - [ ] Prompt delivery strategies per provider: argv flag / stdin / keystroke injection (type into TUI after startup) — E3-03.
 - [ ] Respawn: 500 ms delay, `MAX_RESPAWNS = 2`; gated by supervisor decision (`respawnResume`); **disabled when tmux enabled**; emit `agentSessionExitedChannel` + telemetry `agent_run_started/finished` (provider + exit code).
@@ -414,22 +414,22 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 ## E2-07 — Terminal state persistence + resume across restarts
 
-**Size:** L · **Depends on:** E2-05, E2-06, E13-01 (tmux — **optional**; non-tmux fallback works without it) · **Crate:** `emdash-core::pty` + `emdash-terminal`
+**Size:** L · **Depends on:** E2-05, E2-06, E13-01 (tmux — **optional**; non-tmux fallback works without it) · **Crate:** `ade-core::pty` + `ade-terminal`
 
-**Story:** Quit and relaunch Emdash; tasks, terminals, and agent sessions come back without losing work.
+**Story:** Quit and relaunch ade; tasks, terminals, and agent sessions come back without losing work.
 
 **Ref:** `src/main/core/conversations/` (`set-session-id.ts`, hydrate), `conversations/resolve-agent-session-command.ts`, `pty/tmux-session-name.ts`, `workspaces/workspace-lifecycle-service.ts`, `src/main/index.ts` boot order (rehydrate after DB init)
 
 **Subtasks:**
 - [ ] Persist `conversations.session_id` on every start/resume (E2-05).
 - [ ] On boot: rehydrate conversations/terminals per task from DB; recreate PTYs; resume agents via provider resume flags (`--resume <sessionId>` etc.).
-- [ ] Tmux durability path: session name = `'emdash-' + base64url(sessionId)`; create-if-missing (`tmux has-session || tmux -u new-session -d -s <name> <cmd>`), `mouse on`, `history-limit 100000`, attach; kill = `tmux kill-session -t <name>`; when tmux enabled, respawn disabled.
+- [ ] Tmux durability path: session name = `'ade-' + base64url(sessionId)`; create-if-missing (`tmux has-session || tmux -u new-session -d -s <name> <cmd>`), `mouse on`, `history-limit 100000`, attach; kill = `tmux kill-session -t <name>`; when tmux enabled, respawn disabled.
 - [ ] Non-tmux fallback: terminal scrollback/session survives via rehydration best-effort (documented degradation).
 - [ ] Remote rehydrate on SSH reconnect (Phase 3 hook; stub interface now).
 
 **Acceptance criteria:**
 - [ ] Kill-restart test: agent conversation resumes with correct history for resume-capable providers.
-- [ ] With tmux on: process survives app quit; relaunch reattaches to same `emdash-*` session; manual `tmux ls | grep emdash` shows it.
+- [ ] With tmux on: process survives app quit; relaunch reattaches to same `ade-*` session; manual `tmux ls | grep ade` shows it.
 - [ ] Deleting task/terminal kills its tmux session.
 
 ---
@@ -457,7 +457,7 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 ## E2-09 — Task deletion/teardown
 
-**Size:** M · **Depends on:** E2-02, E2-06 · **Crate:** `emdash-core::tasks`
+**Size:** M · **Depends on:** E2-02, E2-06 · **Crate:** `ade-core::tasks`
 
 **Story:** Deleting a task (⌘Backspace) cleans up processes, sessions, worktrees, and view state — safely and idempotently.
 
@@ -495,7 +495,7 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 ## E2-11 — ACP conversation path (structured chat)
 
-**Size:** XL · **Depends on:** E2-05, E3-01 (acp capability), E3-07 · **Phase:** 2 (scope set now) · **Crate:** `emdash-acp` + `emdash-runtime`
+**Size:** XL · **Depends on:** E2-05, E3-01 (acp capability), E3-07 · **Phase:** 2 (scope set now) · **Crate:** `ade-acp` + `ade-runtime`
 
 **Story:** Providers with ACP capability get structured, transcript-driven chat (permissions, turns, history, agent-managed terminals) instead of raw TUI.
 
@@ -520,7 +520,7 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 ## E3-01 — Provider registry + capability descriptors
 
-**Size:** M · **Depends on:** E0 · **Crate:** `emdash-providers` + `emdash-core`
+**Size:** M · **Depends on:** E0 · **Crate:** `ade-providers` + `ade-core`
 
 **Story:** All 35 coding-agent CLIs are registered with their capabilities, metadata, and behavioral descriptors — the single source of truth the rest of the app queries for detection, launch, model selection, and feature gating.
 
@@ -548,9 +548,9 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 ## E3-02 — Host dependency detection + install/update/uninstall
 
-**Size:** L · **Depends on:** E0 · **Crate:** `emdash-core::dependencies`
+**Size:** L · **Depends on:** E0 · **Crate:** `ade-core::dependencies`
 
-**Story:** Emdash detects which agent CLIs are already installed on the host, and can install, update, or remove them — so users don't need to set up agents manually.
+**Story:** ade detects which agent CLIs are already installed on the host, and can install, update, or remove them — so users don't need to set up agents manually.
 
 **Ref:**
 - `src/main/core/dependencies/` (`host-dependency-store.ts`, `install-runner.ts`, `dependency-managers/`)
@@ -575,7 +575,7 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 ## E3-03 — Prompt delivery strategies (argv, stdin, keystroke injection)
 
-**Size:** L · **Depends on:** E3-01 · **Crate:** `emdash-core::pty` + `emdash-providers`
+**Size:** L · **Depends on:** E3-01 · **Crate:** `ade-core::pty` + `ade-providers`
 
 **Story:** Every agent gets its initial prompt in the format it expects — some take a CLI flag, some read stdin, some need it typed into their TUI after launch.
 
@@ -593,14 +593,14 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 **Acceptance criteria:**
 - [ ] Claude launches with `-p "prompt"`; Amp launches and receives prompt on stdin.
-- [ ] A 100KB prompt spills to temp file, is passed as `-p @/tmp/emdash-prompt-xxx.md`, and file is cleaned on exit.
+- [ ] A 100KB prompt spills to temp file, is passed as `-p @/tmp/ade-prompt-xxx.md`, and file is cleaned on exit.
 - [ ] Keystroke injection for a no-flag agent delivers full prompt without truncation.
 
 ---
 
 ## E3-04 — Auto-approve flag plumbing per provider
 
-**Size:** S · **Depends on:** E3-01 · **Crate:** `emdash-core::pty`
+**Size:** S · **Depends on:** E3-01 · **Crate:** `ade-core::pty`
 
 **Story:** Providers that support auto-approve get the flag added to their CLI invocation so agents don't block on permission prompts.
 
@@ -623,7 +623,7 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 ## E3-08 — PTY env allowlist + spawn platform layer
 
-**Size:** M · **Depends on:** E3-01 · **Crate:** `emdash-terminal` + `emdash-core::pty`
+**Size:** M · **Depends on:** E3-01 · **Crate:** `ade-terminal` + `ade-core::pty`
 
 **Story:** Agent processes inherit only the env vars they need — never secrets, never app internals, never user shell cruft. The allowlist is a single, security-reviewed source of truth.
 
@@ -633,15 +633,15 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 - `agents/risky-areas/pty.md`
 
 **Subtasks:**
-- [ ] Env allowlist module (`emdash-core::pty::env_allowlist`): single canonical list; any addition requires PR review.
-- [ ] **Base env**: `TERM=xterm-256color`, `COLORTERM=truecolor`, `TERM_PROGRAM=emdash`, `HOME`, `USER`, `PATH`, `TMPDIR`.
+- [ ] Env allowlist module (`ade-core::pty::env_allowlist`): single canonical list; any addition requires PR review.
+- [ ] **Base env**: `TERM=xterm-256color`, `COLORTERM=truecolor`, `TERM_PROGRAM=ade`, `HOME`, `USER`, `PATH`, `TMPDIR`.
 - [ ] **Global agent vars**: `EDITOR`, `VISUAL`, `GIT_EDITOR`, `HOSTNAME`, `LANG`, `TZ`.
 - [ ] **Display vars**: `DISPLAY`, `WAYLAND_DISPLAY` (Linux).
 - [ ] **SSH agent**: `SSH_AUTH_SOCK` — inject via `detectSshAuthSock()` when present on host but missing in env.
 - [ ] **Provider API keys** (~95 keys exactly per reference): `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_*`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `AWS_*`, `AZURE_OPENAI_*`, `GOOSE_*`, `QWEN_*`, `PI_*`, `CODEX_HOME`, `COPILOT_CLI_TOKEN`, `CURSOR_API_KEY`, `MISTRAL_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `TOGETHER_API_KEY`, `FIREWORKS_API_KEY`, `REPLICATE_API_KEY`, `HUGGINGFACE_API_KEY`, `PERPLEXITY_API_KEY`, `COHERE_API_KEY`, `VOYAGE_API_KEY`, `JINA_API_KEY`, `HYPERBOLIC_API_KEY`, and HTTP proxy vars (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, plus lowercase variants).
 - [ ] **Windows essential set**: `PATHEXT`, `SystemRoot`, `USERPROFILE`, `LOCALAPPDATA`, `APPDATA`, `ALLUSERSPROFILE`, `ProgramFiles`, `ProgramFiles(x86)`, `CommonProgramFiles`.
-- [ ] **Hook env** (when E3-05 hook server is running): `EMDASH_HOOK_PORT`, `EMDASH_PTY_ID`, `EMDASH_HOOK_NONCE`, `EMDASH_HOOK_TOKEN`.
-- [ ] **Task env contract**: `EMDASH_TASK_ID`, `EMDASH_TASK_NAME`, `EMDASH_TASK_PATH`, `EMDASH_ROOT_PATH`, `EMDASH_DEFAULT_BRANCH`, `EMDASH_PORT` (from E1-06).
+- [ ] **Hook env** (when E3-05 hook server is running): `ADE_HOOK_PORT`, `ADE_PTY_ID`, `ADE_HOOK_NONCE`, `ADE_HOOK_TOKEN`.
+- [ ] **Task env contract**: `ADE_TASK_ID`, `ADE_TASK_NAME`, `ADE_TASK_PATH`, `ADE_ROOT_PATH`, `ADE_DEFAULT_BRANCH`, `ADE_PORT` (from E1-06).
 - [ ] `buildAgentEnv(provider_id, task_env, hook_env) → HashMap<String, String>`: starts with base env, merges allowlisted vars from process env, overlays task env, overlays hook env. Returns the final map. Never leaks non-allowlisted vars.
 - [ ] **Security test**: a non-allowlisted env var (`SECRET_TOKEN=abc`) present in parent process is NOT present in `buildAgentEnv` output.
 
@@ -655,7 +655,7 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 
 ## E14-01 — Keybinding registry + default map + scoping engine
 
-**Size:** L · **Depends on:** E1-02 (settings) · **Crate:** `app-frontend` (+ `emdash-core::settings` for persistence)
+**Size:** L · **Depends on:** E1-02 (settings) · **Crate:** `app-frontend` (+ `ade-core::settings` for persistence)
 
 **Story:** Every keyboard shortcut in the app works as documented, users can customize them in Settings, and shortcuts only fire in the right context — no accidental ⌘W closing a tab while typing in the editor.
 

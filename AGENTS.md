@@ -1,6 +1,6 @@
-# AGENTS.md — emdash-rust
+# AGENTS.md — ade
 
-Rust + Tauri 2 implementation of an Emdash-style Agentic Development Environment (ADE).
+Rust + Tauri 2 implementation of ade, an Agentic Development Environment (ADE).
 
 ## Before you start
 
@@ -16,18 +16,18 @@ Read these in order:
 
 ```
 Cargo workspace (12 crates):
-  emdash-core        domain modules (db, settings, projects, tasks, ...)
-  emdash-git         git2 worktrees, status, diff, commit, push
-  emdash-providers   provider registry (35 agents) + capability descriptors
-  emdash-acp         ACP client (Phase 2)
-  emdash-terminal    portable-pty, tmux
-  emdash-ssh         russh (Phase 3)
-  emdash-scheduler   cron (Phase 2)
-  emdash-integrations issue trackers (Phase 2)
-  emdash-telemetry   allowlisted events (Phase 2)
-  emdash-server      remote workspace daemon (Phase 3)
-  emdash-runtime     out-of-process workers (Phase 2)
-  emdash-app         Tauri 2 shell (main window, command modules, events)
+  ade-core        domain modules (db, settings, projects, tasks, ...)
+  ade-git         git2 worktrees, status, diff, commit, push
+  ade-providers   provider registry (35 agents) + capability descriptors
+  ade-acp         ACP client (Phase 2)
+  ade-terminal    portable-pty, tmux
+  ade-ssh         russh (Phase 3)
+  ade-scheduler   cron (Phase 2)
+  ade-integrations issue trackers (Phase 2)
+  ade-telemetry   allowlisted events (Phase 2)
+  ade-server      remote workspace daemon (Phase 3)
+  ade-runtime     out-of-process workers (Phase 2)
+  ade-app         Tauri 2 shell (main window, command modules, events)
 app-frontend/        React + Vite webview UI
 .github/workflows/   CI (fmt + clippy + test; frontend typecheck)
 ```
@@ -55,7 +55,7 @@ make check       # full merge gate: fmt + clippy + test
 
 ## Conventions (short version — ARCHITECTURE.md is authoritative)
 
-- `Result<T, emdash_core::Error>` everywhere. No panics across crate boundaries.
+- `Result<T, ade_core::Error>` everywhere. No panics across crate boundaries.
 - Versioned JSON for all JSON DB columns (`read_versioned`/`write_versioned`).
 - Services are `Arc<dyn Trait>`; wired once in the `App` struct (ARCHITECTURE.md §7).
 - Tauri commands are thin: call a domain fn, map error to `String`, return a DTO.
