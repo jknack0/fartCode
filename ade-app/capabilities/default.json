@@ -10,7 +10,6 @@
     "shell:allow-open",
     "process:default",
     "os:default",
-    "updater:default",
     "core:event:default",
     "core:event:allow-listen"
   ]
