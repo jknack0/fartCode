@@ -30,7 +30,7 @@ def opt_usize(v):
 def env_str(v):  # {"K": "V", ...} -> Some(vec![("K".to_string(), "V".to_string())]) | None
     if not v:
         return "None"
-    pairs = ", ".join(f'("{k}".to_string(), {s(v[k])}.to_string())' for k, vv in v.items())
+    pairs = ", ".join(f"({s(k)}.to_string(), {s(vv)}.to_string())" for k, vv in v.items())
     return f'Some(vec![{pairs}])'
 
 def prompt_desc(p):

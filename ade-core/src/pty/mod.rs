@@ -49,18 +49,20 @@ pub const PROMPT_SPILL_DIR: &str = ".ade/prompts";
 /// Auto-approve resolution (ticket E3-04): whether `ctx.auto_approve` should
 /// be true for a launch.
 ///
-/// - **Trust gating**: `autoTrustWorktrees` (default true) makes auto-approve
-///   implicitly on — a trusted worktree means the agent runs without
-///   permission prompts.
+/// - **Trust gating**: a trusted worktree makes auto-approve implicitly on
+///   (reference: trust ⇒ no permission prompts). Callers MUST pass the
+///   *resolved* trust state — E2-04's `should_auto_trust` / the trust row —
+///   not the raw `autoTrustWorktrees` setting, or every launch would
+///   auto-approve even on an explicitly untrusted worktree.
 /// - **Conversation config**: the conversation's own `autoApprove` (e.g. the
 ///   dialog's "run with auto-approve" toggle).
 /// - **Forced**: `tasks.autoApproveByDefault` always passes the flag.
 pub fn resolve_auto_approve(
     conversation_auto_approve: bool,
     auto_approve_by_default: bool,
-    auto_trust_worktrees: bool,
+    worktree_is_trusted: bool,
 ) -> bool {
-    auto_trust_worktrees || conversation_auto_approve || auto_approve_by_default
+    worktree_is_trusted || conversation_auto_approve || auto_approve_by_default
 }
 
 /// Convenience: resolves from the task settings group (E3-04 wiring for
