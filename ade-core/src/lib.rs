@@ -5,6 +5,9 @@
 
 pub mod db;
 pub mod error;
+pub mod events;
+pub mod git;
+pub mod projects;
 pub mod settings;
 
 pub use error::Error;

@@ -26,18 +26,25 @@ dependencies = [
 name = "ade-core"
 version = "0.1.0"
 dependencies = [
+ "ade-git",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "thiserror 2.0.19",
+ "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
 name = "ade-git"
 version = "0.1.0"
+dependencies = [
+ "ade-core",
+ "tempfile",
+]
 
 [[package]]
 name = "ade-integrations"

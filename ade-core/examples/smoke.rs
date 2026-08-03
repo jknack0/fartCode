@@ -12,11 +12,15 @@
 //! Exit code 0 = SMOKE OK, non-zero = a check failed.
 
 use std::path::Path;
+use std::process::Command;
+use std::sync::Arc;
 
 use ade_core::db::{Db, SqliteDb};
+use ade_core::events::EventBus;
+use ade_core::projects::ProjectStore;
 use ade_core::settings::{
-    DbSettingsStore, DefaultBranch, KvStore, ProjectGroup, SettingsStore, DEFAULT_AGENT, PROJECT,
-    PROJECT_CONFIG_FILE,
+    DbSettingsStore, DefaultBranch, KvStore, ProjectGroup, SettingsStore, DEFAULT_AGENT,
+    LOCAL_PROJECT, PROJECT, PROJECT_CONFIG_FILE,
 };
 
 fn main() {
@@ -222,6 +226,135 @@ fn main() {
             .unwrap()
             .is_none(),
         "kv delete",
+    );
+
+    // -- 10. Projects (E1-03): create local, duplicate, close/open, clone ----
+    let bus = Arc::new(ade_core::events::BroadcastEventBus::new(16));
+    let git: Arc<dyn ade_core::git::GitOps> = Arc::new(ade_git::CliGit);
+    let store = ade_core::projects::DbProjectStore::new(
+        db.clone(),
+        Arc::new(settings.clone()),
+        git.clone(),
+        bus.clone(),
+    );
+    let mut events = bus.subscribe();
+
+    // A real repo with one commit on main.
+    let repo2 = tmp.path().join("demo");
+    std::fs::create_dir_all(&repo2).unwrap();
+    git.as_ref().init(&repo2).unwrap();
+    std::fs::write(repo2.join("README.md"), "# demo\n").unwrap();
+    Command::new("git")
+        .arg("-C")
+        .arg(&repo2)
+        .args([
+            "-c",
+            "user.name=Smoke",
+            "-c",
+            "user.email=s@ade.dev",
+            "commit",
+            "-am",
+            "init",
+        ])
+        .status()
+        .unwrap();
+    Command::new("git")
+        .arg("-C")
+        .arg(&repo2)
+        .args(["branch", "-M", "main"])
+        .status()
+        .unwrap();
+
+    let project = store.create_local(&repo2, false).unwrap();
+    println!(
+        "   project: name={} base_ref={} provider={}",
+        project.name,
+        project.base_ref(),
+        project.workspace_provider.as_str()
+    );
+    check(project.base_ref() == "main", "base ref resolved on create");
+    check(
+        std::fs::read_to_string(repo2.join(".git/info/exclude"))
+            .map(|c| c.lines().any(|l| l.trim() == ".ade/"))
+            .unwrap_or(false),
+        ".ade/ excluded from git",
+    );
+    check(
+        matches!(
+            events.try_recv(),
+            Ok(ade_core::events::InternalEvent::ProjectAdded { .. })
+        ),
+        "project:added emitted",
+    );
+    check(
+        project.repository_workspace_id.is_some(),
+        "repository workspace created",
+    );
+
+    let dup = store.create_local(&repo2, false).unwrap();
+    check(dup.id == project.id, "duplicate add opens existing project");
+
+    store.close(&project.id).unwrap();
+    let opened = store.open(&project.id).unwrap();
+    check(
+        opened.worktrees.iter().any(|w| w.path == project.path),
+        "close/open re-detects the main worktree",
+    );
+
+    // Clone flow into an overridden (temp) projects dir.
+    settings
+        .set(
+            &LOCAL_PROJECT,
+            ade_core::settings::LocalProjectGroup {
+                default_projects_directory: tmp
+                    .path()
+                    .join("repositories")
+                    .to_string_lossy()
+                    .into_owned(),
+                default_worktree_directory: tmp
+                    .path()
+                    .join("worktrees")
+                    .to_string_lossy()
+                    .into_owned(),
+                write_agent_config_to_git_ignore: true,
+            },
+        )
+        .unwrap();
+    let bare = tmp.path().join("bare.git");
+    Command::new("git")
+        .args(["init", "--bare", bare.to_str().unwrap()])
+        .status()
+        .unwrap();
+    Command::new("git")
+        .arg("-C")
+        .arg(&repo2)
+        .args(["remote", "add", "origin", bare.to_str().unwrap()])
+        .status()
+        .unwrap();
+    Command::new("git")
+        .arg("-C")
+        .arg(&repo2)
+        .args(["push", "-u", "origin", "main"])
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args([
+            "--git-dir",
+            bare.to_str().unwrap(),
+            "symbolic-ref",
+            "HEAD",
+            "refs/heads/main",
+        ])
+        .status()
+        .unwrap();
+    let clone = store.create_clone(bare.to_str().unwrap()).unwrap();
+    check(
+        clone.base_ref() == "origin/main",
+        "clone base ref resolves via remote HEAD",
+    );
+    check(
+        clone.path.ends_with("repositories/bare"),
+        "clone lands in configured projects dir (named after the URL)",
     );
 
     println!(

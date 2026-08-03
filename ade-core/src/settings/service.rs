@@ -50,6 +50,33 @@ pub trait SettingsStore: Send + Sync {
     /// Moves the project's local shareable values into its repo `.ade.json`
     /// and clears them from the DB.
     fn share_with_team(&self, project_id: &str) -> Result<(), Error>;
+
+    // -- Project settings (used by `projects` — E1-03) ----------------------
+
+    /// Seeds a `project_settings` row with defaults (idempotent).
+    fn seed_project_settings(&self, project_id: &str, repo_dir: &Path) -> Result<(), Error>;
+
+    /// Effective project settings (defaults < `.ade.json` < DB-shareable).
+    fn get_project_settings(
+        &self,
+        project_id: &str,
+        repo_dir: &Path,
+    ) -> Result<ProjectSettings, Error>;
+
+    /// Stores local project settings (full-replace — see the concrete type).
+    fn update_project_settings(
+        &self,
+        project_id: &str,
+        repo_dir: &Path,
+        settings: &ProjectSettings,
+    ) -> Result<(), Error>;
+
+    /// Runs the legacy `.emdash.json` migration once (idempotent).
+    fn migrate_legacy_project_settings(
+        &self,
+        project_id: &str,
+        repo_dir: &Path,
+    ) -> Result<(), Error>;
 }
 
 /// Concrete settings store backed by SQLite (`app_settings` +
@@ -525,6 +552,35 @@ impl SettingsStore for DbSettingsStore {
             )?;
             Ok(())
         })
+    }
+
+    fn seed_project_settings(&self, project_id: &str, repo_dir: &Path) -> Result<(), Error> {
+        self.seed_project_settings(project_id, repo_dir)
+    }
+
+    fn get_project_settings(
+        &self,
+        project_id: &str,
+        repo_dir: &Path,
+    ) -> Result<ProjectSettings, Error> {
+        self.get_project_settings(project_id, repo_dir)
+    }
+
+    fn update_project_settings(
+        &self,
+        project_id: &str,
+        repo_dir: &Path,
+        settings: &ProjectSettings,
+    ) -> Result<(), Error> {
+        self.update_project_settings(project_id, repo_dir, settings)
+    }
+
+    fn migrate_legacy_project_settings(
+        &self,
+        project_id: &str,
+        repo_dir: &Path,
+    ) -> Result<(), Error> {
+        self.migrate_legacy_project_settings(project_id, repo_dir)
     }
 }
 
