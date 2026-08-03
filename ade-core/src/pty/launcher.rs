@@ -13,7 +13,8 @@ use std::time::Duration;
 
 use ade_providers::{PromptStrategy, ProviderDescriptor};
 
-use crate::conversations::resolve_agent_session_command_args;
+use crate::conversations::model::Conversation;
+use crate::conversations::{resolve_agent_session_command_args, ConversationStore};
 use crate::dependencies::HostDependencyStore;
 use crate::events::{BroadcastEventBus, EventBus, InternalEvent};
 use crate::terminals::lifecycle::task_env;
@@ -107,6 +108,10 @@ pub struct AgentLauncher {
     pty: Arc<dyn PtyManager>,
     deps: Arc<HostDependencyStore>,
     events: Arc<BroadcastEventBus>,
+    /// When set, every launch persists the resolved session id (E2-07:
+    /// "persist conversations.session_id on every start/resume" — the
+    /// restart-survival contract).
+    conversations: Option<Arc<dyn ConversationStore>>,
 }
 
 impl AgentLauncher {
@@ -115,7 +120,53 @@ impl AgentLauncher {
         deps: Arc<HostDependencyStore>,
         events: Arc<BroadcastEventBus>,
     ) -> Self {
-        Self { pty, deps, events }
+        Self {
+            pty,
+            deps,
+            events,
+            conversations: None,
+        }
+    }
+
+    /// Opts into session-id persistence (E2-07).
+    pub fn with_conversation_store(mut self, store: Arc<dyn ConversationStore>) -> Self {
+        self.conversations = Some(store);
+        self
+    }
+
+    /// Boot rehydration (E2-07, reference `hydrateConversation` PTY path):
+    /// rebuilds the launch context for a stored conversation and runs it.
+    /// `is_resuming = session_id.is_some()` — any previously-spawned
+    /// conversation resumes (the reference rule); `initial_prompt` is NOT
+    /// re-sent on resume (the reference passes it only on first spawn).
+    pub fn rehydrate(
+        &self,
+        conversation: &Conversation,
+        worktree: &RehydrateTarget,
+    ) -> Result<AgentLaunchOutcome, Error> {
+        let is_resuming = conversation.session_id.is_some();
+        let ctx = AgentLaunchContext {
+            provider_id: worktree.provider_id.clone(),
+            conversation_id: conversation.id.clone(),
+            session_id: conversation.session_id.clone(),
+            is_resuming,
+            auto_approve: worktree.auto_approve,
+            model: conversation.config.model.clone(),
+            initial_prompt: None, // resume never re-sends the prompt
+            worktree: worktree.worktree.clone(),
+            task_env: task_env(
+                &worktree.task_id,
+                &worktree.task_name,
+                &worktree.worktree,
+                &worktree.root_path,
+                "main",
+                &worktree.worktree.to_string_lossy(),
+            ),
+            hook_env: None,
+            respawn_resume: false,
+            tmux_enabled: false,
+        };
+        self.run(&ctx)
     }
 
     /// Resolves the provider executable: cached host-dependency detection
@@ -157,6 +208,22 @@ impl AgentLauncher {
             ctx.is_resuming,
             None,
         );
+
+        // E2-07: persist the session id on EVERY start/resume (the reference
+        // setSessionId — single guarded UPDATE). Non-fatal: a vanished
+        // conversation logs and continues the launch.
+        if let Some(store) = &self.conversations {
+            match store.set_session_id(&ctx.conversation_id, &provider_session_id) {
+                Ok(()) => {}
+                Err(Error::ConversationNotFound(_)) | Err(Error::EmptySessionId) => {
+                    tracing::warn!(
+                        conversation = %ctx.conversation_id,
+                        "could not persist session id (non-fatal)"
+                    );
+                }
+                Err(e) => return Err(e),
+            }
+        }
 
         // Provider env vars: the registry names them (E3-01, allowlisted by
         // construction); the launcher pulls their VALUES from the process
@@ -429,6 +496,18 @@ impl AgentLauncher {
         }
         Ok(())
     }
+}
+
+/// The per-conversation context the app shell gathers for boot rehydration
+/// (E2-07): which provider/task/worktree the stored conversation belongs to.
+#[derive(Debug, Clone)]
+pub struct RehydrateTarget {
+    pub provider_id: String,
+    pub task_id: String,
+    pub task_name: String,
+    pub worktree: PathBuf,
+    pub root_path: PathBuf,
+    pub auto_approve: bool,
 }
 
 /// Cleans a spilled prompt file when the launch-attempt scope exits — on

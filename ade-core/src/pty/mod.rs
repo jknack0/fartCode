@@ -8,6 +8,7 @@
 
 pub mod env_allowlist;
 pub mod launcher;
+pub mod tmux;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

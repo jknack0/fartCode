@@ -16,7 +16,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use ade_core::conversations::ConversationStore;
-use ade_core::db::{Db, SqliteDb};
+use ade_core::db::SqliteDb;
 use ade_core::events::EventBus;
 use ade_core::projects::ProjectStore;
 use ade_core::settings::{
@@ -1000,6 +1000,48 @@ fn main() {
         tmux_enabled: false,
     };
     check(true, "launcher context carries the full launch surface");
+
+    // -- 25. Terminal persistence + tmux durability (E2-07) ------------------
+    use ade_core::pty::tmux::{
+        build_tmux_shell_line, make_tmux_session_name, parse_tmux_session_name,
+    };
+    let tname = make_tmux_session_name("conv-xyz");
+    check(
+        tname.starts_with("ade-") && parse_tmux_session_name(&tname).as_deref() == Some("conv-xyz"),
+        "tmux session name round-trips",
+    );
+    check(
+        parse_tmux_session_name("not-ours").is_none(),
+        "foreign tmux names rejected",
+    );
+    let tline = build_tmux_shell_line(&tname, "amp run");
+    check(
+        tline.contains("has-session")
+            && tline.contains("new-session -d")
+            && tline.contains("attach-session"),
+        "tmux shell line: create-if-missing + attach",
+    );
+    check(
+        tline.contains("history-limit 100000"),
+        "tmux history-limit applied",
+    );
+    use ade_core::conversations::DbConversationStore;
+    use ade_core::db::Db;
+    let persist_db = ade_core::db::SqliteDb::init_in_memory().unwrap();
+    let persist_store = DbConversationStore::new(
+        persist_db.clone(),
+        Arc::new(ade_core::events::BroadcastEventBus::new(8)),
+    );
+    check(
+        persist_store
+            .set_session_id("smoke-missing", "sid-1")
+            .is_err(),
+        "set_session_id errors on a missing conversation",
+    );
+    check(
+        persist_store.set_session_id("smoke-missing", "").is_err(),
+        "set_session_id errors on an empty id",
+    );
 
     println!(
         "\n== SMOKE {} ==",

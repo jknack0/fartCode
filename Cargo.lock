@@ -32,6 +32,7 @@ dependencies = [
  "ade-git",
  "ade-providers",
  "ade-terminal",
+ "base64 0.22.1",
  "glob",
  "rusqlite",
  "serde",

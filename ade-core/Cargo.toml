@@ -15,6 +15,7 @@ sha2 = { workspace = true }
 glob = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+base64 = "0.22"
 tracing = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 
