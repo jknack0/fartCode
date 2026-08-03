@@ -65,19 +65,11 @@ pub fn resolve_auto_approve(
     worktree_is_trusted || conversation_auto_approve || auto_approve_by_default
 }
 
-/// Convenience: resolves from the task settings group (E3-04 wiring for
-/// E2-06's launcher).
-pub fn auto_approve_from_settings(
-    conversation_auto_approve: bool,
-    tasks: &crate::settings::TaskGroup,
-) -> bool {
-    resolve_auto_approve(
-        conversation_auto_approve,
-        tasks.auto_approve_by_default,
-        tasks.auto_trust_worktrees,
-    )
-}
-
+/// Convenience removed deliberately: a settings-group wrapper here would
+/// pass the raw `autoTrustWorktrees` setting into `resolve_auto_approve`,
+/// which defaults to true and would auto-approve every launch. E2-06 must
+/// pass the *resolved* trust state (E2-04's `should_auto_trust` / trust row)
+/// instead.
 /// Spill a long prompt to `<worktree>/.ade/prompts/<uuid>.md` and return the
 /// path. Callers must `cleanup_spilled_prompt` it when the agent exits
 /// (acceptance 2: "file is cleaned on exit").
@@ -706,32 +698,6 @@ mod tests {
         assert!(resolve_auto_approve(false, true, false));
         // Nothing on → off.
         assert!(!resolve_auto_approve(false, false, false));
-    }
-
-    #[test]
-    fn auto_approve_from_settings_group() {
-        use crate::settings::TaskGroup;
-        let default_tasks = TaskGroup::default();
-        assert!(
-            auto_approve_from_settings(false, &default_tasks),
-            "trust default => on"
-        );
-        assert!(!auto_approve_from_settings(
-            false,
-            &TaskGroup {
-                auto_approve_by_default: false,
-                auto_trust_worktrees: false,
-                ..TaskGroup::default()
-            }
-        ));
-        assert!(auto_approve_from_settings(
-            true,
-            &TaskGroup {
-                auto_approve_by_default: false,
-                auto_trust_worktrees: false,
-                ..TaskGroup::default()
-            }
-        ));
     }
 
     #[test]
