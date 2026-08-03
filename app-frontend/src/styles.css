@@ -1,38 +1,259 @@
 :root {
-  color-scheme: dark;
-  --bg: #1a1b26;
-  --fg: #c0caf5;
-  --accent: #e0af68;
+  --navy: #101828;
+  --navy-2: #182236;
+  --amber: #d97706;
+  --amber-dim: #b45309;
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+  --line: #26324a;
+  --danger: #dc2626;
 }
 
 * {
   box-sizing: border-box;
-  margin: 0;
-  padding: 0;
 }
 
 html,
 body,
 #root {
   height: 100%;
+  margin: 0;
 }
 
 body {
-  background: var(--bg);
-  color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--navy);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
 }
 
 .shell {
+  display: flex;
   height: 100%;
+}
+
+/* Sidebar ----------------------------------------------------------------- */
+
+.sidebar {
+  width: 240px;
+  min-width: 240px;
+  background: var(--navy-2);
+  border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--amber);
+}
+
+.sidebar-header button {
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 4px;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.sidebar-section h3 {
+  margin: 10px 12px 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.sidebar ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.project-row,
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.project-row:hover,
+.task-row:hover {
+  background: rgba(217, 119, 6, 0.08);
+}
+
+.project-row.selected,
+.task-row.selected {
+  background: rgba(217, 119, 6, 0.18);
+  border-left: 2px solid var(--amber);
+}
+
+.chevron {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  width: 14px;
+  padding: 0;
+}
+
+.project-name {
+  font-weight: 600;
+}
+
+.task-row .task-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+
+.status-dot.status-in_progress {
+  background: var(--amber);
+}
+.status-dot.status-todo {
+  background: #6b7280;
+}
+.status-dot.status-done,
+.status-dot.status-review {
+  background: #16a34a;
+}
+.status-dot.status-cancelled {
+  background: var(--danger);
+}
+
+.pin {
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+.empty {
+  padding: 4px 12px;
+  color: var(--muted);
+  font-style: italic;
+  font-size: 11px;
+}
+
+/* Main -------------------------------------------------------------------- */
+
+.main {
+  flex: 1;
+  display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
+  padding: 24px;
+}
+
+.placeholder {
+  text-align: center;
+  max-width: 420px;
+}
+
+.placeholder h1 {
+  color: var(--amber);
+  margin-bottom: 8px;
 }
 
 .muted {
-  opacity: 0.6;
-  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.error {
+  color: #fca5a5;
+}
+
+/* Modals ------------------------------------------------------------------ */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.modal {
+  background: var(--navy-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  width: 380px;
+}
+
+.modal h2 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  color: var(--amber);
+}
+
+.modal input {
+  width: 100%;
+  margin: 10px 0;
+  padding: 7px 9px;
+  background: var(--navy);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+button.primary {
+  background: var(--amber);
+  border: none;
+  color: #1a1206;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+button.danger {
+  background: var(--danger);
+  border: none;
+  color: white;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.modal-actions button:not(.primary):not(.danger) {
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
 }

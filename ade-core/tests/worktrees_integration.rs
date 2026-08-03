@@ -23,6 +23,7 @@ use ade_git::CliGit;
 struct Fixture {
     _tmp: tempfile::TempDir,
     db: Arc<SqliteDb>,
+    settings: Arc<DbSettingsStore>,
     service: TaskCreationService,
     project_id: String,
     repo: PathBuf,
@@ -76,6 +77,7 @@ impl Fixture {
         Self {
             _tmp: tmp,
             db,
+            settings,
             service,
             project_id: project.id.clone(),
             repo,
@@ -270,4 +272,46 @@ fn fixture_provisions_a_worktree() {
         )
         .unwrap();
     assert_eq!(kind, "worktree");
+}
+
+/// E1-04 acceptance: deleting a project tears down worktrees + rows (FK
+/// cascade verified) and removes the worktree pool dir from disk.
+#[test]
+fn delete_project_cascades_rows_and_tears_down_worktrees() {
+    let fx = Fixture::new();
+    let wt = fx.create_task_with_worktree("ade/delete-me");
+
+    let store = DbProjectStore::new(
+        fx.db.clone(),
+        fx.settings.clone(),
+        Arc::new(CliGit),
+        Arc::new(BroadcastEventBus::new(8)),
+    );
+    let project_id = fx.project_id.clone();
+    assert!(wt.exists(), "worktree exists before delete");
+
+    store.delete(&project_id).unwrap();
+
+    // Rows gone (FK cascade).
+    let counts: (i64, i64, i64, i64) = fx
+        .db
+        .conn()
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT
+               (SELECT COUNT(*) FROM projects),
+               (SELECT COUNT(*) FROM tasks),
+               (SELECT COUNT(*) FROM workspaces),
+               (SELECT COUNT(*) FROM conversations)",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(counts, (0, 0, 0, 0), "all rows cascade-deleted: {counts:?}");
+
+    // Worktree pool dir torn down from disk. wt = <pool>/ade/<branch>, so the
+    // pool is two levels up.
+    let pool = wt.parent().unwrap().parent().unwrap();
+    assert!(!pool.exists(), "worktree pool removed: {}", pool.display());
 }

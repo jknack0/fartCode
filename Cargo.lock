@@ -10,6 +10,8 @@ version = "0.1.0"
 name = "ade-app"
 version = "0.1.0"
 dependencies = [
+ "ade-core",
+ "ade-git",
  "serde",
  "serde_json",
  "tauri",

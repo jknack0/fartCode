@@ -279,16 +279,58 @@ impl DbProjectStore {
     }
 
     fn delete(&self, id: &str) -> Result<(), Error> {
+        // Fetch the project first so we can tear down its worktree pool
+        // (providers/rows are removed by the FK cascade).
+        let project = self
+            .get(id)?
+            .ok_or_else(|| Error::ProjectNotFound(id.into()))?;
+
+        // One transaction: capture the project's workspace rows (task
+        // worktrees + the repository workspace — `workspaces` has no FK to
+        // projects, so they'd orphan), delete the project row (cascades
+        // tasks + conversations), then drop the orphaned workspace rows.
         self.with_conn(|conn| {
-            conn.execute("DELETE FROM projects WHERE id = ?1", [id])?;
+            let tx = conn.unchecked_transaction()?;
+            {
+                let mut stmt = tx.prepare(
+                    "SELECT workspace_id FROM tasks WHERE project_id = ?1 AND workspace_id IS NOT NULL
+                     UNION
+                     SELECT repository_workspace_id FROM projects
+                     WHERE id = ?1 AND repository_workspace_id IS NOT NULL",
+                )?;
+                let rows = stmt.query_map([id], |row| row.get::<_, String>(0))?;
+                let workspace_ids: Vec<String> =
+                    rows.collect::<Result<Vec<_>, _>>().map_err(Error::from)?;
+                tx.execute("DELETE FROM projects WHERE id = ?1", [id])?;
+                for wid in &workspace_ids {
+                    tx.execute("DELETE FROM workspaces WHERE id = ?1", [wid])?;
+                }
+            }
+            tx.commit()?;
             Ok(())
         })?;
+
+        // Teardown (E1-04): remove the project's worktree pool dir
+        // (default_worktree_directory/<project>) best-effort — never the
+        // project root itself. On-disk worktrees would otherwise orphan
+        // their git metadata. Note: the pool segment is the project NAME
+        // (reference parity), so two same-named projects share a pool and
+        // deleting one removes the other's on-disk worktrees — documented
+        // limitation until the segment scheme changes (ADR-0015).
+        if let Ok(pool) =
+            crate::projects::provider::worktree_pool_path(self.settings.as_ref(), &project)
+        {
+            if pool.exists() && pool != project.path {
+                if let Err(e) = std::fs::remove_dir_all(&pool) {
+                    tracing::warn!(path = %pool.display(), error = %e, "worktree pool teardown failed (non-fatal)");
+                }
+            }
+        }
         self.event_bus
             .send(InternalEvent::ProjectDeleted { id: id.into() });
         Ok(())
     }
 }
-
 impl ProjectStore for DbProjectStore {
     fn create_local(&self, path: &Path, init_if_missing: bool) -> Result<Project, Error> {
         // Validate the directory (realpath so duplicate detection is exact).
