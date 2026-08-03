@@ -27,11 +27,18 @@ def prompt_arm(p):
 def opt_usize(v):
     return "None" if v is None else f"Some({int(v)})"
 
+def env_str(v):  # {"K": "V", ...} -> Some(vec![("K".to_string(), "V".to_string())]) | None
+    if not v:
+        return "None"
+    pairs = ", ".join(f'("{k}".to_string(), {s(v[k])}.to_string())' for k, vv in v.items())
+    return f'Some(vec![{pairs}])'
+
 def prompt_desc(p):
     return (
         "PromptDescriptor {\n"
         f"            strategy: {prompt_arm(p)},\n"
         f"            auto_approve_flag: {opt_str(p['autoApproveFlag'])},\n"
+        f"            auto_approve_env: {env_str(p.get('autoApproveEnv'))},\n"
         f"            initial_prompt_flag: {opt_str(p['initialPromptFlag'])},\n"
         f"            resume_flag: {opt_str(p['resumeFlag'])},\n"
         f"            session_id_flag: {opt_str(p['sessionIdFlag'])},\n"

@@ -818,6 +818,39 @@ fn main() {
         check(!path.exists(), "spilled prompt file is cleaned on exit");
     }
 
+    // -- 19. Auto-approve (E3-04) --------------------------------------------
+    use ade_core::pty::resolve_auto_approve;
+    check(
+        resolve_auto_approve(false, false, true),
+        "default trust => auto-approve implicitly on",
+    );
+    check(
+        !resolve_auto_approve(false, false, false),
+        "no trust / toggle / default => off",
+    );
+    check(
+        resolve_auto_approve(false, true, false),
+        "autoApproveByDefault forces auto-approve",
+    );
+    let codex = ade_providers::get("codex").unwrap();
+    check(
+        codex.capabilities.auto_approve && codex.prompt.auto_approve_flag.is_some(),
+        "codex declares autoApprove capability + flag",
+    );
+    let claude_ctx = ade_core::pty::CommandContext {
+        auto_approve: true,
+        initial_prompt: Some("hi".into()),
+        ..ade_core::pty::CommandContext::default()
+    };
+    let claude = ade_providers::get("claude").unwrap();
+    let cmd = ade_core::pty::build_command(&claude_ctx, claude);
+    check(
+        cmd.args
+            .iter()
+            .any(|a| a == "--dangerously-skip-permissions"),
+        "claude auto-approve passes its flag",
+    );
+
     println!(
         "\n== SMOKE {} ==",
         if failures == 0 { "OK" } else { "FAILED" }

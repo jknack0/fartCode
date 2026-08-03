@@ -30,6 +30,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("-i".to_string()) },
             auto_approve_flag: Some("--dangerously-skip-permissions".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: Some("-i".to_string()),
             resume_flag: None,
             session_id_flag: Some("--conversation=".to_string()),
@@ -71,6 +72,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("".to_string()) },
             auto_approve_flag: Some("--dangerously-skip-permissions".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: Some("".to_string()),
             resume_flag: Some("--resume".to_string()),
             session_id_flag: Some("--session-id".to_string()),
@@ -112,6 +114,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("".to_string()) },
             auto_approve_flag: Some("-c approval_policy=\"never\" -c sandbox_mode=\"danger-full-access\" --dangerously-bypass-hook-trust".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: Some("".to_string()),
             resume_flag: Some("resume".to_string()),
             session_id_flag: Some(" ".to_string()),
@@ -153,6 +156,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("--".to_string()) },
             auto_approve_flag: Some("--permission-mode=bypass".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: Some("--".to_string()),
             resume_flag: Some("--continue".to_string()),
             session_id_flag: None,
@@ -194,6 +198,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("".to_string()) },
             auto_approve_flag: Some("--auto high".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: Some("".to_string()),
             resume_flag: Some("--resume".to_string()),
             session_id_flag: Some("--resume".to_string()),
@@ -235,6 +240,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("".to_string()) },
             auto_approve_flag: Some("--always-approve".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: Some("".to_string()),
             resume_flag: Some("-r".to_string()),
             session_id_flag: Some("-r".to_string()),
@@ -276,6 +282,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("-i".to_string()) },
             auto_approve_flag: Some("--approval-mode=yolo".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: Some("-i".to_string()),
             resume_flag: Some("--resume".to_string()),
             session_id_flag: Some("--resume".to_string()),
@@ -317,6 +324,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::StdinPipe,
             auto_approve_flag: Some("--dangerously-allow-all".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: None,
             resume_flag: Some("threads continue".to_string()),
             session_id_flag: Some("threads continue".to_string()),
@@ -358,6 +366,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("".to_string()) },
             auto_approve_flag: None,
+            auto_approve_env: None,
             initial_prompt_flag: Some("".to_string()),
             resume_flag: None,
             session_id_flag: None,
@@ -399,6 +408,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("".to_string()) },
             auto_approve_flag: Some("--yolo".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: Some("".to_string()),
             resume_flag: Some("--resume".to_string()),
             session_id_flag: Some("--resume".to_string()),
@@ -440,6 +450,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("-i".to_string()) },
             auto_approve_flag: Some("--allow-all-tools".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: Some("-i".to_string()),
             resume_flag: Some("--resume".to_string()),
             session_id_flag: Some("--resume".to_string()),
@@ -481,6 +492,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("".to_string()) },
             auto_approve_flag: Some("-f --approve-mcps".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: Some("".to_string()),
             resume_flag: Some("--resume".to_string()),
             session_id_flag: None,
@@ -522,6 +534,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Keystroke,
             auto_approve_flag: Some("--yolo".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: None,
             resume_flag: Some("--continue".to_string()),
             session_id_flag: None,
@@ -563,6 +576,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("--prompt".to_string()) },
             auto_approve_flag: None,
+            auto_approve_env: Some(vec![("OPENCODE_PERMISSION".to_string(), "{\"*\":\"allow\"}".to_string())]),
             initial_prompt_flag: Some("--prompt".to_string()),
             resume_flag: Some("--session".to_string()),
             session_id_flag: Some("--session".to_string()),
@@ -604,6 +618,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("".to_string()) },
             auto_approve_flag: None,
+            auto_approve_env: None,
             initial_prompt_flag: Some("".to_string()),
             resume_flag: Some("--resume".to_string()),
             session_id_flag: Some("--resume".to_string()),
@@ -645,6 +660,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("".to_string()) },
             auto_approve_flag: Some("--yolo".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: Some("".to_string()),
             resume_flag: None,
             session_id_flag: None,
@@ -686,6 +702,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("-t".to_string()) },
             auto_approve_flag: None,
+            auto_approve_env: None,
             initial_prompt_flag: Some("-t".to_string()),
             resume_flag: Some("--resume".to_string()),
             session_id_flag: Some("--session-id".to_string()),
@@ -727,6 +744,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("--prompt".to_string()) },
             auto_approve_flag: Some("--auto".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: Some("--prompt".to_string()),
             resume_flag: Some("--continue".to_string()),
             session_id_flag: None,
@@ -768,6 +786,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Keystroke,
             auto_approve_flag: Some("--yolo".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: None,
             resume_flag: Some("-S".to_string()),
             session_id_flag: Some("-S".to_string()),
@@ -809,6 +828,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("".to_string()) },
             auto_approve_flag: Some("--trust-all-tools".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: Some("".to_string()),
             resume_flag: Some("--resume-id".to_string()),
             session_id_flag: Some("--resume-id".to_string()),
@@ -850,6 +870,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("".to_string()) },
             auto_approve_flag: Some("--yolo".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: None,
             resume_flag: None,
             session_id_flag: None,
@@ -891,6 +912,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("".to_string()) },
             auto_approve_flag: Some("--dangerously-skip-permissions".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: Some("".to_string()),
             resume_flag: Some("--resume".to_string()),
             session_id_flag: Some("--session-id".to_string()),
@@ -932,6 +954,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("".to_string()) },
             auto_approve_flag: None,
+            auto_approve_env: None,
             initial_prompt_flag: Some("".to_string()),
             resume_flag: None,
             session_id_flag: None,
@@ -973,6 +996,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("".to_string()) },
             auto_approve_flag: Some("--auto".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: Some("".to_string()),
             resume_flag: Some("--resume".to_string()),
             session_id_flag: None,
@@ -1014,6 +1038,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Keystroke,
             auto_approve_flag: None,
+            auto_approve_env: None,
             initial_prompt_flag: None,
             resume_flag: None,
             session_id_flag: None,
@@ -1055,6 +1080,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Keystroke,
             auto_approve_flag: None,
+            auto_approve_env: None,
             initial_prompt_flag: None,
             resume_flag: None,
             session_id_flag: None,
@@ -1096,6 +1122,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("--task".to_string()) },
             auto_approve_flag: None,
+            auto_approve_env: None,
             initial_prompt_flag: Some("--task".to_string()),
             resume_flag: None,
             session_id_flag: Some("--session-id".to_string()),
@@ -1137,6 +1164,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("".to_string()) },
             auto_approve_flag: Some("--agent auto-approve".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: Some("".to_string()),
             resume_flag: None,
             session_id_flag: None,
@@ -1178,6 +1206,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("-p".to_string()) },
             auto_approve_flag: Some("--unrestricted".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: Some("-p".to_string()),
             resume_flag: None,
             session_id_flag: None,
@@ -1219,6 +1248,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Keystroke,
             auto_approve_flag: Some("--yolo".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: None,
             resume_flag: None,
             session_id_flag: None,
@@ -1260,6 +1290,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("--prompt".to_string()) },
             auto_approve_flag: None,
+            auto_approve_env: Some(vec![("MIMOCODE_PERMISSION".to_string(), "{\"*\":\"allow\"}".to_string())]),
             initial_prompt_flag: Some("--prompt".to_string()),
             resume_flag: Some("--session".to_string()),
             session_id_flag: Some("--session".to_string()),
@@ -1301,6 +1332,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("".to_string()) },
             auto_approve_flag: None,
+            auto_approve_env: None,
             initial_prompt_flag: Some("".to_string()),
             resume_flag: Some("--session".to_string()),
             session_id_flag: Some("--session".to_string()),
@@ -1342,6 +1374,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("".to_string()) },
             auto_approve_flag: None,
+            auto_approve_env: None,
             initial_prompt_flag: Some("".to_string()),
             resume_flag: Some("--session".to_string()),
             session_id_flag: Some("--session".to_string()),
@@ -1383,6 +1416,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Argv { flag: Some("".to_string()) },
             auto_approve_flag: Some("--yolo".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: Some("".to_string()),
             resume_flag: Some("-r".to_string()),
             session_id_flag: Some("-r".to_string()),
@@ -1424,6 +1458,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         prompt: PromptDescriptor {
             strategy: PromptStrategy::Keystroke,
             auto_approve_flag: Some("--skip-permissions-unsafe".to_string()),
+            auto_approve_env: None,
             initial_prompt_flag: None,
             resume_flag: None,
             session_id_flag: None,

@@ -1,36 +1,41 @@
 {
-  "id": "mimocode",
-  "name": "MiMo Code",
-  "description": "Xiaomi's terminal-native coding agent with persistent cross-session memory and OpenAI-compatible provider support.",
-  "websiteUrl": "https://github.com/XiaomiMiMo/MiMo-Code",
-  "capabilities": {
-    "acp": "supported",
-    "auth": "none",
-    "autoApprove": "supported",
-    "effort": "none",
-    "hooks": "plugin",
-    "hostDependency": "supported",
-    "mcp": "supported",
-    "models": "none",
-    "plugins": "supported",
-    "prompt": "argv",
-    "sessions": "resumable",
-    "trust": "none"
-  },
-  "prompt": {
-    "kind": "argv",
-    "flag": "--prompt",
-    "autoApproveFlag": null,
-    "initialPromptFlag": "--prompt",
-    "resumeFlag": "--session",
-    "sessionIdFlag": "--session",
-    "sessionIdOnResumeOnly": true,
-    "resumeWithoutSessionFlag": "--continue",
-    "modelFlag": null,
-    "defaultArgs": []
-  },
+ "id": "mimocode",
+ "name": "MiMo Code",
+ "description": "Xiaomi's terminal-native coding agent with persistent cross-session memory and OpenAI-compatible provider support.",
+ "websiteUrl": "https://github.com/XiaomiMiMo/MiMo-Code",
+ "capabilities": {
+  "acp": "supported",
+  "auth": "none",
+  "autoApprove": "supported",
+  "effort": "none",
+  "hooks": "plugin",
+  "hostDependency": "supported",
+  "mcp": "supported",
+  "models": "none",
+  "plugins": "supported",
+  "prompt": "argv",
   "sessions": "resumable",
-  "binaries": ["mimo"],
-  "defaultModel": null,
-  "envVars": []
+  "trust": "none"
+ },
+ "prompt": {
+  "kind": "argv",
+  "flag": "--prompt",
+  "autoApproveFlag": null,
+  "initialPromptFlag": "--prompt",
+  "resumeFlag": "--session",
+  "sessionIdFlag": "--session",
+  "sessionIdOnResumeOnly": true,
+  "resumeWithoutSessionFlag": "--continue",
+  "modelFlag": null,
+  "defaultArgs": [],
+  "autoApproveEnv": {
+   "MIMOCODE_PERMISSION": "{\"*\":\"allow\"}"
+  }
+ },
+ "sessions": "resumable",
+ "binaries": [
+  "mimo"
+ ],
+ "defaultModel": null,
+ "envVars": []
 }

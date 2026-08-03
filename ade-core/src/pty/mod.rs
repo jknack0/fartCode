@@ -46,6 +46,36 @@ pub const MAX_ARGV_PROMPT_LENGTH: usize = 32 * 1024;
 /// Spill directory relative to the worktree (`.ade/prompts`).
 pub const PROMPT_SPILL_DIR: &str = ".ade/prompts";
 
+/// Auto-approve resolution (ticket E3-04): whether `ctx.auto_approve` should
+/// be true for a launch.
+///
+/// - **Trust gating**: `autoTrustWorktrees` (default true) makes auto-approve
+///   implicitly on — a trusted worktree means the agent runs without
+///   permission prompts.
+/// - **Conversation config**: the conversation's own `autoApprove` (e.g. the
+///   dialog's "run with auto-approve" toggle).
+/// - **Forced**: `tasks.autoApproveByDefault` always passes the flag.
+pub fn resolve_auto_approve(
+    conversation_auto_approve: bool,
+    auto_approve_by_default: bool,
+    auto_trust_worktrees: bool,
+) -> bool {
+    auto_trust_worktrees || conversation_auto_approve || auto_approve_by_default
+}
+
+/// Convenience: resolves from the task settings group (E3-04 wiring for
+/// E2-06's launcher).
+pub fn auto_approve_from_settings(
+    conversation_auto_approve: bool,
+    tasks: &crate::settings::TaskGroup,
+) -> bool {
+    resolve_auto_approve(
+        conversation_auto_approve,
+        tasks.auto_approve_by_default,
+        tasks.auto_trust_worktrees,
+    )
+}
+
 /// Spill a long prompt to `<worktree>/.ade/prompts/<uuid>.md` and return the
 /// path. Callers must `cleanup_spilled_prompt` it when the agent exits
 /// (acceptance 2: "file is cleaned on exit").
@@ -71,7 +101,7 @@ pub fn cleanup_spilled_prompt(path: &Path) {
 pub fn build_command(ctx: &CommandContext, provider: &ProviderDescriptor) -> AgentCommand {
     let spec = &provider.prompt;
     let mut args: Vec<String> = Vec::new();
-    let env: HashMap<String, String> = HashMap::new();
+    let mut env: HashMap<String, String> = HashMap::new();
 
     // Default args (e.g. goose's ['run', '-s']).
     args.extend(spec.default_args.iter().cloned());
@@ -125,12 +155,19 @@ pub fn build_command(ctx: &CommandContext, provider: &ProviderDescriptor) -> Age
         }
     }
 
-    // Auto-approve (reference: forced by autoApprove; E3-04 adds the task
-    // setting + trust gating).
+    // Auto-approve (E3-04): the flag is added only when the provider
+    // declares the autoApprove capability (reference: capability-gated) AND
+    // `ctx.auto_approve` is set (which itself is resolved from the
+    // conversation config + task settings via `resolve_auto_approve`).
+    // `omitAutoApproveOnResume` (kimi) suppresses it on resume. Providers
+    // without an argv flag gate auto-approve via env (reference `extraEnv`).
     let skip_auto_approve = spec.omit_auto_approve_on_resume && ctx.is_resuming;
-    if ctx.auto_approve && !skip_auto_approve {
+    if ctx.auto_approve && provider.capabilities.auto_approve && !skip_auto_approve {
         if let Some(flag) = &spec.auto_approve_flag {
             args.extend(split_flag(flag));
+        }
+        if let Some(envs) = &spec.auto_approve_env {
+            env.extend(envs.iter().cloned());
         }
     }
 
@@ -657,73 +694,130 @@ mod tests {
     }
 
     #[test]
+    fn auto_approve_resolver_combinations() {
+        // Trust gating: default autoTrustWorktrees=true → implicitly on,
+        // regardless of the conversation toggle or the by-default setting.
+        assert!(resolve_auto_approve(false, false, true));
+        // Explicit conversation auto-approve.
+        assert!(resolve_auto_approve(true, false, false));
+        // Forced by the task setting.
+        assert!(resolve_auto_approve(false, true, false));
+        // Nothing on → off.
+        assert!(!resolve_auto_approve(false, false, false));
+    }
+
+    #[test]
+    fn auto_approve_from_settings_group() {
+        use crate::settings::TaskGroup;
+        let default_tasks = TaskGroup::default();
+        assert!(
+            auto_approve_from_settings(false, &default_tasks),
+            "trust default => on"
+        );
+        assert!(!auto_approve_from_settings(
+            false,
+            &TaskGroup {
+                auto_approve_by_default: false,
+                auto_trust_worktrees: false,
+                ..TaskGroup::default()
+            }
+        ));
+        assert!(auto_approve_from_settings(
+            true,
+            &TaskGroup {
+                auto_approve_by_default: false,
+                auto_trust_worktrees: false,
+                ..TaskGroup::default()
+            }
+        ));
+    }
+
+    #[test]
+    fn auto_approve_flag_is_capability_gated() {
+        // A provider WITHOUT the autoApprove capability never gets the flag
+        // even when ctx.auto_approve is set.
+        let mut spec = synthetic_spec();
+        spec.auto_approve_flag = Some("--yolo".into());
+        let mut caps = synthetic_capabilities();
+        caps.auto_approve = false;
+        let provider = synthetic_provider(spec, caps);
+        let mut c = ctx();
+        c.auto_approve = true;
+        c.initial_prompt = Some("go".into());
+        let cmd = build_command(&c, &provider);
+        assert!(!cmd.args.contains(&"--yolo".into()), "{:?}", cmd.args);
+
+        // With the capability, the flag lands.
+        let mut spec = synthetic_spec();
+        spec.auto_approve_flag = Some("--yolo".into());
+        let mut caps = synthetic_capabilities();
+        caps.auto_approve = true;
+        let provider = synthetic_provider(spec, caps);
+        let cmd = build_command(&c, &provider);
+        assert!(cmd.args.contains(&"--yolo".into()), "{:?}", cmd.args);
+    }
+
+    #[test]
+    fn auto_approve_env_is_merged_when_capability_gated() {
+        // mimocode/opencode gate auto-approve via env, not argv.
+        let mut spec = synthetic_spec();
+        spec.auto_approve_flag = None;
+        spec.auto_approve_env = Some(vec![(
+            "MIMOCODE_PERMISSION".into(),
+            "{\"*\":\"allow\"}".into(),
+        )]);
+        let provider = synthetic_provider(spec, synthetic_capabilities());
+        let mut c = ctx();
+        c.auto_approve = true;
+        c.initial_prompt = Some("go".into());
+        let cmd = build_command(&c, &provider);
+        assert_eq!(
+            cmd.env.get("MIMOCODE_PERMISSION"),
+            Some(&"{\"*\":\"allow\"}".to_string()),
+            "{:?}",
+            cmd.env
+        );
+
+        // Without the capability, the env is NOT merged.
+        let mut spec = synthetic_spec();
+        spec.auto_approve_flag = None;
+        spec.auto_approve_env = Some(vec![(
+            "MIMOCODE_PERMISSION".into(),
+            "{\"*\":\"allow\"}".into(),
+        )]);
+        let mut caps = synthetic_capabilities();
+        caps.auto_approve = false;
+        let provider = synthetic_provider(spec, caps);
+        let cmd = build_command(&c, &provider);
+        assert!(!cmd.env.contains_key("MIMOCODE_PERMISSION"));
+    }
+
+    #[test]
+    fn real_provider_auto_approve_mechanism_is_never_empty() {
+        // Every provider that declares the autoApprove capability must have
+        // exactly one mechanism (argv flag XOR env) — otherwise auto-approve
+        // silently drops for it.
+        for p in ade_providers::list() {
+            if p.capabilities.auto_approve {
+                let has_flag = p.prompt.auto_approve_flag.is_some();
+                let has_env = p.prompt.auto_approve_env.is_some();
+                assert!(
+                    has_flag ^ has_env,
+                    "{}: autoApprove capability needs exactly one of flag/env (flag={has_flag} env={has_env})",
+                    p.id
+                );
+            }
+        }
+    }
+
+    #[test]
     fn deduplicate_flags_keeps_first_occurrence() {
         // Synthetic spec: codex's dedup list never collides with its
         // autoApproveFlag today, so exercise the dedupe path directly.
-        let mut spec = ade_providers::types::PromptDescriptor {
-            strategy: ade_providers::PromptStrategy::Argv {
-                flag: Some(String::new()),
-            },
-            auto_approve_flag: Some("--dangerously-bypass-approvals-and-sandbox".into()),
-            initial_prompt_flag: Some(String::new()),
-            resume_flag: None,
-            session_id_flag: None,
-            session_id_on_resume_only: false,
-            resume_without_session_flag: None,
-            model_flag: None,
-            new_conversation_flag: None,
-            session_id_always: false,
-            omit_auto_approve_on_resume: false,
-            initial_prompt_via_stdin_pipe: false,
-            deduplicate_flags: vec!["--dangerously-bypass-approvals-and-sandbox".into()],
-            submit_sequence: None,
-            submit_delay_ms: None,
-            default_args: vec!["--dangerously-bypass-approvals-and-sandbox".into()],
-        };
-        let provider = ProviderDescriptor {
-            id: "synthetic".into(),
-            name: "Synthetic".into(),
-            description: String::new(),
-            website_url: None,
-            capabilities: ade_providers::types::Capabilities {
-                acp: false,
-                auth: false,
-                auto_approve: true,
-                effort: false,
-                hooks: false,
-                host_dependency: false,
-                mcp: false,
-                models: false,
-                plugins: false,
-                prompt: true,
-                sessions: false,
-                trust: false,
-            },
-            prompt: std::mem::replace(
-                &mut spec,
-                ade_providers::types::PromptDescriptor {
-                    strategy: ade_providers::PromptStrategy::Argv { flag: None },
-                    auto_approve_flag: None,
-                    initial_prompt_flag: None,
-                    resume_flag: None,
-                    session_id_flag: None,
-                    session_id_on_resume_only: false,
-                    resume_without_session_flag: None,
-                    model_flag: None,
-                    new_conversation_flag: None,
-                    session_id_always: false,
-                    omit_auto_approve_on_resume: false,
-                    initial_prompt_via_stdin_pipe: false,
-                    deduplicate_flags: Vec::new(),
-                    submit_sequence: None,
-                    submit_delay_ms: None,
-                    default_args: Vec::new(),
-                },
-            ),
-            binaries: vec!["synthetic".into()],
-            default_model: None,
-            env_vars: Vec::new(),
-        };
+        let mut spec = synthetic_spec();
+        spec.deduplicate_flags = vec!["--dangerously-bypass-approvals-and-sandbox".into()];
+        spec.default_args = vec!["--dangerously-bypass-approvals-and-sandbox".into()];
+        let provider = synthetic_provider(spec, synthetic_capabilities());
         let mut c = ctx();
         c.auto_approve = true;
         c.initial_prompt = Some("go".into());
@@ -737,5 +831,63 @@ mod tests {
             "deduped to one occurrence: {:?}",
             cmd.args
         );
+    }
+
+    fn synthetic_spec() -> ade_providers::types::PromptDescriptor {
+        ade_providers::types::PromptDescriptor {
+            strategy: ade_providers::PromptStrategy::Argv {
+                flag: Some(String::new()),
+            },
+            auto_approve_flag: Some("--dangerously-bypass-approvals-and-sandbox".into()),
+            auto_approve_env: None,
+            initial_prompt_flag: Some(String::new()),
+            resume_flag: None,
+            session_id_flag: None,
+            session_id_on_resume_only: false,
+            resume_without_session_flag: None,
+            model_flag: None,
+            new_conversation_flag: None,
+            session_id_always: false,
+            omit_auto_approve_on_resume: false,
+            initial_prompt_via_stdin_pipe: false,
+            deduplicate_flags: Vec::new(),
+            submit_sequence: None,
+            submit_delay_ms: None,
+            default_args: Vec::new(),
+        }
+    }
+
+    fn synthetic_capabilities() -> ade_providers::types::Capabilities {
+        ade_providers::types::Capabilities {
+            acp: false,
+            auth: false,
+            auto_approve: true,
+            effort: false,
+            hooks: false,
+            host_dependency: false,
+            mcp: false,
+            models: false,
+            plugins: false,
+            prompt: true,
+            sessions: false,
+            trust: false,
+        }
+    }
+
+    fn synthetic_provider(
+        spec: ade_providers::types::PromptDescriptor,
+        caps: ade_providers::types::Capabilities,
+    ) -> ProviderDescriptor {
+        ProviderDescriptor {
+            id: "synthetic".into(),
+            name: "Synthetic".into(),
+            description: String::new(),
+            website_url: None,
+            capabilities: caps,
+            prompt: spec,
+            binaries: vec!["synthetic".into()],
+            default_model: None,
+            env_vars: Vec::new(),
+        }
     }
 }

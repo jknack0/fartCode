@@ -17,7 +17,14 @@ pub enum PromptStrategy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptDescriptor {
     pub strategy: PromptStrategy,
+    /// Optional argv flag that turns on auto-approve (e.g. claude's
+    /// `--dangerously-skip-permissions`). `None` for providers that gate
+    /// auto-approve via `auto_approve_env` instead.
     pub auto_approve_flag: Option<String>,
+    /// Env vars that turn on auto-approve when the provider has no argv flag
+    /// (reference `extraEnv`: mimocode → `MIMOCODE_PERMISSION`,
+    /// opencode → `OPENCODE_PERMISSION`). Merged into the launch env.
+    pub auto_approve_env: Option<Vec<(String, String)>>,
     pub initial_prompt_flag: Option<String>,
     pub resume_flag: Option<String>,
     pub session_id_flag: Option<String>,
