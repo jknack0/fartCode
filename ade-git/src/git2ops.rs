@@ -47,10 +47,11 @@ fn git2_err(context: &str, e: &git2::Error) -> Error {
     Error::Git(format!("git2 {context}: {}", e.message()))
 }
 
-/// Prune stale worktree entries (dir or gitdir link gone). Callers must hold
-/// `worktree_lock`. Matches `git worktree prune`: drops entries whose dir or
-/// gitdir link is missing, skips locked worktrees, and surfaces the first
-/// prune failure instead of swallowing it.
+/// Prune stale worktree entries. Callers must hold `worktree_lock`. Matches
+/// `git worktree prune`: drops entries whose working dir is gone (which
+/// covers a broken gitdir link, since `wt.path()` is derived from it), skips
+/// locked worktrees, and surfaces the first prune failure instead of
+/// swallowing it.
 fn prune_locked(repo: &git2::Repository) -> Result<(), Error> {
     let names = repo.worktrees().map_err(|e| git2_err("worktrees()", &e))?;
     for name in names.iter() {

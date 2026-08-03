@@ -154,16 +154,13 @@ impl WorktreeManager {
         // branch), else remove stale.
         if worktree_path.exists() {
             if self.is_valid_worktree(&worktree_path) {
-                let on_branch =
-                    self.git.current_branch(&worktree_path)?.as_deref() == Some(opts.branch_name);
-                if !on_branch {
+                let current = self.git.current_branch(&worktree_path)?;
+                if current.as_deref() != Some(opts.branch_name) {
                     // Reference conflict: the path holds a different branch.
                     return Err(Error::WorktreeBranchConflict(format!(
                         "'{}' is checked out on '{}', expected '{}'",
                         worktree_path.display(),
-                        self.git
-                            .current_branch(&worktree_path)?
-                            .unwrap_or_else(|| "(detached)".into()),
+                        current.unwrap_or_else(|| "(detached)".into()),
                         opts.branch_name
                     )));
                 }
