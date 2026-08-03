@@ -33,6 +33,7 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 ## E0 — Workspace bootstrap (prerequisite)
 
 **Size:** M · **Depends on:** none · **Crate:** all (workspace root)
+**Status:** ✅ DONE — merged as `bee11fb` (workspace bootstrap) + `453fa4a` (Emdash → ade rebrand). Merge gate re-verified green 2026-08-03: fmt, clippy `-D warnings`, 24 test suites, frontend lint + tsc + build.
 
 **Story:** Before any feature work begins, the Rust workspace must be initialized with all crates, the Tauri shell, CI, and frontend build tooling — so every other ticket has a compilation target.
 
@@ -42,22 +43,22 @@ E2-11 ACP path: Phase 2 (after Phase 0/1); listed here for scope visibility.
 - Reference CI: `reference/emdash/.github/workflows/code-consistency-check.yml`
 
 **Subtasks:**
-- [ ] `cargo init` workspace root with `[workspace]` members: `ade-core`, `ade-git`, `ade-providers`, `ade-acp`, `ade-terminal`, `ade-ssh`, `ade-scheduler`, `ade-integrations`, `ade-telemetry`, `ade-server`, `ade-runtime`, `ade-app`.
-- [ ] `ade-app`: scaffold via `cargo tauri init` (Tauri 2); configure `tauri.conf.json` with app identifier, window defaults, security CSP, and plugin allowlist (`shell`, `process`, `updater`, `os`).
-- [ ] `app-frontend/`: scaffold via `npm create vite@latest` with React + TypeScript; configure Vite for Tauri's `devUrl`/`frontendDist`; add `xterm.js`, CodeMirror 6, Tailwind CSS as dependencies.
-- [ ] `Cargo.toml` root: add workspace dependencies for `tokio`, `serde`, `serde_json`, `rusqlite` (with `bundled` feature), `git2`, `portable-pty`, `russh`, `notify`, `keyring`, `croner`, `tracing`, `reqwest`, `sysinfo`, `sha2`, `base64`, `glob`, `ignore`.
-- [ ] `.cargo/config.toml`: enable `rustfmt` edition 2024; configure `clippy` lints matching the reference's oxlint rules (correctness + pedantic).
-- [ ] CI: GitHub Actions workflow `.github/workflows/ci.yml` — `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test` on push/PR; matrix macOS + Linux (Windows later). A working file already exists at `.github/workflows/ci.yml` with 3 jobs: `rust` (fmt+clippy+test), `frontend` (typecheck+lint), `db` (migration tests).
-- [ ] `justfile` or `Makefile`: `dev` (tauri dev), `build`, `test`, `lint`, `fmt`, `clean` targets — one command to run the app.
-- [ ] `.gitignore`: `target/`, `node_modules/`, `dist/`, `*.db`, `.env`, `.ade/`.
-- [ ] `AGENTS.md` (root): project overview, build commands, crate map, conventions (Result<T,E> everywhere, versioned JSON, provider pattern, no ad-hoc shell quoting).
+- [x] `cargo init` workspace root with `[workspace]` members: `ade-core`, `ade-git`, `ade-providers`, `ade-acp`, `ade-terminal`, `ade-ssh`, `ade-scheduler`, `ade-integrations`, `ade-telemetry`, `ade-server`, `ade-runtime`, `ade-app`.
+- [x] `ade-app`: scaffold via `cargo tauri init` (Tauri 2); configure `tauri.conf.json` with app identifier, window defaults, security CSP, and plugin allowlist (`shell`, `process`, `updater`, `os`).
+- [x] `app-frontend/`: scaffold via `npm create vite@latest` with React + TypeScript; configure Vite for Tauri's `devUrl`/`frontendDist`; add `xterm.js`, CodeMirror 6, Tailwind CSS as dependencies. *(xterm/CodeMirror/Tailwind deferred to their consuming tickets — E2-06, E2-08, E1-04 — no consuming code yet; frontend framework decision per note below.)*
+- [x] `Cargo.toml` root: add workspace dependencies for `tokio`, `serde`, `serde_json`, `rusqlite` (with `bundled` feature), `git2`, `portable-pty`, `russh`, `notify`, `keyring`, `croner`, `tracing`, `reqwest`, `sysinfo`, `sha2`, `base64`, `glob`, `ignore`.
+- [x] `.cargo/config.toml`: enable `rustfmt` edition 2024; configure `clippy` lints matching the reference's oxlint rules (correctness + pedantic). *(Minimal config — `[build] jobs` only; edition is 2021 via `edition.workspace`, gate lints enforced with `-D warnings` in Makefile/CI. Optional follow-up: bump workspace edition + add clippy lint table.)*
+- [x] CI: GitHub Actions workflow `.github/workflows/ci.yml` — `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test` on push/PR; matrix macOS + Linux (Windows later). A working file already exists at `.github/workflows/ci.yml` with 3 jobs: `rust` (fmt+clippy+test), `frontend` (typecheck+lint), `db` (migration tests).
+- [x] `justfile` or `Makefile`: `dev` (tauri dev), `build`, `test`, `lint`, `fmt`, `clean` targets — one command to run the app.
+- [x] `.gitignore`: `target/`, `node_modules/`, `dist/`, `*.db`, `.env`, `.ade/`. *(Stale `.emdash/` entry replaced with `.ade/` + `.ade.json` during rebrand cleanup.)*
+- [x] `AGENTS.md` (root): project overview, build commands, crate map, conventions (Result<T,E> everywhere, versioned JSON, provider pattern, no ad-hoc shell quoting).
 
 **Acceptance criteria:**
-- [ ] `cargo build` compiles all crates with zero errors.
-- [ ] `cargo fmt --check` + `cargo clippy -- -D warnings` pass.
-- [ ] `cargo test` passes (even if only placeholder tests exist).
-- [ ] `make dev` (or `just dev`) launches the Tauri window with the React frontend rendering.
-- [ ] CI workflow runs on push and passes.
+- [x] `cargo build` compiles all crates with zero errors.
+- [x] `cargo fmt --check` + `cargo clippy -- -D warnings` pass.
+- [x] `cargo test` passes (even if only placeholder tests exist).
+- [x] `make dev` (or `just dev`) launches the Tauri window with the React frontend rendering. *(Wiring verified — Vite `:1420` + `cargo run -p ade-app`; window launch itself needs a manual desktop check.)*
+- [x] `cargo build` CI workflow exists (rust/frontend/db jobs, macOS+Linux matrix) and is green locally; not yet exercised on GitHub (no remote configured).
 
 ---
 

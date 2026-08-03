@@ -17,8 +17,9 @@ app-frontend/.vite
 .env.*
 !.env.example
 
-# ── Emdash internals ────────────────────────────────────────
-.emdash/
+# ── ade internals ───────────────────────────────────────────
+.ade/
+.ade.json
 
 # ── OS ──────────────────────────────────────────────────────
 .DS_Store

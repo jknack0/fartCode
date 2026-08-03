@@ -1,11 +1,9 @@
-//! ade-core — Phase 0 placeholder.
+//! ade-core — domain modules (db, settings, projects, tasks, ...).
 //!
-//! Implemented by its ticket; see ARCHITECTURE.md.
+//! This crate is the dependency leaf of the workspace: it depends only on
+//! third-party crates. See ARCHITECTURE.md §2 for the module layout.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn placeholder_compiles() {
-        assert_eq!(1 + 1, 2);
-    }
-}
+pub mod db;
+pub mod error;
+
+pub use error::Error;
