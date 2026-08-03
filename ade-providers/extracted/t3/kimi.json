@@ -1,0 +1,36 @@
+{
+  "id": "kimi",
+  "name": "Kimi",
+  "description": "Kimi CLI by Moonshot AI, with shell execution, Zsh integration, ACP, and MCP support.",
+  "websiteUrl": "https://moonshotai.github.io/kimi-cli/en/guides/getting-started.html",
+  "capabilities": {
+    "acp": "supported",
+    "auth": "none",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "config",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "keystroke",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "keystroke",
+    "flag": null,
+    "autoApproveFlag": "--yolo",
+    "initialPromptFlag": null,
+    "resumeFlag": "-S",
+    "sessionIdFlag": "-S",
+    "sessionIdOnResumeOnly": true,
+    "resumeWithoutSessionFlag": "-C",
+    "modelFlag": null,
+    "defaultArgs": []
+  },
+  "sessions": "resumable",
+  "binaries": ["kimi"],
+  "defaultModel": null,
+  "envVars": []
+}

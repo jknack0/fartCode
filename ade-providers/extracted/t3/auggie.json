@@ -1,0 +1,36 @@
+{
+  "id": "auggie",
+  "name": "Auggie",
+  "description": "Augment Code CLI to run an agent against your repository for code changes and reviews.",
+  "websiteUrl": "https://docs.augmentcode.com/cli/overview",
+  "capabilities": {
+    "acp": "supported",
+    "auth": "none",
+    "autoApprove": "none",
+    "effort": "none",
+    "hooks": "config",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "",
+    "autoApproveFlag": null,
+    "initialPromptFlag": "",
+    "resumeFlag": "--resume",
+    "sessionIdFlag": "--resume",
+    "sessionIdOnResumeOnly": true,
+    "resumeWithoutSessionFlag": "--continue",
+    "modelFlag": null,
+    "defaultArgs": ["--allow-indexing"]
+  },
+  "sessions": "resumable",
+  "binaries": ["auggie"],
+  "defaultModel": null,
+  "envVars": []
+}

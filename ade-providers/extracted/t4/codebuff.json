@@ -1,0 +1,38 @@
+{
+  "id": "codebuff",
+  "name": "Codebuff",
+  "description": "Codebuff is an AI coding agent for project-directory assistance and day-to-day development tasks.",
+  "websiteUrl": "https://www.codebuff.com/docs/help/quick-start",
+  "capabilities": {
+    "acp": "none",
+    "auth": "none",
+    "autoApprove": "none",
+    "effort": "none",
+    "hooks": "none",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "stateless",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "",
+    "autoApproveFlag": null,
+    "initialPromptFlag": "",
+    "resumeFlag": null,
+    "sessionIdFlag": null,
+    "sessionIdOnResumeOnly": false,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": null,
+    "defaultArgs": []
+  },
+  "sessions": "stateless",
+  "binaries": [
+    "codebuff"
+  ],
+  "defaultModel": null,
+  "envVars": []
+}

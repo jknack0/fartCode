@@ -1,0 +1,36 @@
+{
+  "id": "codebuddy",
+  "name": "CodeBuddy Code",
+  "description": "Tencent's terminal coding agent for repository-aware implementation, debugging, and code analysis.",
+  "websiteUrl": "https://www.codebuddy.ai/docs/cli/README",
+  "capabilities": {
+    "acp": "supported",
+    "auth": "none",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "none",
+    "hostDependency": "supported",
+    "mcp": "supported",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "",
+    "autoApproveFlag": "--dangerously-skip-permissions",
+    "initialPromptFlag": "",
+    "resumeFlag": "--resume",
+    "sessionIdFlag": "--session-id",
+    "sessionIdOnResumeOnly": false,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": "--model",
+    "defaultArgs": []
+  },
+  "sessions": "resumable",
+  "binaries": ["codebuddy", "cbc"],
+  "defaultModel": null,
+  "envVars": []
+}

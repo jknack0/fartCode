@@ -1,0 +1,36 @@
+{
+  "id": "droid",
+  "name": "Droid",
+  "description": "Factory AI's agent CLI for running multi-step coding tasks from the terminal.",
+  "websiteUrl": "https://docs.factory.ai/cli/getting-started/quickstart",
+  "capabilities": {
+    "acp": "supported",
+    "auth": "none",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "config",
+    "hostDependency": "supported",
+    "mcp": "supported",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "",
+    "autoApproveFlag": "--auto high",
+    "initialPromptFlag": "",
+    "resumeFlag": "--resume",
+    "sessionIdFlag": "--resume",
+    "sessionIdOnResumeOnly": true,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": null,
+    "defaultArgs": []
+  },
+  "sessions": "resumable",
+  "binaries": ["droid"],
+  "defaultModel": null,
+  "envVars": []
+}

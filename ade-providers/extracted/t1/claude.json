@@ -1,0 +1,36 @@
+{
+  "id": "claude",
+  "name": "Claude Code",
+  "description": "CLI that uses Anthropic Claude for code edits, explanations, and structured refactors in the terminal.",
+  "websiteUrl": "https://code.claude.com/docs/en/quickstart",
+  "capabilities": {
+    "acp": "supported",
+    "auth": "supported",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "config",
+    "hostDependency": "supported",
+    "mcp": "supported",
+    "models": "selectable",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "resumable",
+    "trust": "supported"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "",
+    "autoApproveFlag": "--dangerously-skip-permissions",
+    "initialPromptFlag": "",
+    "resumeFlag": "--resume",
+    "sessionIdFlag": "--session-id",
+    "sessionIdOnResumeOnly": false,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": "--model",
+    "defaultArgs": []
+  },
+  "sessions": "resumable",
+  "binaries": ["claude"],
+  "defaultModel": "claude-fable-5",
+  "envVars": ["ANTHROPIC_API_KEY"]
+}

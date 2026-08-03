@@ -1,0 +1,36 @@
+{
+  "id": "mistral",
+  "name": "Mistral Vibe",
+  "description": "Mistral AI terminal coding assistant with conversational codebase help, execution tools, and file operations.",
+  "websiteUrl": "https://github.com/mistralai/mistral-vibe",
+  "capabilities": {
+    "acp": "supported",
+    "auth": "none",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "config",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "selectable",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "stateless",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "",
+    "autoApproveFlag": "--agent auto-approve",
+    "initialPromptFlag": "",
+    "resumeFlag": null,
+    "sessionIdFlag": null,
+    "sessionIdOnResumeOnly": false,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": null,
+    "defaultArgs": []
+  },
+  "sessions": "stateless",
+  "binaries": ["vibe"],
+  "defaultModel": "mistral-medium-3.5",
+  "envVars": []
+}

@@ -1,0 +1,36 @@
+{
+  "id": "zero",
+  "name": "Zero",
+  "description": "Terminal coding agent with multi-provider model support, local-first configuration, and terminal-first coding workflows.",
+  "websiteUrl": "https://zero.gitlawb.com/",
+  "capabilities": {
+    "acp": "none",
+    "auth": "none",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "none",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "keystroke",
+    "sessions": "stateless",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "keystroke",
+    "flag": null,
+    "autoApproveFlag": "--skip-permissions-unsafe",
+    "initialPromptFlag": null,
+    "resumeFlag": null,
+    "sessionIdFlag": null,
+    "sessionIdOnResumeOnly": false,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": null,
+    "defaultArgs": []
+  },
+  "sessions": "stateless",
+  "binaries": ["zero"],
+  "defaultModel": null,
+  "envVars": []
+}

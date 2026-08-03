@@ -1,0 +1,36 @@
+{
+  "id": "opencode",
+  "name": "OpenCode",
+  "description": "OpenCode CLI that interfaces with models for code generation and edits from the shell.",
+  "websiteUrl": "https://opencode.ai/docs/cli/",
+  "capabilities": {
+    "acp": "supported",
+    "auth": "supported",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "plugin",
+    "hostDependency": "supported",
+    "mcp": "supported",
+    "models": "none",
+    "plugins": "supported",
+    "prompt": "argv",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "--prompt",
+    "autoApproveFlag": null,
+    "initialPromptFlag": "--prompt",
+    "resumeFlag": "--session",
+    "sessionIdFlag": "--session",
+    "sessionIdOnResumeOnly": true,
+    "resumeWithoutSessionFlag": "--continue",
+    "modelFlag": "--model",
+    "defaultArgs": []
+  },
+  "sessions": "resumable",
+  "binaries": ["opencode"],
+  "defaultModel": null,
+  "envVars": ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"]
+}

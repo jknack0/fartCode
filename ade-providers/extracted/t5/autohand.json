@@ -1,0 +1,36 @@
+{
+  "id": "autohand",
+  "name": "Autohand Code",
+  "description": "Terminal coding agent with auto-commit, dry-run previews, community skills, and headless automation modes.",
+  "websiteUrl": "https://autohand.ai/code/",
+  "capabilities": {
+    "acp": "none",
+    "auth": "none",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "none",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "stateless",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "-p",
+    "autoApproveFlag": "--unrestricted",
+    "initialPromptFlag": "-p",
+    "resumeFlag": null,
+    "sessionIdFlag": null,
+    "sessionIdOnResumeOnly": false,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": null,
+    "defaultArgs": []
+  },
+  "sessions": "stateless",
+  "binaries": ["autohand"],
+  "defaultModel": null,
+  "envVars": []
+}

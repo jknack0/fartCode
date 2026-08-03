@@ -1,0 +1,36 @@
+{
+  "id": "qoder",
+  "name": "Qoder CLI",
+  "description": "Qoder terminal agent for code review, implementation, debugging, and repository-aware automation.",
+  "websiteUrl": "https://qoder.com/en/cli",
+  "capabilities": {
+    "acp": "supported",
+    "auth": "none",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "config",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "",
+    "autoApproveFlag": "--yolo",
+    "initialPromptFlag": "",
+    "resumeFlag": "-r",
+    "sessionIdFlag": "-r",
+    "sessionIdOnResumeOnly": true,
+    "resumeWithoutSessionFlag": "-c",
+    "modelFlag": null,
+    "defaultArgs": []
+  },
+  "sessions": "resumable",
+  "binaries": ["qodercli"],
+  "defaultModel": null,
+  "envVars": []
+}

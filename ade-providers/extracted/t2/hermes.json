@@ -1,0 +1,36 @@
+{
+  "id": "hermes",
+  "name": "Hermes Agent",
+  "description": "Nous Research terminal agent with interactive chat, model-provider routing, skills, and session workflows.",
+  "websiteUrl": "https://hermes-agent.nousresearch.com/docs/",
+  "capabilities": {
+    "acp": "supported",
+    "auth": "none",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "none",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "keystroke",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "keystroke",
+    "flag": null,
+    "autoApproveFlag": "--yolo",
+    "initialPromptFlag": null,
+    "resumeFlag": "--continue",
+    "sessionIdFlag": null,
+    "sessionIdOnResumeOnly": false,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": null,
+    "defaultArgs": []
+  },
+  "sessions": "resumable",
+  "binaries": ["hermes"],
+  "defaultModel": null,
+  "envVars": []
+}

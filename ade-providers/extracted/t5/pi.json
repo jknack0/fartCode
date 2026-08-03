@@ -1,0 +1,36 @@
+{
+  "id": "pi",
+  "name": "Pi",
+  "description": "Minimal terminal coding agent with multi-provider model support and extensible custom tools.",
+  "websiteUrl": "https://github.com/earendil-works/pi/tree/main/packages/coding-agent",
+  "capabilities": {
+    "acp": "none",
+    "auth": "none",
+    "autoApprove": "none",
+    "effort": "none",
+    "hooks": "plugin",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "none",
+    "plugins": "supported",
+    "prompt": "argv",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "",
+    "autoApproveFlag": null,
+    "initialPromptFlag": "",
+    "resumeFlag": "--session",
+    "sessionIdFlag": "--session",
+    "sessionIdOnResumeOnly": true,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": null,
+    "defaultArgs": []
+  },
+  "sessions": "resumable",
+  "binaries": ["pi"],
+  "defaultModel": null,
+  "envVars": []
+}

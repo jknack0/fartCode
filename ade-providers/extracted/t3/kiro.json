@@ -1,0 +1,36 @@
+{
+  "id": "kiro",
+  "name": "Kiro (AWS)",
+  "description": "Kiro CLI by AWS, focused on interactive terminal-first development assistance and workflow automation.",
+  "websiteUrl": "https://kiro.dev/docs/cli/",
+  "capabilities": {
+    "acp": "supported",
+    "auth": "none",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "config",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "",
+    "autoApproveFlag": "--trust-all-tools",
+    "initialPromptFlag": "",
+    "resumeFlag": "--resume-id",
+    "sessionIdFlag": "--resume-id",
+    "sessionIdOnResumeOnly": true,
+    "resumeWithoutSessionFlag": "--resume",
+    "modelFlag": null,
+    "defaultArgs": ["chat", "--agent", "emdash"]
+  },
+  "sessions": "resumable",
+  "binaries": ["kiro-cli"],
+  "defaultModel": null,
+  "envVars": []
+}

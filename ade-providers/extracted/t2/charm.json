@@ -1,0 +1,36 @@
+{
+  "id": "charm",
+  "name": "Charm",
+  "description": "Charm Crush agent CLI providing terminal-first AI assistance for coding tasks.",
+  "websiteUrl": "https://github.com/charmbracelet/crush",
+  "capabilities": {
+    "acp": "none",
+    "auth": "none",
+    "autoApprove": "none",
+    "effort": "none",
+    "hooks": "none",
+    "hostDependency": "supported",
+    "mcp": "supported",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "stateless",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "",
+    "autoApproveFlag": null,
+    "initialPromptFlag": "",
+    "resumeFlag": null,
+    "sessionIdFlag": null,
+    "sessionIdOnResumeOnly": false,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": null,
+    "defaultArgs": ["run"]
+  },
+  "sessions": "stateless",
+  "binaries": ["crush"],
+  "defaultModel": null,
+  "envVars": []
+}

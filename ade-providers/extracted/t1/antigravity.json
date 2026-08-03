@@ -1,0 +1,36 @@
+{
+  "id": "antigravity",
+  "name": "Antigravity",
+  "description": "Google Antigravity CLI for terminal-first agent sessions with shared Antigravity settings and conversation history.",
+  "websiteUrl": "https://antigravity.google/docs/cli-overview",
+  "capabilities": {
+    "acp": "none",
+    "auth": "none",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "none",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "selectable",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "-i",
+    "autoApproveFlag": "--dangerously-skip-permissions",
+    "initialPromptFlag": "-i",
+    "resumeFlag": null,
+    "sessionIdFlag": "--conversation=",
+    "sessionIdOnResumeOnly": false,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": "--model",
+    "defaultArgs": []
+  },
+  "sessions": "resumable",
+  "binaries": ["agy", "antigravity"],
+  "defaultModel": "Gemini 3.5 Flash (Medium)",
+  "envVars": []
+}

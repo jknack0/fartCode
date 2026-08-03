@@ -1,0 +1,36 @@
+{
+  "id": "continue",
+  "name": "Continue",
+  "description": "Continue CLI is a modular coding agent with configurable models, rules, and MCP tool support.",
+  "websiteUrl": "https://docs.continue.dev/guides/cli",
+  "capabilities": {
+    "acp": "none",
+    "auth": "none",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "none",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "",
+    "autoApproveFlag": "--auto",
+    "initialPromptFlag": "",
+    "resumeFlag": "--resume",
+    "sessionIdFlag": null,
+    "sessionIdOnResumeOnly": false,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": null,
+    "defaultArgs": []
+  },
+  "sessions": "resumable",
+  "binaries": ["cn"],
+  "defaultModel": null,
+  "envVars": []
+}

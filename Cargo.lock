@@ -27,6 +27,7 @@ name = "ade-core"
 version = "0.1.0"
 dependencies = [
  "ade-git",
+ "ade-providers",
  "glob",
  "rusqlite",
  "serde",
@@ -55,6 +56,9 @@ version = "0.1.0"
 [[package]]
 name = "ade-providers"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "ade-runtime"

@@ -1,0 +1,36 @@
+{
+  "id": "oh-my-pi",
+  "name": "Oh My Pi",
+  "description": "Terminal-first coding agent with LSP, debugger, subagents, browser tools, and ACP support.",
+  "websiteUrl": "https://omp.sh",
+  "capabilities": {
+    "acp": "supported",
+    "auth": "none",
+    "autoApprove": "none",
+    "effort": "none",
+    "hooks": "plugin",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "none",
+    "plugins": "supported",
+    "prompt": "argv",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "",
+    "autoApproveFlag": null,
+    "initialPromptFlag": "",
+    "resumeFlag": "--session",
+    "sessionIdFlag": "--session",
+    "sessionIdOnResumeOnly": true,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": "--model",
+    "defaultArgs": ["--extension", "./.omp/extensions/emdash-hook.ts"]
+  },
+  "sessions": "resumable",
+  "binaries": ["omp"],
+  "defaultModel": null,
+  "envVars": []
+}

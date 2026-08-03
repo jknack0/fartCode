@@ -1,0 +1,36 @@
+{
+  "id": "goose",
+  "name": "Goose",
+  "description": "Goose CLI that routes tasks to tools and models for coding workflows.",
+  "websiteUrl": "https://goose-docs.ai/docs/quickstart/",
+  "capabilities": {
+    "acp": "supported",
+    "auth": "none",
+    "autoApprove": "none",
+    "effort": "none",
+    "hooks": "config",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "-t",
+    "autoApproveFlag": null,
+    "initialPromptFlag": "-t",
+    "resumeFlag": "--resume",
+    "sessionIdFlag": "--session-id",
+    "sessionIdOnResumeOnly": true,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": null,
+    "defaultArgs": []
+  },
+  "sessions": "resumable",
+  "binaries": ["goose"],
+  "defaultModel": null,
+  "envVars": []
+}

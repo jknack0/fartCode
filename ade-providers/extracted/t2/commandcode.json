@@ -1,0 +1,36 @@
+{
+  "id": "commandcode",
+  "name": "Command Code",
+  "description": "Command Code CLI for terminal-first coding sessions that learn project and personal coding taste.",
+  "websiteUrl": "https://commandcode.ai/docs/reference/cli",
+  "capabilities": {
+    "acp": "none",
+    "auth": "none",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "config",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "",
+    "autoApproveFlag": "--yolo",
+    "initialPromptFlag": "",
+    "resumeFlag": "--resume",
+    "sessionIdFlag": "--resume",
+    "sessionIdOnResumeOnly": true,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": null,
+    "defaultArgs": ["--trust", "--skip-onboarding"]
+  },
+  "sessions": "resumable",
+  "binaries": ["command-code", "commandcode", "cmdc"],
+  "defaultModel": null,
+  "envVars": []
+}

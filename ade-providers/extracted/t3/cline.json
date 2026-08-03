@@ -1,0 +1,36 @@
+{
+  "id": "cline",
+  "name": "Cline",
+  "description": "Cline CLI runs coding agents directly in your terminal with multi-provider model support.",
+  "websiteUrl": "https://docs.cline.bot/cline-cli/overview",
+  "capabilities": {
+    "acp": "supported",
+    "auth": "none",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "none",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "stateless",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "",
+    "autoApproveFlag": "--yolo",
+    "initialPromptFlag": "",
+    "resumeFlag": null,
+    "sessionIdFlag": null,
+    "sessionIdOnResumeOnly": false,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": null,
+    "defaultArgs": []
+  },
+  "sessions": "stateless",
+  "binaries": ["cline"],
+  "defaultModel": null,
+  "envVars": []
+}

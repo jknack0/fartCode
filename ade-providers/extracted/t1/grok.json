@@ -1,0 +1,36 @@
+{
+  "id": "grok",
+  "name": "Grok",
+  "description": "xAI's Grok CLI for terminal-first coding sessions with plans, subagents, and parallel work.",
+  "websiteUrl": "https://docs.x.ai/build/overview",
+  "capabilities": {
+    "acp": "supported",
+    "auth": "none",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "config",
+    "hostDependency": "supported",
+    "mcp": "supported",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "",
+    "autoApproveFlag": "--always-approve",
+    "initialPromptFlag": "",
+    "resumeFlag": "-r",
+    "sessionIdFlag": "-r",
+    "sessionIdOnResumeOnly": true,
+    "resumeWithoutSessionFlag": "-r",
+    "modelFlag": "-m",
+    "defaultArgs": []
+  },
+  "sessions": "resumable",
+  "binaries": ["grok"],
+  "defaultModel": null,
+  "envVars": []
+}

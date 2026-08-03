@@ -1,0 +1,38 @@
+{
+  "id": "freebuff",
+  "name": "Freebuff",
+  "description": "Freebuff is a standalone Codebuff package for project-directory assistance and day-to-day development tasks.",
+  "websiteUrl": "https://freebuff.com",
+  "capabilities": {
+    "acp": "none",
+    "auth": "none",
+    "autoApprove": "none",
+    "effort": "none",
+    "hooks": "none",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "keystroke",
+    "sessions": "stateless",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "keystroke",
+    "flag": null,
+    "autoApproveFlag": null,
+    "initialPromptFlag": null,
+    "resumeFlag": null,
+    "sessionIdFlag": null,
+    "sessionIdOnResumeOnly": false,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": null,
+    "defaultArgs": []
+  },
+  "sessions": "stateless",
+  "binaries": [
+    "freebuff"
+  ],
+  "defaultModel": null,
+  "envVars": []
+}

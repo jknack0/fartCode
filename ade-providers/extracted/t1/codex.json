@@ -1,0 +1,36 @@
+{
+  "id": "codex",
+  "name": "Codex",
+  "description": "CLI that connects to OpenAI models for project-aware code assistance and terminal workflows.",
+  "websiteUrl": "https://github.com/openai/codex",
+  "capabilities": {
+    "acp": "supported",
+    "auth": "supported",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "config",
+    "hostDependency": "supported",
+    "mcp": "supported",
+    "models": "selectable",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "",
+    "autoApproveFlag": "-c approval_policy=\"never\" -c sandbox_mode=\"danger-full-access\" --dangerously-bypass-hook-trust",
+    "initialPromptFlag": "",
+    "resumeFlag": "resume",
+    "sessionIdFlag": " ",
+    "sessionIdOnResumeOnly": true,
+    "resumeWithoutSessionFlag": "resume --last",
+    "modelFlag": "-m",
+    "defaultArgs": []
+  },
+  "sessions": "resumable",
+  "binaries": ["codex"],
+  "defaultModel": "gpt-5.6-sol",
+  "envVars": ["OPENAI_API_KEY"]
+}

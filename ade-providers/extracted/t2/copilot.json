@@ -1,0 +1,36 @@
+{
+  "id": "copilot",
+  "name": "GitHub Copilot",
+  "description": "GitHub Copilot CLI brings Copilot prompts to the terminal for code, shell, and search help.",
+  "websiteUrl": "https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli",
+  "capabilities": {
+    "acp": "supported",
+    "auth": "none",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "config",
+    "hostDependency": "supported",
+    "mcp": "supported",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "resumable",
+    "trust": "supported"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "-i",
+    "autoApproveFlag": "--allow-all-tools",
+    "initialPromptFlag": "-i",
+    "resumeFlag": "--resume",
+    "sessionIdFlag": "--resume",
+    "sessionIdOnResumeOnly": true,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": null,
+    "defaultArgs": []
+  },
+  "sessions": "resumable",
+  "binaries": ["copilot"],
+  "defaultModel": null,
+  "envVars": []
+}

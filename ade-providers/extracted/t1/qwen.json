@@ -1,0 +1,36 @@
+{
+  "id": "qwen",
+  "name": "Qwen Code",
+  "description": "Command-line interface to Alibaba's Qwen Code models for coding assistance and code completion.",
+  "websiteUrl": "https://github.com/QwenLM/qwen-code",
+  "capabilities": {
+    "acp": "supported",
+    "auth": "none",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "config",
+    "hostDependency": "supported",
+    "mcp": "supported",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "argv",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "-i",
+    "autoApproveFlag": "--approval-mode=yolo",
+    "initialPromptFlag": "-i",
+    "resumeFlag": "--resume",
+    "sessionIdFlag": "--resume",
+    "sessionIdOnResumeOnly": true,
+    "resumeWithoutSessionFlag": "--continue",
+    "modelFlag": null,
+    "defaultArgs": []
+  },
+  "sessions": "resumable",
+  "binaries": ["qwen"],
+  "defaultModel": null,
+  "envVars": []
+}

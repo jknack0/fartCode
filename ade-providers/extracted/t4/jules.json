@@ -1,0 +1,38 @@
+{
+  "id": "jules",
+  "name": "Jules",
+  "description": "Google's Jules CLI for managing asynchronous remote coding sessions and a terminal dashboard.",
+  "websiteUrl": "https://jules.google/docs/cli/reference/",
+  "capabilities": {
+    "acp": "none",
+    "auth": "none",
+    "autoApprove": "none",
+    "effort": "none",
+    "hooks": "none",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "none",
+    "plugins": "none",
+    "prompt": "keystroke",
+    "sessions": "stateless",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "keystroke",
+    "flag": null,
+    "autoApproveFlag": null,
+    "initialPromptFlag": null,
+    "resumeFlag": null,
+    "sessionIdFlag": null,
+    "sessionIdOnResumeOnly": false,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": null,
+    "defaultArgs": []
+  },
+  "sessions": "stateless",
+  "binaries": [
+    "jules"
+  ],
+  "defaultModel": null,
+  "envVars": []
+}

@@ -720,6 +720,33 @@ fn main() {
         "hydrate after restart restores the resume state",
     );
 
+    // -- 16. Provider registry (E3-01) ----------------------------------------
+    check(
+        ade_providers::list().len() == 35,
+        "provider registry has all 35 agents",
+    );
+    let claude = ade_providers::get("claude").expect("claude registered");
+    check(
+        claude.name == "Claude Code" && claude.capabilities.acp,
+        "get(\"claude\") returns metadata + capabilities",
+    );
+    check(
+        ade_providers::filter_by_capability(ade_providers::Capability::Acp).len() == 22,
+        "capability filter returns 22 ACP-capable providers",
+    );
+    check(
+        ade_providers::resolve_executable("cmdc").map(|p| p.id.as_str()) == Some("commandcode"),
+        "resolve_executable maps binary names to providers",
+    );
+    let claude_dto = ade_providers::list_dtos()
+        .into_iter()
+        .find(|d| d.id == "claude")
+        .unwrap();
+    check(
+        claude_dto.models.first().map(String::as_str) == Some("Default model"),
+        "DTO model list starts with the Default model sentinel",
+    );
+
     println!(
         "\n== SMOKE {} ==",
         if failures == 0 { "OK" } else { "FAILED" }

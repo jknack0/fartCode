@@ -1,0 +1,36 @@
+{
+  "id": "amp",
+  "name": "Amp",
+  "description": "Amp Code CLI for agentic coding sessions against your repository from the terminal.",
+  "websiteUrl": "https://ampcode.com/manual#install",
+  "capabilities": {
+    "acp": "none",
+    "auth": "none",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "plugin",
+    "hostDependency": "supported",
+    "mcp": "supported",
+    "models": "selectable",
+    "plugins": "supported",
+    "prompt": "stdin-pipe",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "stdin-pipe",
+    "flag": null,
+    "autoApproveFlag": "--dangerously-allow-all",
+    "initialPromptFlag": null,
+    "resumeFlag": "threads continue",
+    "sessionIdFlag": "threads continue",
+    "sessionIdOnResumeOnly": true,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": "-m",
+    "defaultArgs": []
+  },
+  "sessions": "resumable",
+  "binaries": ["amp"],
+  "defaultModel": "low",
+  "envVars": []
+}

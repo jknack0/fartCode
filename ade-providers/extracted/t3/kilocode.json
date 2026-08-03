@@ -1,0 +1,36 @@
+{
+  "id": "kilocode",
+  "name": "Kilocode",
+  "description": "Kilo AI coding assistant with multiple modes, broad model support, and checkpoint-based workflows.",
+  "websiteUrl": "https://kilo.ai/docs/cli",
+  "capabilities": {
+    "acp": "supported",
+    "auth": "none",
+    "autoApprove": "supported",
+    "effort": "none",
+    "hooks": "plugin",
+    "hostDependency": "supported",
+    "mcp": "none",
+    "models": "none",
+    "plugins": "supported",
+    "prompt": "argv",
+    "sessions": "resumable",
+    "trust": "none"
+  },
+  "prompt": {
+    "kind": "argv",
+    "flag": "--prompt",
+    "autoApproveFlag": "--auto",
+    "initialPromptFlag": "--prompt",
+    "resumeFlag": "--continue",
+    "sessionIdFlag": null,
+    "sessionIdOnResumeOnly": false,
+    "resumeWithoutSessionFlag": null,
+    "modelFlag": null,
+    "defaultArgs": []
+  },
+  "sessions": "resumable",
+  "binaries": ["kilo"],
+  "defaultModel": null,
+  "envVars": []
+}
