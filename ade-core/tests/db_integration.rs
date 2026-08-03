@@ -177,6 +177,38 @@ fn test_resolve_db_path_precedence() {
 }
 
 #[test]
+fn test_legacy_db_copy_and_secrets_cleared() {
+    let tmp = tempfile::tempdir().unwrap();
+    // A path containing a single quote exercises the VACUUM INTO escaping.
+    let dir = tmp.path().join("user's-data");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    // Build a prior-version DB (emdash4.db) carrying an app_secrets table.
+    let legacy = dir.join("emdash4.db");
+    let conn = rusqlite::Connection::open(&legacy).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE app_secrets (key TEXT PRIMARY KEY, secret TEXT NOT NULL);
+         INSERT INTO app_secrets (key, secret) VALUES ('k', 's');",
+    )
+    .unwrap();
+    drop(conn);
+
+    let dest = dir.join("ade.db");
+    let db = SqliteDb::init(Some(dest.to_str().unwrap())).unwrap();
+    assert!(dest.exists(), "legacy DB must be copied to ade.db");
+
+    let conn = db.conn().lock().unwrap();
+    // Secrets must be wiped in the copy.
+    let secrets: i64 = conn
+        .query_row("SELECT COUNT(*) FROM app_secrets", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(secrets, 0, "app_secrets must be cleared in the copy");
+    // The Phase 0 schema must be present on top of the copy.
+    assert!(table_exists(&conn, "projects"));
+    assert!(table_exists(&conn, "migrations"));
+}
+
+#[test]
 fn test_versioned_json_corrupt_value_returns_none() {
     let db = SqliteDb::init_in_memory().unwrap();
     let conn = db.conn().lock().unwrap();

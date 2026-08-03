@@ -115,10 +115,25 @@ fn test_fts_version_gate_rebuilds_index() {
 
 #[test]
 fn test_migrations_reinit_is_noop() {
-    let db = SqliteDb::init_in_memory().unwrap();
-    let conn = db.conn().lock().unwrap();
-    let count: i64 = conn
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("test.db");
+
+    let db = SqliteDb::init(Some(db_path.to_str().unwrap())).unwrap();
+    let count: i64 = db
+        .conn()
+        .lock()
+        .unwrap()
         .query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))
         .unwrap();
     assert_eq!(count, 1);
+    drop(db);
+
+    let db2 = SqliteDb::init(Some(db_path.to_str().unwrap())).unwrap();
+    let count2: i64 = db2
+        .conn()
+        .lock()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count2, 1, "re-init must not re-apply migrations");
 }

@@ -26,6 +26,10 @@ use crate::Error;
 pub trait Db: Send + Sync {
     /// Returns a reference to the underlying rusqlite connection.
     /// Callers use this for queries; the connection mutex is internal.
+    ///
+    /// Do **not** hold the returned guard while calling other `Db` methods
+    /// (`kv_get`/`kv_set`/`kv_delete`) — the mutex is not reentrant and that
+    /// would self-deadlock. Take the guard, do the query, and release it.
     fn conn(&self) -> &Mutex<Connection>;
 
     /// Direct KV access (app_settings + kv tables are the same shape).
@@ -212,6 +216,10 @@ fn maybe_copy_legacy_db(dest: &Path) -> Result<(), Error> {
     for name in LEGACY_DB_FILENAMES {
         let src = dir.join(name);
         if src.exists() {
+            // Note: a source left in WAL mode can fail VACUUM INTO with a
+            // SQLITE_CANTOPEN (it needs its -wal/-shm sidecars). Cleanly
+            // closed reference DBs have checkpointed WAL data in the main
+            // file and copy fine; the failure is loud either way.
             copy_sqlite_database(&src, dest)?;
             clear_copied_app_secrets(dest)?;
             tracing::info!(

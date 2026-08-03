@@ -12,6 +12,7 @@
 //! FTS tables are created *outside* migrations, version-gated via `kv` keys
 //! (`fts_version`, `file_index_version`) — later tickets read those gates.
 
+use rusqlite::OptionalExtension;
 use serde::Deserialize;
 
 use crate::db::connection::{kv_get_raw, kv_set_raw};
@@ -84,11 +85,20 @@ pub fn run_migrations(conn: &mut rusqlite::Connection) -> Result<(), Error> {
                 entry.tag
             ))
         })?;
-        let stored: String = conn.query_row(
-            "SELECT hash FROM migrations WHERE created_at = ?1",
-            [entry.when],
-            |row| row.get(0),
-        )?;
+        let stored: Option<String> = conn
+            .query_row(
+                "SELECT hash FROM migrations WHERE created_at = ?1",
+                [entry.when],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(stored) = stored else {
+            return Err(Error::Migration(format!(
+                "migration '{}' (created_at {}) is recorded in the embedded journal but \
+                 missing from the migrations table — the journal was tampered with",
+                entry.tag, entry.when
+            )));
+        };
         let expected = sha256_hex(sql);
         if stored != expected {
             return Err(Error::Migration(format!(

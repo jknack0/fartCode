@@ -26,8 +26,14 @@ pub trait Versioned: Serialize + DeserializeOwned {
 }
 
 /// Serializes `value` as the latest version: `{"version": N, "data": {...}}`.
+///
+/// Never panics: serialization errors surface as `Err`.
 pub fn serialize_versioned<T: Versioned>(value: &T) -> Result<String, Error> {
-    let obj = serde_json::json!({ "version": T::VERSION, "data": value });
+    let data = serde_json::to_value(value).map_err(|e| Error::VersionedJson {
+        column: "?".into(),
+        reason: e.to_string(),
+    })?;
+    let obj = serde_json::json!({ "version": T::VERSION, "data": data });
     serde_json::to_string(&obj).map_err(|e| Error::VersionedJson {
         column: "?".into(),
         reason: e.to_string(),
@@ -120,6 +126,9 @@ pub fn read_versioned<T: Versioned>(
 
 /// Writes `value` (serialized at its latest version) into a versioned column
 /// for the row with the given `id`.
+///
+/// Returns `Ok(())` even if no row matched (0 rows affected); callers that
+/// need to distinguish a no-op should check the row exists first.
 pub fn write_versioned<T: Versioned>(
     conn: &Connection,
     table: &str,
