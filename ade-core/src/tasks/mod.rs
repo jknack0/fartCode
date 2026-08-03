@@ -3,6 +3,7 @@
 
 pub mod lifecycle;
 pub mod model;
+pub mod naming;
 
 use std::sync::Arc;
 

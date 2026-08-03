@@ -2160,7 +2160,7 @@ No `clipboard` plugin — xterm.js handles copy/paste internally.
 
 ---
 
-## 18. Decision log (E1-01 → E2-01)
+## 18. Decision log (E1-01 → E2-03)
 
 Each decision is also documented at its code site; this log is the scan-able
 index. Numbered records (with context + rationale) live in `decisions/`
@@ -2183,3 +2183,5 @@ index. Numbered records (with context + rationale) live in `decisions/`
 | D12 | E2-01 | **No status-transition allowlist** (reference-faithful) — any lifecycle status change is allowed; guards are same-status no-op + not-found. `InvalidStatusTransition` reserved for a future state machine. | `ade-core/src/tasks/` (ADR-0005) |
 | D13 | E2-01 | Create is **atomic** (task + workspace + initial conversation in one tx, rollback on failure); events fire post-commit, non-fatal. `tasks.workspace_intent` is legacy, never written. | `ade-core/src/tasks/mod.rs` (ADR-0005) |
 | D14 | E2-01 | **Provision fast-path contract**: idempotent re-fire of `task:provisioned` + recency touch; real workspace bootstrap is E2-02. Delete is hard (FK cascade); archive is non-destructive. | `ade-core/src/tasks/mod.rs` (ADR-0005) |
+| D15 | E2-03 | Random task names are `adjective-noun-verb` (vendored `human-id@4.2.0` word lists, exact combination order); title slugs implemented directly (nbranch semantics). | `ade-core/src/tasks/naming.rs` (ADR-0006) |
+| D16 | E2-03 | Branch resolution is pure + faithful: Linear branch names verbatim; `ade/<name>-<5-char base36 suffix>` when `appendRandomBranchSuffix`; suffix entropy from uuid (no rand dep); settings read by the caller. | `ade-core/src/tasks/naming.rs` (ADR-0006) |

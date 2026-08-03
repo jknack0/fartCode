@@ -425,6 +425,32 @@ fn main() {
     task_store.delete(&task.id).unwrap();
     check(task_store.get(&task.id).unwrap().is_none(), "task deleted");
 
+    // -- 12. Naming (E2-03): random name + branch resolution ----------------
+    let name = ade_core::tasks::naming::generate_random_name();
+    println!("   random task name: {name}");
+    check(
+        name.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            && name.len() <= 64,
+        "random name is shell-safe [a-z0-9-] ≤64",
+    );
+    let branch = ade_core::tasks::naming::resolve_task_branch_name(
+        &ade_core::tasks::naming::BranchNameOptions {
+            raw_branch: &name,
+            branch_prefix: Some("ade"),
+            suffix: &ade_core::tasks::naming::random_suffix(),
+            append_random_suffix: true,
+            linked_issue: None,
+            disable_random_suffix: false,
+        },
+    );
+    println!("   task branch: {branch}");
+    check(
+        // "ade/" (4) + name (≤64) + "-" (1) + suffix (5) = ≤74
+        branch.starts_with("ade/") && branch.len() <= 74,
+        "branch name is prefixed + suffixed and bounded",
+    );
+
     println!(
         "\n== SMOKE {} ==",
         if failures == 0 { "OK" } else { "FAILED" }
