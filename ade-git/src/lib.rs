@@ -329,6 +329,19 @@ impl GitOps for CliGit {
         self.run_ok(Some(repo_path), ["worktree", "prune"])
     }
 
+    fn is_worktree_clean(&self, _repo: &Path, worktree: &Path) -> Result<bool, Error> {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(worktree)
+            .args(["status", "--porcelain"])
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .output()
+            .map_err(|e| Error::Git(format!("status porcelain: {e}")))?;
+        // The exit code is always 0.
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(stdout.trim().is_empty())
+    }
+
     fn worktree_remove(&self, repo_path: &Path, worktree_path: &Path) -> Result<(), Error> {
         // Phase 0: rm -rf + prune (matches §6.4). E2-02 should switch to
         // `git worktree remove` (safer for dirty/detached worktrees).

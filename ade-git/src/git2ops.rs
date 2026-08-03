@@ -227,6 +227,12 @@ impl GitOps for Git2Ops {
         prune_locked(&repo)
     }
 
+    fn is_worktree_clean(&self, repo: &Path, worktree: &Path) -> Result<bool, Error> {
+        // Delegates to the shell — git2's status API requires index
+        // manipulation; the CLI porcelain is simpler and reference-parity.
+        self.cli.is_worktree_clean(repo, worktree)
+    }
+
     fn worktree_remove(&self, repo_path: &Path, worktree_path: &Path) -> Result<(), Error> {
         let _guard = self
             .worktree_lock

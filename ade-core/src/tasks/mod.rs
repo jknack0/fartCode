@@ -441,12 +441,38 @@ impl TaskStore for DbTaskStore {
     }
 
     fn delete(&self, id: &str) -> Result<(), Error> {
-        // Hard delete; conversations/terminals cascade via FK. (Session
-        // teardown + workspace/worktree cleanup arrive with E2-05/E2-02.)
+        // Capture the workspace row before the task row vanishes —
+        // `workspaces` has no FK to `tasks`, so bare DELETE leaks the row.
+        // Only clean the row when no sibling tasks still reference it.
+        let workspace_id: Option<String> = self.with_conn(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT workspace_id FROM tasks WHERE id = ?1",
+                    [id],
+                    |row| row.get(0),
+                )
+                .optional()?)
+        })?;
         self.with_conn(|conn| {
             conn.execute("DELETE FROM tasks WHERE id = ?1", [id])?;
             Ok(())
         })?;
+        // Tear down the workspace row when no sibling tasks remain.
+        if let Some(wid) = workspace_id {
+            let siblings: i32 = self.with_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM tasks WHERE workspace_id = ?1",
+                    [&wid],
+                    |row| row.get(0),
+                )?)
+            })?;
+            if siblings == 0 {
+                self.with_conn(|conn| {
+                    conn.execute("DELETE FROM workspaces WHERE id = ?1", [&wid])?;
+                    Ok(())
+                })?;
+            }
+        }
         self.event_bus
             .send(InternalEvent::TaskDeleted { id: id.into() });
         lifecycle::telemetry("task_deleted", &[("task_id", id.into())]);

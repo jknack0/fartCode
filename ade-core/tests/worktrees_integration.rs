@@ -274,6 +274,59 @@ fn fixture_provisions_a_worktree() {
     assert_eq!(kind, "worktree");
 }
 
+/// E2-07 follow-up: a dirty worktree (uncommitted changes) must NOT be
+/// removable via WorktreeManager::remove_worktree — the dirty-check was
+/// prompted by the external code review's HIGH finding that `worktree_remove`
+/// is an unconditional `rm -rf`.
+#[test]
+fn remove_worktree_refuses_dirty_worktree() {
+    let fx = Fixture::new();
+    let wt = fx.create_task_with_worktree("ade/dirty-test");
+
+    // Get the task + workspace ids from the DB (the fixture records them).
+    let (task_id, workspace_id): (String, String) = fx
+        .db
+        .conn()
+        .lock()
+        .unwrap()
+        .query_row("SELECT id, workspace_id FROM tasks LIMIT 1", [], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .unwrap();
+    let project = ade_core::projects::model::Project {
+        id: fx.project_id.clone(),
+        name: "demo".into(),
+        path: fx.repo.clone(),
+        workspace_provider: ade_core::projects::model::WorkspaceProviderKind::Local,
+        base_ref: None,
+        ssh_connection_id: None,
+        repository_workspace_id: None,
+        created_at: Some("2025-01-01".into()),
+        updated_at: None,
+    };
+
+    // Build a WorktreeManager from the fixture's pieces.
+    let wm = ade_core::projects::worktrees::WorktreeManager::new(
+        fx.db.clone(),
+        fx.settings.clone(),
+        Arc::new(ade_git::CliGit),
+    );
+
+    // Make an uncommitted change in the worktree.
+    std::fs::write(wt.join("CHANGES.txt"), "unsaved work").unwrap();
+    let err = wm
+        .remove_worktree(&project, &task_id, &workspace_id, &wt)
+        .unwrap_err();
+    assert!(matches!(err, ade_core::Error::DirtyWorktree(_)), "{err:?}");
+
+    // After committing, removal succeeds.
+    git_ok(&wt, ["add", "."]);
+    git_commit(&wt, "save CHANGES.txt");
+    wm.remove_worktree(&project, &task_id, &workspace_id, &wt)
+        .unwrap();
+    assert!(!wt.exists(), "worktree removed after commit");
+}
+
 /// E1-04 acceptance: deleting a project tears down worktrees + rows (FK
 /// cascade verified) and removes the worktree pool dir from disk.
 #[test]

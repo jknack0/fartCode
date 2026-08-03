@@ -101,6 +101,10 @@ pub trait GitOps: Send + Sync {
 
     /// Remove a worktree directory + `git worktree prune`.
     fn worktree_remove(&self, repo_path: &Path, worktree_path: &Path) -> Result<(), Error>;
+    /// `git -C <worktree> status --porcelain` — empty output means the
+    /// worktree is clean (no uncommitted changes or untracked files). Used as
+    /// a dirty-check before `rm -rf` (E2-07 follow-up).
+    fn is_worktree_clean(&self, repo: &Path, worktree: &Path) -> Result<bool, Error>;
 
     /// `git -C <repo> branch --no-track <name> <start_point>` (no upstream set —
     /// the reference's create flow uses `--no-track`).

@@ -75,6 +75,10 @@ pub enum Error {
     /// Lifecycle script hit its `timeoutMs` (E1-06).
     #[error("lifecycle script timed out: {0}")]
     LifecycleScriptTimeout(String),
+    /// Worktree has uncommitted changes (E2-07 follow-up: dirty-check before
+    /// removal prevents data loss of agent work).
+    #[error("worktree has uncommitted changes: {0}")]
+    DirtyWorktree(String),
     /// Lifecycle script exited non-zero when `surfaceFailure` is set.
     #[error("lifecycle script failed: session {session_id} exit={exit_code:?} signal={signal:?}")]
     LifecycleScriptFailed {

@@ -258,6 +258,19 @@ impl WorktreeManager {
             return Ok(());
         }
 
+        // Dirty-check (E2-07 follow-up): uncommitted work in the worktree is
+        // the product's core premise. Destroying it unconditionally on
+        // task teardown is data loss.
+        if !self
+            .git
+            .is_worktree_clean(&project.path, worktree_path)
+            .unwrap_or(false)
+        {
+            return Err(Error::DirtyWorktree(format!(
+                "worktree {} has uncommitted changes — refusing to remove",
+                worktree_path.display()
+            )));
+        }
         self.git.worktree_remove(&project.path, worktree_path)?;
         Ok(())
     }
