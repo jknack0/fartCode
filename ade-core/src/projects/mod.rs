@@ -3,6 +3,7 @@
 
 pub mod model;
 pub mod provider;
+pub mod worktrees;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

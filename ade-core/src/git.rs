@@ -102,6 +102,28 @@ pub trait GitOps: Send + Sync {
     /// Remove a worktree directory + `git worktree prune`.
     fn worktree_remove(&self, repo_path: &Path, worktree_path: &Path) -> Result<(), Error>;
 
-    /// `git -C <repo> branch <name> <start_point>`.
+    /// `git -C <repo> branch --no-track <name> <start_point>` (no upstream set —
+    /// the reference's create flow uses `--no-track`).
     fn branch_create(&self, repo_path: &Path, name: &str, start_point: &str) -> Result<(), Error>;
+
+    // -- E2-02 additions -----------------------------------------------------
+
+    /// `git -C <repo> config --get <key>` (None when unset).
+    fn config_get(&self, repo_path: &Path, key: &str) -> Result<Option<String>, Error>;
+
+    /// `git -C <repo> config <key> <value>`.
+    fn config_set(&self, repo_path: &Path, key: &str, value: &str) -> Result<(), Error>;
+
+    /// `git -C <repo> push [-u] <remote> <branch>`.
+    fn push(
+        &self,
+        repo_path: &Path,
+        remote: &str,
+        branch: &str,
+        set_upstream: bool,
+    ) -> Result<(), Error>;
+
+    /// Is `rel_path` (repo-relative) tracked by git? (`git ls-files
+    /// --error-unmatch` — false for untracked/ignored files.)
+    fn is_tracked(&self, repo_path: &Path, rel_path: &str) -> Result<bool, Error>;
 }

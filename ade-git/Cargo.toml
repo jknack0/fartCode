@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+git2 = { workspace = true }
 ade-core = { path = "../ade-core" }
 
 [dev-dependencies]

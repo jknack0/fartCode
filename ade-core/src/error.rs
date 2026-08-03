@@ -56,6 +56,9 @@ pub enum Error {
     #[error("worktree path already exists: {0}")]
     WorktreeExists(PathBuf),
 
+    #[error("worktree exists at the expected path but is checked out on a different branch: {0}")]
+    WorktreeBranchConflict(String),
+
     #[error("cannot remove project root workspace")]
     CannotRemoveProjectRoot,
 

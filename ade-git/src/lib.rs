@@ -2,19 +2,44 @@
 //!
 //! `CliGit` shells out to the `git` CLI via `std::process::Command` with
 //! argument arrays — no shell, no quoting (AGENTS.md: "no ad-hoc shell
-//! quoting"). The `GitOps` trait itself lives in `ade-core` so domain crates
-//! can use it without violating the leaf rule; this crate provides the
-//! implementation and re-exports the trait.
+//! quoting"). `Git2Ops` provides git2-backed worktree operations (E2-02
+//! git strategy) and delegates everything else to `CliGit`. The `GitOps`
+//! trait itself lives in `ade-core` so domain crates can use it without
+//! violating the leaf rule; this crate provides the implementations and
+//! re-exports the trait.
+
+pub mod git2ops;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub use ade_core::git::{BranchRef, GitOps, WorktreeEntry};
 use ade_core::Error;
+pub use git2ops::Git2Ops;
 
 /// git CLI-backed implementation of `GitOps`.
 #[derive(Debug)]
 pub struct CliGit;
+
+/// Reference `NON_INTERACTIVE_GIT_ENV`: suppress all git prompts so cleanup /
+/// background ops can never hang on credential dialogs.
+const NON_INTERACTIVE_ENV: &[(&str, &str)] = &[
+    ("GIT_TERMINAL_PROMPT", "0"),
+    ("GIT_ASKPASS", ""),
+    ("GCM_INTERACTIVE", "never"),
+    ("SSH_ASKPASS", ""),
+];
+
+fn git_cmd(path: Option<&Path>) -> Command {
+    let mut cmd = Command::new("git");
+    for (k, v) in NON_INTERACTIVE_ENV {
+        cmd.env(k, v);
+    }
+    if let Some(path) = path {
+        cmd.arg("-C").arg(path);
+    }
+    cmd
+}
 
 impl CliGit {
     fn run<I, S>(&self, path: Option<&Path>, args: I) -> Result<String, Error>
@@ -26,10 +51,7 @@ impl CliGit {
             .into_iter()
             .map(|a| a.as_ref().to_os_string())
             .collect();
-        let mut cmd = Command::new("git");
-        if let Some(path) = path {
-            cmd.arg("-C").arg(path);
-        }
+        let mut cmd = git_cmd(path);
         cmd.args(&args);
         let output = cmd
             .output()
@@ -59,10 +81,7 @@ impl CliGit {
         I: IntoIterator<Item = S>,
         S: AsRef<std::ffi::OsStr>,
     {
-        let mut cmd = Command::new("git");
-        if let Some(path) = path {
-            cmd.arg("-C").arg(path);
-        }
+        let mut cmd = git_cmd(path);
         cmd.args(args);
         let status = cmd
             .status()
@@ -77,8 +96,8 @@ impl GitOps for CliGit {
     }
 
     fn init(&self, path: &Path) -> Result<(), Error> {
-        let mut cmd = Command::new("git");
-        cmd.arg("-C").arg(path).arg("init");
+        let mut cmd = git_cmd(Some(path));
+        cmd.arg("init");
         let output = cmd
             .output()
             .map_err(|e| Error::Git(format!("failed to spawn git: {e}")))?;
@@ -93,7 +112,7 @@ impl GitOps for CliGit {
     }
 
     fn clone(&self, url: &str, target: &Path) -> Result<(), Error> {
-        let mut cmd = Command::new("git");
+        let mut cmd = git_cmd(None);
         cmd.arg("clone").arg(url).arg(target);
         let output = cmd
             .output()
@@ -143,8 +162,8 @@ impl GitOps for CliGit {
     fn current_branch(&self, path: &Path) -> Result<Option<String>, Error> {
         // `git branch --show-current` exits non-zero on unborn/detached HEAD;
         // that's not an error, just "no branch".
-        let mut cmd = Command::new("git");
-        cmd.arg("-C").arg(path).args(["branch", "--show-current"]);
+        let mut cmd = git_cmd(Some(path));
+        cmd.args(["branch", "--show-current"]);
         let output = cmd
             .output()
             .map_err(|e| Error::Git(format!("failed to spawn git: {e}")))?;
@@ -317,7 +336,64 @@ impl GitOps for CliGit {
     }
 
     fn branch_create(&self, repo_path: &Path, name: &str, start_point: &str) -> Result<(), Error> {
-        self.run_ok(Some(repo_path), ["branch", name, start_point])
+        // `--` so dash-leading names are not parsed as options (reference parity).
+        self.run_ok(
+            Some(repo_path),
+            ["branch", "--no-track", "--", name, start_point],
+        )
+    }
+
+    fn config_get(&self, repo_path: &Path, key: &str) -> Result<Option<String>, Error> {
+        // `git config --get` exits 1 (no output) when the key is unset — that
+        // is Ok(None). Any OTHER failure (corrupt config, spawn error) is an
+        // error, not a silent None.
+        let mut cmd = git_cmd(Some(repo_path));
+        cmd.args(["config", "--get", key]);
+        let output = cmd
+            .output()
+            .map_err(|e| Error::Git(format!("failed to spawn git config: {e}")))?;
+        if !output.status.success() {
+            if output.status.code() == Some(1) {
+                return Ok(None);
+            }
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(Error::Git(format!(
+                "git config --get {key} failed: {}",
+                stderr.trim()
+            )));
+        }
+        let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok(if value.is_empty() { None } else { Some(value) })
+    }
+
+    fn config_set(&self, repo_path: &Path, key: &str, value: &str) -> Result<(), Error> {
+        self.run_ok(Some(repo_path), ["config", key, value])
+    }
+
+    fn push(
+        &self,
+        repo_path: &Path,
+        remote: &str,
+        branch: &str,
+        set_upstream: bool,
+    ) -> Result<(), Error> {
+        let mut args = vec!["push".to_string()];
+        if set_upstream {
+            args.push("-u".into());
+        }
+        args.push(remote.into());
+        args.push(branch.into());
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        self.run_ok(Some(repo_path), args)
+    }
+
+    fn is_tracked(&self, repo_path: &Path, rel_path: &str) -> Result<bool, Error> {
+        // `git ls-files --error-unmatch`: exit 0 = tracked, 1 = untracked
+        // (or absent) — both are meaningful answers, so surface as bool.
+        self.run_quiet_ok(
+            Some(repo_path),
+            ["ls-files", "--error-unmatch", "--", rel_path],
+        )
     }
 }
 

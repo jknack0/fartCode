@@ -9,6 +9,7 @@ pub mod events;
 pub mod git;
 pub mod projects;
 pub mod settings;
+pub mod shell_escape;
 pub mod tasks;
 
 pub use error::Error;
