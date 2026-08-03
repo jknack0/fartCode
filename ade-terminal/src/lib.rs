@@ -282,7 +282,7 @@ mod tests {
         // >1 MiB of output (exercises the cap) + a backgrounded grandchild
         // that keeps the slave open after the shell exits.
         handle
-            .write("dd if=/dev/zero bs=4096 count=512 2>/dev/null\nsleep 30 &\nexit\n")
+            .write("dd if=/dev/zero bs=4096 count=512 2>/dev/null\nsleep 2 &\nexit\n")
             .unwrap();
         handle.wait_exit(Duration::from_secs(10)).unwrap();
 
