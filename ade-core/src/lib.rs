@@ -5,5 +5,6 @@
 
 pub mod db;
 pub mod error;
+pub mod settings;
 
 pub use error::Error;

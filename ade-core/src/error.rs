@@ -22,6 +22,9 @@ pub enum Error {
     #[error("versioned JSON parse failed for column {column}: {reason}")]
     VersionedJson { column: String, reason: String },
 
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+
     // -- Settings --
     #[error("invalid setting key: {0}")]
     InvalidSettingKey(String),
