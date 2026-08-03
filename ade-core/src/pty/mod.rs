@@ -1,10 +1,12 @@
-//! Prompt delivery strategies (ticket E3-03).
+//! Prompt delivery strategies (ticket E3-03) + agent env allowlist (E3-08).
 //!
 //! Ports the reference prompt delivery layer: `buildStandardCommand` (argv /
 //! stdin-pipe), the large-prompt spill to a temp `.md`, and the keystroke
 //! injector (`keystroke-injection.ts`: inject after the TUI produces output
 //! and stays quiet for a beat). The actual PTY (ade-terminal / E2-06) drives
 //! the injector; this module is the delivery logic + the seam.
+
+pub mod env_allowlist;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

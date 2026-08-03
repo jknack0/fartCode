@@ -951,6 +951,24 @@ fn main() {
     let rmon = ade_core::resource_monitor::sample().unwrap();
     check(rmon.mem_total_mb > 0, "resource monitor samples memory");
 
+    // -- 23. Env allowlist (E3-08) -------------------------------------------
+    use ade_core::pty::env_allowlist::{build_agent_env, is_allowlisted};
+    std::env::set_var("ADE_SMOKE_SECRET", "leak-me");
+    let agent_env = build_agent_env(&[], &[], None);
+    check(
+        !agent_env.contains_key("ADE_SMOKE_SECRET"),
+        "non-allowlisted env var never reaches the agent",
+    );
+    check(
+        agent_env.get("TERM").map(String::as_str) == Some("xterm-256color"),
+        "base env forced",
+    );
+    check(
+        is_allowlisted("ANTHROPIC_API_KEY") && !is_allowlisted("ADE_SMOKE_SECRET"),
+        "allowlist is the single source of truth",
+    );
+    std::env::remove_var("ADE_SMOKE_SECRET");
+
     println!(
         "\n== SMOKE {} ==",
         if failures == 0 { "OK" } else { "FAILED" }
