@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import ProjectSettings from "./ProjectSettings";
 import { useSidebar } from "../store/sidebar";
+import { useUi } from "../store/ui";
 
 function CreateProjectDialog({ onClose }: { onClose: () => void }) {
   const [path, setPath] = useState("");
@@ -85,9 +86,10 @@ export default function Sidebar() {
     deleteProject,
   } = useSidebar();
 
-  const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const createOpen = useUi((s) => s.createProjectOpen);
+  const setCreateOpen = useUi((s) => s.setCreateProjectOpen);
 
   // ⌘⇧N / Ctrl+Shift+N → create project.
   useEffect(() => {

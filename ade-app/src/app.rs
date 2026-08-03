@@ -80,11 +80,12 @@ pub fn event_to_value(event: &InternalEvent) -> Option<serde_json::Value> {
             Some(json!({ "type": "task:status_changed", "taskId": id, "status": new_status }))
         }
         InternalEvent::ConversationCreated {
-            id,
-            task_id,
-            provider,
+            id, task_id, title, ..
         } => Some(json!({
-            "type": "conversation:created", "id": id, "taskId": task_id, "provider": provider,
+            "type": "conversation:created", "id": id, "taskId": task_id, "title": title,
+        })),
+        InternalEvent::ConversationRenamed { id, title } => Some(json!({
+            "type": "conversation:renamed", "id": id, "title": title,
         })),
         InternalEvent::ConversationDeleted { id } => {
             Some(json!({ "type": "conversation:deleted", "id": id }))

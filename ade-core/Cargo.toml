@@ -10,6 +10,7 @@ ade-providers = { path = "../ade-providers" }
 rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sysinfo = "0.30"
 sha2 = { workspace = true }
 glob = { workspace = true }
 thiserror = { workspace = true }

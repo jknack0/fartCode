@@ -926,6 +926,31 @@ fn main() {
         "view-state keys are prefix-enforced",
     );
 
+    // -- 22. Search + resource monitor (E1-09) ------------------------------
+    use ade_core::search;
+    search::upsert(
+        &vs_db,
+        "project",
+        "smoke-proj",
+        None,
+        None,
+        "smoke-engine",
+        &["smoke"],
+    )
+    .unwrap();
+    let hits = search::query(&vs_db, "smoke-eng", 5).unwrap();
+    check(
+        hits.iter().any(|h| h.item_id == "smoke-proj"),
+        "FTS trigram search finds the doc",
+    );
+    search::delete(&vs_db, "project", "smoke-proj").unwrap();
+    check(
+        search::query(&vs_db, "smoke-eng", 5).unwrap().is_empty(),
+        "FTS delete removes the doc",
+    );
+    let rmon = ade_core::resource_monitor::sample().unwrap();
+    check(rmon.mem_total_mb > 0, "resource monitor samples memory");
+
     println!(
         "\n== SMOKE {} ==",
         if failures == 0 { "OK" } else { "FAILED" }

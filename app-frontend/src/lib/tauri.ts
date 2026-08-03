@@ -35,7 +35,8 @@ export type AdeEvent =
   | { type: "task:created"; id: string; projectId: string; name: string }
   | { type: "task:deleted"; taskId: string }
   | { type: "task:status_changed"; taskId: string; status: string }
-  | { type: "conversation:created"; id: string; taskId: string; provider: string }
+  | { type: "conversation:created"; id: string; taskId: string; title: string }
+  | { type: "conversation:renamed"; id: string; title: string }
   | { type: "conversation:deleted"; id: string };
 
 export function listProjects(): Promise<ProjectDto[]> {
@@ -111,4 +112,33 @@ export function getViewState(key: string): Promise<unknown> {
 }
 export function setViewState(key: string, value: unknown): Promise<void> {
   return invoke("set_view_state", { key, value });
+}
+
+// -- Search + resource monitor (E1-09) ---------------------------------------
+
+export interface SearchResultDto {
+  itemType: string;
+  itemId: string;
+  projectId: string | null;
+  taskId: string | null;
+  title: string;
+}
+
+export interface ResourceSampleDto {
+  cpuPercent: number;
+  memUsedMb: number;
+  memTotalMb: number;
+}
+
+export function search(query: string, limit?: number): Promise<SearchResultDto[]> {
+  return invoke("search", { query, limit });
+}
+export function resourceSample(): Promise<ResourceSampleDto> {
+  return invoke("resource_sample");
+}
+export function getResourceMonitorEnabled(): Promise<boolean> {
+  return invoke("get_resource_monitor_enabled");
+}
+export function setResourceMonitorEnabled(enabled: boolean): Promise<void> {
+  return invoke("set_resource_monitor_enabled", { enabled });
 }

@@ -68,6 +68,13 @@ impl Default for ProjectGroup {
     }
 }
 
+/// E1-09: resource monitor toggle (disabled by default — acceptance).
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ResourceMonitorGroup {
+    pub enabled: bool,
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(rename_all = "camelCase", default)]
 pub struct TaskGroup {
@@ -187,12 +194,6 @@ impl Default for BrowserPreviewGroup {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
-#[serde(rename_all = "camelCase", default)]
-pub struct ResourceMonitorGroup {
-    pub enabled: bool,
-}
-
 // ---------------------------------------------------------------------------
 // Typed keys + defaults
 // ---------------------------------------------------------------------------
@@ -201,12 +202,12 @@ pub const DEFAULT_AGENT_ID: &str = "claude";
 
 pub static PROJECT: SettingKey<ProjectGroup> = SettingKey::new("project");
 pub static TASKS: SettingKey<TaskGroup> = SettingKey::new("tasks");
+pub static RESOURCE_MONITOR: SettingKey<ResourceMonitorGroup> = SettingKey::new("resourceMonitor");
 pub static DEFAULT_AGENT: SettingKey<String> = SettingKey::new("defaultAgent");
 pub static LOCAL_PROJECT: SettingKey<LocalProjectGroup> = SettingKey::new("localProject");
 pub static TERMINAL: SettingKey<TerminalGroup> = SettingKey::new("terminal");
 pub static NOTIFICATIONS: SettingKey<NotificationGroup> = SettingKey::new("notifications");
 pub static BROWSER_PREVIEW: SettingKey<BrowserPreviewGroup> = SettingKey::new("browserPreview");
-pub static RESOURCE_MONITOR: SettingKey<ResourceMonitorGroup> = SettingKey::new("resourceMonitor");
 
 /// All registered app-setting keys, in registry order.
 pub fn all_keys() -> &'static [&'static str] {

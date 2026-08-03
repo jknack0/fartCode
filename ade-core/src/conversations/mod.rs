@@ -255,6 +255,7 @@ impl ConversationStore for DbConversationStore {
                 id: conversation.id.clone(),
                 task_id,
                 provider: conversation.provider.clone().unwrap_or_default(),
+                title: conversation.title.clone(),
             });
         Ok(conversation)
     }
@@ -339,6 +340,11 @@ impl ConversationStore for DbConversationStore {
         if updated == 0 {
             return Err(Error::ConversationNotFound(id.into()));
         }
+        self.event_bus
+            .send(crate::events::InternalEvent::ConversationRenamed {
+                id: id.to_string(),
+                title: title.clone(),
+            });
         self.get(id)?
             .ok_or_else(|| Error::ConversationNotFound(id.into()))
     }

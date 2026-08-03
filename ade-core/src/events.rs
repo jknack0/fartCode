@@ -55,6 +55,11 @@ pub enum InternalEvent {
         id: String,
         task_id: String,
         provider: String,
+        title: String,
+    },
+    ConversationRenamed {
+        id: String,
+        title: String,
     },
     ConversationDeleted {
         id: String,

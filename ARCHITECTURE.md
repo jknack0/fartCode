@@ -303,7 +303,8 @@ pub enum InternalEvent {
     TaskDeleted { id: String },
 
     // Conversations
-    ConversationCreated { id: String, task_id: String, provider: String },
+    ConversationCreated { id: String, task_id: String, provider: String, title: String },
+    ConversationRenamed { id: String, title: String },
     ConversationDeleted { id: String },
 
     // Agent lifecycle

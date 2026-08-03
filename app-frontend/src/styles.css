@@ -330,3 +330,113 @@ button.danger {
   display: flex;
   gap: 6px;
 }
+
+.palette {
+  background: var(--navy-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  width: 480px;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.palette input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--navy);
+  border: none;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+}
+
+.palette-results {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+}
+
+.palette-results li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+
+.palette-results li.selected {
+  background: rgba(217, 119, 6, 0.18);
+}
+
+.palette-hint {
+  color: var(--muted);
+  font-size: 11px;
+  padding: 8px 12px;
+}
+
+.resource-panel {
+  position: fixed;
+  bottom: 12px;
+  right: 12px;
+  width: 260px;
+  background: var(--navy-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  z-index: 20;
+}
+
+.resource-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--amber);
+  margin-bottom: 8px;
+}
+
+.resource-header button {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.meter-label {
+  width: 32px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.meter-bar {
+  flex: 1;
+  height: 8px;
+  background: var(--navy);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  background: var(--amber);
+}
+
+.meter-value {
+  width: 110px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--muted);
+}

@@ -333,6 +333,7 @@ impl TaskStore for DbTaskStore {
                 id: conv_id.clone(),
                 task_id: id.clone(),
                 provider: conv.provider.clone().unwrap_or_default(),
+                title: conv.title.clone(),
             });
         }
         lifecycle::telemetry(

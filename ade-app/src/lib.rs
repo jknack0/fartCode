@@ -5,6 +5,7 @@
 
 mod app;
 mod commands;
+mod indexer;
 
 use app::App;
 use tauri::Manager;
@@ -37,6 +38,13 @@ pub fn run() {
             let app_state = App::init(std::env::var("ADE_DB_FILE").ok().as_deref())?;
             prune_view_state_on_boot(&app_state);
             app::spawn_event_forwarder(app.handle().clone(), app_state.event_bus.clone());
+            indexer::spawn_search_indexer(
+                app_state.db.clone(),
+                app_state.projects.clone(),
+                app_state.tasks.clone(),
+                app_state.conversations.clone(),
+                app_state.event_bus.clone(),
+            );
             app.manage(app_state);
             Ok(())
         })
@@ -51,6 +59,10 @@ pub fn run() {
             commands::settings::share_with_team,
             commands::view_state::get_view_state,
             commands::view_state::set_view_state,
+            commands::search::search,
+            commands::search::resource_sample,
+            commands::search::get_resource_monitor_enabled,
+            commands::search::set_resource_monitor_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
