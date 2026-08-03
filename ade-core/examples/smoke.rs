@@ -245,6 +245,14 @@ fn main() {
     std::fs::create_dir_all(&repo2).unwrap();
     git.as_ref().init(&repo2).unwrap();
     std::fs::write(repo2.join("README.md"), "# demo\n").unwrap();
+    // `git commit -am` does NOT stage untracked files — add first or the
+    // commit exits 1 (silently, since .status().unwrap() ignores exit codes).
+    Command::new("git")
+        .arg("-C")
+        .arg(&repo2)
+        .args(["add", "."])
+        .status()
+        .unwrap();
     Command::new("git")
         .arg("-C")
         .arg(&repo2)
@@ -449,6 +457,71 @@ fn main() {
         // "ade/" (4) + name (≤64) + "-" (1) + suffix (5) = ≤74
         branch.starts_with("ade/") && branch.len() <= 74,
         "branch name is prefixed + suffixed and bounded",
+    );
+
+    // -- 13. Worktrees (E2-02): ensure → isolated checkout → remove ---------
+    let wt_git: Arc<dyn ade_core::git::GitOps> = Arc::new(ade_git::Git2Ops::new());
+    let wt_manager = ade_core::projects::worktrees::WorktreeManager::new(
+        db.clone(),
+        Arc::new(settings.clone()),
+        wt_git.clone(),
+    );
+    let wt = wt_manager
+        .ensure_worktree(&ade_core::projects::worktrees::EnsureWorktreeOptions {
+            project: &dup,
+            task_id: "smoke-task-1",
+            workspace_id: "smoke-ws-1",
+            branch_name: "ade/smoke-wt",
+            source_ref: Some("main"),
+            worktree_enabled: true,
+        })
+        .unwrap();
+    println!("   worktree: {}", wt.path.display());
+    check(
+        wt.kind == ade_core::projects::worktrees::WorkspaceKind::Worktree,
+        "ensure_worktree returns a worktree",
+    );
+    check(
+        wt.path.join("README.md").exists(),
+        "worktree is checked out with the project files",
+    );
+    check(
+        wt_git.current_branch(&wt.path).unwrap().as_deref() == Some("ade/smoke-wt"),
+        "worktree is on its own branch",
+    );
+    let listed = wt_git.worktree_list(&dup.path).unwrap();
+    check(
+        listed.len() >= 2,
+        "worktree list includes main + linked worktree",
+    );
+
+    // Idempotent re-ensure (restart behavior): same path (modulo symlink
+    // resolution — /var -> /private/var on macOS), reused.
+    let again = wt_manager
+        .ensure_worktree(&ade_core::projects::worktrees::EnsureWorktreeOptions {
+            project: &dup,
+            task_id: "smoke-task-1",
+            workspace_id: "smoke-ws-1",
+            branch_name: "ade/smoke-wt",
+            source_ref: Some("main"),
+            worktree_enabled: true,
+        })
+        .unwrap();
+    let real_of =
+        |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    check(
+        again.reused && real_of(&again.path) == real_of(&wt.path),
+        "re-ensure reuses the worktree",
+    );
+
+    // Remove: worktree dir gone + metadata pruned, project root untouched.
+    wt_manager
+        .remove_worktree(&dup, "smoke-task-1", "smoke-ws-1", &wt.path)
+        .unwrap();
+    check(!wt.path.exists(), "removed worktree directory is gone");
+    check(
+        dup.path.exists(),
+        "project root untouched by worktree removal",
     );
 
     println!(

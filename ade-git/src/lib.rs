@@ -83,10 +83,13 @@ impl CliGit {
     {
         let mut cmd = git_cmd(path);
         cmd.args(args);
-        let status = cmd
-            .status()
+        // Pipe (don't inherit) stdout/stderr: "quiet" must not print — e.g.
+        // `rev-parse --verify` would otherwise leak the oid, and
+        // `--is-inside-work-tree` would print "true" into the host terminal.
+        let output = cmd
+            .output()
             .map_err(|e| Error::Git(format!("failed to spawn git: {e}")))?;
-        Ok(status.success())
+        Ok(output.status.success())
     }
 }
 
