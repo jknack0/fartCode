@@ -543,6 +543,122 @@ fn main() {
         "worktree metadata pruned after remove",
     );
 
+    // -- 14. Add Task flow (E2-04): operation-driven create ------------------
+    let worktrees = ade_core::projects::worktrees::WorktreeManager::new(
+        db.clone(),
+        Arc::new(settings.clone()),
+        wt_git.clone(),
+    );
+    let create_op = ade_core::tasks::operations::TaskCreationService::new(
+        db.clone(),
+        Arc::new(settings.clone()),
+        git.clone(),
+        worktrees,
+        bus.clone(),
+    );
+    let mut op_events = bus.subscribe();
+    let op_task = create_op
+        .create_with_provision(ade_core::tasks::operations::CreateTaskParams {
+            id: Some("smoke-op-task".into()),
+            project_id: dup.id.clone(),
+            task_config: ade_core::tasks::operations::TaskConfigParams {
+                name: "op flow task".into(),
+                initial_status: None,
+                linked_issue: None,
+                initial_conversation: Some(
+                    ade_core::tasks::operations::InitialConversationConfig {
+                        id: "smoke-op-conv".into(),
+                        provider: Some("claude".into()),
+                        title: "op flow".into(),
+                        r#type: Some("pty".into()),
+                        auto_approve: None,
+                        initial_prompt: Some("Start working".into()),
+                        model: Some("sonnet".into()),
+                        initial_queue: None,
+                    },
+                ),
+            },
+            git: ade_core::tasks::operations::GitSetup::CreateBranch {
+                branch_name: "ade/op-flow-zz9xy".into(),
+                from_branch: ade_core::tasks::operations::SourceBranchRef::local("main"),
+                push_branch: false,
+            },
+            workspace: ade_core::tasks::WorkspaceTarget::NewWorktree,
+            automation_run_id: None,
+        })
+        .unwrap();
+    println!(
+        "   op task: {} workspace={} conv={:?}",
+        op_task.task.name,
+        op_task.task.workspace_id.as_deref().unwrap_or(""),
+        op_task.initial_conversation_id
+    );
+    check(
+        op_task.task.workspace_id.is_some(),
+        "operation creates task with a workspace row",
+    );
+    check(
+        op_task.initial_conversation_id.as_deref() == Some("smoke-op-conv"),
+        "operation returns the initial conversation id",
+    );
+    check(
+        op_task
+            .task
+            .workspace_id
+            .as_deref()
+            .map(|ws| {
+                db.conn()
+                    .lock()
+                    .unwrap()
+                    .query_row("SELECT kind FROM workspaces WHERE id = ?1", [ws], |row| {
+                        row.get::<_, String>(0)
+                    })
+                    .unwrap()
+            })
+            .as_deref()
+            == Some("worktree"),
+        "workspace row kind is worktree",
+    );
+    let op_wt = tmp.path().join("worktrees/demo/ade/op-flow-zz9xy");
+    check(
+        op_wt.join("README.md").exists(),
+        "operation provisions the worktree on disk",
+    );
+    let op_conv_cfg: serde_json::Value = db
+        .conn()
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT config FROM conversations WHERE id = 'smoke-op-conv'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map(|c| serde_json::from_str(&c).unwrap())
+        .unwrap();
+    check(
+        op_conv_cfg["type"] == "pty" && op_conv_cfg["model"] == "sonnet",
+        "model persists into the versioned conversation config",
+    );
+    let mut op_seen = [false; 2];
+    while let Ok(ev) = op_events.try_recv() {
+        match ev {
+            ade_core::events::InternalEvent::TaskProvisioned { id, .. }
+                if id == "smoke-op-task" =>
+            {
+                op_seen[0] = true
+            }
+            ade_core::events::InternalEvent::AgentStart {
+                conversation_id, ..
+            } if conversation_id == "smoke-op-conv" => op_seen[1] = true,
+            _ => {}
+        }
+    }
+    check(op_seen[0], "operation emits task:provisioned");
+    check(
+        op_seen[1],
+        "pty initial prompt emits agent start placeholder",
+    );
+
     println!(
         "\n== SMOKE {} ==",
         if failures == 0 { "OK" } else { "FAILED" }

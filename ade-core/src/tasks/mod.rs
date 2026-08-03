@@ -4,6 +4,7 @@
 pub mod lifecycle;
 pub mod model;
 pub mod naming;
+pub mod operations;
 
 use std::sync::Arc;
 
@@ -32,6 +33,11 @@ pub struct CreateTaskOptions {
     pub initial_conversation: Option<InitialConversation>,
     /// When set, the task is `type='automation-run'` (E11 hooks in later).
     pub automation_run_id: Option<String>,
+    /// E2-04: workspace intent. `None` = `NewWorktree` (current behavior).
+    pub workspace_target: Option<WorkspaceTarget>,
+    /// E2-04: versioned workspace config stored on the workspace row
+    /// (`workspaces.config`, built by the create-task operation).
+    pub workspace_config: Option<serde_json::Value>,
 }
 
 impl CreateTaskOptions {
@@ -44,6 +50,8 @@ impl CreateTaskOptions {
             linked_issue: None,
             initial_conversation: None,
             automation_run_id: None,
+            workspace_target: None,
+            workspace_config: None,
         }
     }
 
@@ -63,6 +71,7 @@ impl CreateTaskOptions {
         provider: Option<&str>,
     ) -> Self {
         self.initial_conversation = Some(InitialConversation {
+            id: None,
             title: title.into(),
             provider: provider.map(String::from),
             config: None,
@@ -79,11 +88,40 @@ impl CreateTaskOptions {
 /// An initial conversation created atomically with the task.
 #[derive(Debug, Clone)]
 pub struct InitialConversation {
+    /// Override the conversation row id (renderer-supplied; reference
+    /// `taskConfig.initialConversation.id`). Default: uuid v4.
+    pub id: Option<String>,
     pub title: String,
     pub provider: Option<String>,
     /// Versioned conversation config (raw JSON); the conversations module
     /// (E2-05) owns the versioned schema.
     pub config: Option<serde_json::Value>,
+}
+
+/// E2-04: workspace intent for a new task (reference
+/// `workspaceTargetSchema`). Controls which workspace row is created and how
+/// the task's workspace is provisioned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceTarget {
+    /// Default: the task gets a fresh worktree on its own branch (E2-02).
+    NewWorktree,
+    /// Reuse an existing workspace row (no new workspace insert).
+    RepositoryInstance { workspace_id: String },
+    /// Run in the project root (worktree-less task; isolation warning).
+    ProjectRoot,
+    /// Bring-your-own-infrastructure (Phase 0 stub; real remote hosts E12).
+    Byoi { remote_workspace_id: Option<String> },
+}
+
+impl WorkspaceTarget {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            WorkspaceTarget::NewWorktree => "new-worktree",
+            WorkspaceTarget::RepositoryInstance { .. } => "repository-instance",
+            WorkspaceTarget::ProjectRoot => "project-root",
+            WorkspaceTarget::Byoi { .. } => "byoi",
+        }
+    }
 }
 
 /// Task store surface used by the Tauri layer (ARCHITECTURE.md §7).
@@ -151,6 +189,8 @@ impl TaskStore for DbTaskStore {
             linked_issue,
             initial_conversation,
             automation_run_id,
+            workspace_target,
+            workspace_config,
         } = options;
 
         // Validate the project exists (reference: project-not-found).
@@ -170,7 +210,12 @@ impl TaskStore for DbTaskStore {
 
         let id = requested_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let status = initial_status.unwrap_or(TaskStatus::InProgress);
-        let workspace_id = uuid::Uuid::new_v4().to_string();
+        // E2-04: repository-instance reuses an existing workspace row; every
+        // other target allocates a fresh one.
+        let workspace_id = match &workspace_target {
+            Some(WorkspaceTarget::RepositoryInstance { workspace_id }) => workspace_id.clone(),
+            _ => uuid::Uuid::new_v4().to_string(),
+        };
         let task_type = if automation_run_id.is_some() {
             TaskType::AutomationRun
         } else {
@@ -180,9 +225,11 @@ impl TaskStore for DbTaskStore {
             Some(li) => Some(crate::db::versioned_json::serialize_versioned(li)?),
             None => None,
         };
-        let conv_id = initial_conversation
-            .as_ref()
-            .map(|_| uuid::Uuid::new_v4().to_string());
+        let conv_id = initial_conversation.as_ref().map(|conv| {
+            conv.id
+                .clone()
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+        });
 
         // Atomic boundary: task + workspace + initial conversation (reference
         // commitCreateTask inside a single db.transaction). The guard + tx are
@@ -211,16 +258,56 @@ impl TaskStore for DbTaskStore {
                     automation_run_id,
                 ],
             )?;
-            tx.execute(
-                "INSERT INTO workspaces (id, type, kind, location) VALUES (?1, 'local', 'worktree', 'local')",
-                [&workspace_id],
-            )?;
+            let workspace_id = workspace_id.clone();
+            // E2-04: workspace row shape follows the target (reference
+            // prepareCreateTask newWorkspaceValues). repository-instance
+            // reuses the row, so no insert happens.
+            match &workspace_target {
+                Some(WorkspaceTarget::RepositoryInstance { .. }) => {}
+                Some(WorkspaceTarget::ProjectRoot) => {
+                    tx.execute(
+                        "INSERT INTO workspaces (id, type, kind, location, config)
+                         VALUES (?1, 'local', 'project-root', 'local', ?2)",
+                        rusqlite::params![
+                            workspace_id,
+                            workspace_config.as_ref().map(|c| c.to_string()),
+                        ],
+                    )?;
+                }
+                Some(WorkspaceTarget::Byoi { .. }) => {
+                    tx.execute(
+                        "INSERT INTO workspaces (id, type, kind, location, config)
+                         VALUES (?1, 'byoi', 'byoi', 'remote', ?2)",
+                        rusqlite::params![
+                            workspace_id,
+                            workspace_config.as_ref().map(|c| c.to_string()),
+                        ],
+                    )?;
+                }
+                _ => {
+                    tx.execute(
+                        "INSERT INTO workspaces (id, type, kind, location, config)
+                         VALUES (?1, 'local', 'worktree', 'local', ?2)",
+                        rusqlite::params![
+                            workspace_id,
+                            workspace_config.as_ref().map(|c| c.to_string()),
+                        ],
+                    )?;
+                }
+            }
             if let (Some(conv), Some(conv_id)) = (&initial_conversation, &conv_id) {
+                // `conversations.type` mirrors the config's conversation type
+                // (pty | acp) so consumers can filter without parsing JSON.
+                let conv_type = conv
+                    .config
+                    .as_ref()
+                    .and_then(|c| c.get("type"))
+                    .and_then(|t| t.as_str());
                 tx.execute(
                     "INSERT INTO conversations
-                         (id, project_id, task_id, title, provider, config,
+                         (id, project_id, task_id, title, provider, config, type,
                           is_initial_conversation, last_interacted_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, datetime('now'))",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, datetime('now'))",
                     rusqlite::params![
                         conv_id,
                         project_id,
@@ -228,6 +315,7 @@ impl TaskStore for DbTaskStore {
                         conv.title,
                         conv.provider,
                         conv.config.as_ref().map(|c| c.to_string()),
+                        conv_type,
                     ],
                 )?;
             }

@@ -61,6 +61,14 @@ pub enum InternalEvent {
     },
 
     // Agent lifecycle
+    /// E2-04: emitted when a task is created with a pty initial prompt, so
+    /// E2-06's agent launcher starts the agent with that prompt.
+    AgentStart {
+        provider: String,
+        project_id: String,
+        task_id: String,
+        conversation_id: String,
+    },
     AgentRunStarted {
         conversation_id: String,
         provider: String,

@@ -43,6 +43,9 @@ pub enum Error {
     ProjectPathNotFound(PathBuf),
 
     // -- Tasks --
+    #[error("invalid task input: {0}")]
+    InvalidTaskInput(String),
+
     #[error("task not found: {0}")]
     TaskNotFound(String),
 
