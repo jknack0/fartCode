@@ -851,6 +851,60 @@ fn main() {
         "claude auto-approve passes its flag",
     );
 
+    // -- 20. Lifecycle scripts (E1-06) ---------------------------------------
+    use ade_core::terminals::lifecycle::{
+        ade_port, make_lifecycle_script_session_id, task_env, LifecycleScript,
+        LifecycleScriptService, LifecycleScriptType, RunOptions,
+    };
+    let lifecycle_bus = Arc::new(ade_core::events::BroadcastEventBus::new(64));
+    let lifecycle = Arc::new(LifecycleScriptService::new(
+        Arc::new(ade_terminal::PortablePtyManager),
+        lifecycle_bus.clone(),
+    ));
+    let lc_cwd = tempfile::tempdir().unwrap();
+    let port_a = ade_port("/smoke/wt/a");
+    let port_b = ade_port("/smoke/wt/b");
+    check(port_a != port_b, "two worktrees get different ADE_PORTs");
+    let env = task_env(
+        "smoke-task",
+        "Smoke Task",
+        lc_cwd.path(),
+        lc_cwd.path(),
+        "main",
+        "/smoke/wt/a",
+    );
+    let lc_run = lifecycle
+        .run(
+            &make_lifecycle_script_session_id("p", "w", LifecycleScriptType::Setup),
+            &LifecycleScript {
+                r#type: LifecycleScriptType::Setup,
+                script: "echo $ADE_TASK_ID port=$ADE_PORT next=$((ADE_PORT + 1))".into(),
+                shell_setup: None,
+            },
+            lc_cwd.path(),
+            &env,
+            &RunOptions {
+                wait_for_exit: true,
+                exit: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let lc_out = match &lc_run {
+        ade_core::terminals::lifecycle::LifecycleRunResult::Exited { output_tail, .. } => {
+            output_tail.clone()
+        }
+        other => panic!("unexpected {other:?}"),
+    };
+    check(
+        lc_out.contains("smoke-task") && lc_out.contains(&port_a.to_string()),
+        "lifecycle script runs with the env contract (ADE_TASK_ID, ADE_PORT)",
+    );
+    check(
+        lc_out.contains(&(port_a + 1).to_string()),
+        "shell arithmetic sees ADE_PORT",
+    );
+
     println!(
         "\n== SMOKE {} ==",
         if failures == 0 { "OK" } else { "FAILED" }

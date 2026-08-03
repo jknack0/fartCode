@@ -6,3 +6,6 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ade-core = { path = "../ade-core" }
+portable-pty = "0.9"
+tempfile = "3"

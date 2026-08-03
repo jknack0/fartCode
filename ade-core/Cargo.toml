@@ -20,4 +20,5 @@ uuid = { version = "1", features = ["v4"] }
 [dev-dependencies]
 ade-git = { path = "../ade-git" }
 ade-providers = { path = "../ade-providers" }
+ade-terminal = { path = "../ade-terminal" }
 tempfile = "3"

@@ -99,6 +99,12 @@ pub enum InternalEvent {
     TerminalDeleted {
         id: String,
     },
+    /// E1-06 lifecycle scripts: status is one of `running|succeeded|failed|stopped`.
+    LifecycleScriptStatusChanged {
+        session_id: String,
+        script_type: String,
+        status: String,
+    },
 
     // Git
     GitChanged {

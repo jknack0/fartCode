@@ -68,6 +68,17 @@ pub enum Error {
     // -- PTY --
     #[error("PTY error: {0}")]
     Pty(String),
+    /// Lifecycle script hit its `timeoutMs` (E1-06).
+    #[error("lifecycle script timed out: {0}")]
+    LifecycleScriptTimeout(String),
+    /// Lifecycle script exited non-zero when `surfaceFailure` is set.
+    #[error("lifecycle script failed: session {session_id} exit={exit_code:?} signal={signal:?}")]
+    LifecycleScriptFailed {
+        session_id: String,
+        exit_code: Option<u32>,
+        signal: Option<String>,
+        output_tail: String,
+    },
 
     #[error("agent executable not found: {0}")]
     AgentNotFound(String),
