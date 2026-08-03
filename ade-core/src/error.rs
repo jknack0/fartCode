@@ -45,6 +45,10 @@ pub enum Error {
     // -- Tasks --
     #[error("invalid task input: {0}")]
     InvalidTaskInput(String),
+    /// E1-05: worktree directory must be absolute (posix / win drive/UNC);
+    /// `~` expands via the home dir.
+    #[error("invalid-worktree-directory: {0}")]
+    InvalidWorktreeDirectory(String),
 
     #[error("task not found: {0}")]
     TaskNotFound(String),

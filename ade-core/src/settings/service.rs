@@ -49,7 +49,7 @@ pub trait SettingsStore: Send + Sync {
 
     /// Moves the project's local shareable values into its repo `.ade.json`
     /// and clears them from the DB.
-    fn share_with_team(&self, project_id: &str) -> Result<(), Error>;
+    fn share_with_team(&self, project_id: &str) -> Result<bool, Error>;
 
     // -- Project settings (used by `projects` — E1-03) ----------------------
 
@@ -195,8 +195,21 @@ impl DbSettingsStore {
         let file_shareable = self.read_ade_json(repo_dir).unwrap_or_default();
         let shareable = merge_shareable(&[&default_shareable(), &file_shareable, &db_shareable]);
 
+        // E1-05: a stored-invalid worktree directory falls back to the
+        // default on read (reference: "stored invalid value falls back to
+        // default on read"). Validate with the home dir; if it no longer
+        // normalizes (e.g. a `~` entry after a home change), drop it.
+        let worktree_directory = base.worktree_directory.and_then(|wd| {
+            crate::settings::worktree_directory::normalize_worktree_directory(
+                &wd,
+                crate::settings::worktree_directory::home_dir().as_deref(),
+            )
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned())
+        });
+
         Ok(ProjectSettings {
-            worktree_directory: base.worktree_directory,
+            worktree_directory,
             default_branch: base.default_branch,
             base_remote: base.base_remote,
             push_remote: base.push_remote,
@@ -236,7 +249,20 @@ impl DbSettingsStore {
         }
         self.ensure_row(project_id, repo_dir)?;
         let base = settings.base();
-        let shareable = shareable_without_empty_scripts(&settings.shareable());
+        // E1-05: store only the shareable DELTA vs the repo's .ade.json.
+        // The panel sends the effective (merged) settings; fields that still
+        // match the file must stay None in the DB so the file keeps winning
+        // on read (otherwise a teammate's later .ade.json edit is shadowed).
+        let file_shareable = self.read_ade_json(repo_dir).unwrap_or_default();
+        let incoming = shareable_without_empty_scripts(&settings.shareable());
+        let shareable = ShareableProjectSettings {
+            preserve_patterns: delta_opt(
+                &incoming.preserve_patterns,
+                &file_shareable.preserve_patterns,
+            ),
+            shell_setup: delta_opt(&incoming.shell_setup, &file_shareable.shell_setup),
+            scripts: delta_opt(&incoming.scripts, &file_shareable.scripts),
+        };
         self.with_conn(|conn| {
             conn.execute(
                 "UPDATE project_settings
@@ -493,7 +519,7 @@ impl SettingsStore for DbSettingsStore {
         })
     }
 
-    fn share_with_team(&self, project_id: &str) -> Result<(), Error> {
+    fn share_with_team(&self, project_id: &str) -> Result<bool, Error> {
         let repo_path: Option<String> = self.with_conn(|conn| {
             Ok(conn
                 .query_row(
@@ -508,12 +534,12 @@ impl SettingsStore for DbSettingsStore {
         };
 
         let Some((_, shareable_json, _)) = self.read_project_row(project_id)? else {
-            return Ok(());
+            return Ok(false);
         };
         let shareable: ShareableProjectSettings =
             parse_or_default(&shareable_json, "shareable_project_settings_json");
         if shareable == ShareableProjectSettings::default() {
-            return Ok(()); // nothing local to share
+            return Ok(false); // nothing local to share
         }
 
         // Patch the repo's .ade.json with the local values. A missing file is
@@ -539,10 +565,13 @@ impl SettingsStore for DbSettingsStore {
             config = serde_json::Value::Object(Default::default());
         }
         apply_shareable(&mut config, &shareable);
-        std::fs::write(
-            &config_path,
-            format!("{}\n", serde_json::to_string_pretty(&config)?),
-        )?;
+        let content = format!("{}\n", serde_json::to_string_pretty(&config)?);
+        // Atomic write: temp file in the same dir + rename, so a crash
+        // mid-write can't corrupt .ade.json (the read path treats an
+        // unparseable file as absent, silently losing shareable settings).
+        let tmp = config_path.with_extension("ade.json.tmp");
+        std::fs::write(&tmp, content)?;
+        std::fs::rename(&tmp, &config_path)?;
 
         // Clear the moved fields from the DB.
         self.with_conn(|conn| {
@@ -551,7 +580,8 @@ impl SettingsStore for DbSettingsStore {
                 [project_id],
             )?;
             Ok(())
-        })
+        })?;
+        Ok(true)
     }
 
     fn seed_project_settings(&self, project_id: &str, repo_dir: &Path) -> Result<(), Error> {
@@ -587,6 +617,17 @@ impl SettingsStore for DbSettingsStore {
 // ---------------------------------------------------------------------------
 // Value helpers
 // ---------------------------------------------------------------------------
+
+/// Shareable delta for `update_project_settings`: a field that still equals
+/// the `.ade.json` value stays `None` in the DB so the file keeps winning on
+/// read; only genuine overrides (or clears) are stored.
+fn delta_opt<T: PartialEq + Clone>(incoming: &Option<T>, file: &Option<T>) -> Option<T> {
+    if incoming == file {
+        None
+    } else {
+        incoming.clone()
+    }
+}
 
 /// Recursively merges `overrides` into `base` (objects merge per-key, later
 /// wins; anything else is replaced). Mirrors the reference `mergeDeep`.

@@ -4,6 +4,7 @@
 pub mod kv;
 pub mod registry;
 pub mod service;
+pub mod worktree_directory;
 
 pub use kv::KvStore;
 pub use registry::{

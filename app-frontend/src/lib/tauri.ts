@@ -58,3 +58,48 @@ export function togglePin(id: string): Promise<TaskDto> {
 export function onAdeEvent(cb: (event: AdeEvent) => void): Promise<() => void> {
   return listen<AdeEvent>("ade:event", (e) => cb(e.payload));
 }
+
+// -- Project settings (E1-05) ------------------------------------------------
+
+export interface ScriptsDto {
+  setup?: string | null;
+  run?: string | null;
+  teardown?: string | null;
+}
+
+export interface WorkspaceProviderDto {
+  type: string;
+  provisionCommand?: string | null;
+  terminateCommand?: string | null;
+}
+
+/** defaultBranch is untagged: "main" | { name, remote } */
+export type DefaultBranchDto = string | { name: string; remote: boolean };
+
+export interface ProjectSettingsDto {
+  worktreeDirectory?: string | null;
+  defaultBranch?: DefaultBranchDto | null;
+  baseRemote?: string | null;
+  pushRemote?: string | null;
+  githubAccountId?: string | null;
+  tmux?: boolean | null;
+  autoRunSetupScriptOnTaskCreation?: boolean | null;
+  autoRunRunScriptOnTaskCreation?: boolean | null;
+  workspaceProvider?: WorkspaceProviderDto | null;
+  preservePatterns?: string[] | null;
+  shellSetup?: string | null;
+  scripts?: ScriptsDto | null;
+}
+
+export function getProjectSettings(projectId: string): Promise<ProjectSettingsDto> {
+  return invoke("get_project_settings", { projectId });
+}
+export function updateProjectSettings(
+  projectId: string,
+  settings: ProjectSettingsDto,
+): Promise<ProjectSettingsDto> {
+  return invoke("update_project_settings", { projectId, settings });
+}
+export function shareWithTeam(projectId: string): Promise<boolean> {
+  return invoke("share_with_team", { projectId });
+}

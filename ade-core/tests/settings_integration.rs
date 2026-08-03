@@ -317,7 +317,14 @@ fn test_legacy_migration_runs_once() {
         .settings
         .get_project_settings(&fx.project_id, &fx.repo)
         .unwrap();
-    assert_eq!(settings.worktree_directory.as_deref(), Some("~/dev/wt"));
+    // Read normalizes (reference resolveAndValidateWorktreeDirectory expands
+    // ~ and validates on read — E1-05).
+    let home = std::env::var("HOME").unwrap();
+    assert_eq!(
+        settings.worktree_directory,
+        Some(format!("{home}/dev/wt")),
+        "legacy ~ expands on read"
+    );
     assert_eq!(
         settings.base_remote.as_deref(),
         Some("upstream"),
@@ -682,5 +689,134 @@ fn test_read_time_remote_promotion() {
         settings.base_remote.as_deref(),
         Some("fork"),
         "remote must promote on read"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// E1-05: worktree-directory validation + read-time fallback
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_invalid_worktree_directory_falls_back_on_read() {
+    let fx = Fixture::new();
+    fx.settings
+        .seed_project_settings(&fx.project_id, &fx.repo)
+        .unwrap();
+    // Store an invalid (relative) value directly — the read must drop it.
+    let settings = ProjectSettings {
+        worktree_directory: Some("relative/path".into()),
+        ..Default::default()
+    };
+    fx.settings
+        .update_project_settings(&fx.project_id, &fx.repo, &settings)
+        .unwrap();
+    let read = fx
+        .settings
+        .get_project_settings(&fx.project_id, &fx.repo)
+        .unwrap();
+    assert_eq!(
+        read.worktree_directory, None,
+        "invalid stored value falls back to default on read"
+    );
+
+    // Tilde values normalize on read.
+    let settings = ProjectSettings {
+        worktree_directory: Some("~/ade/wt".into()),
+        ..Default::default()
+    };
+    fx.settings
+        .update_project_settings(&fx.project_id, &fx.repo, &settings)
+        .unwrap();
+    let read = fx
+        .settings
+        .get_project_settings(&fx.project_id, &fx.repo)
+        .unwrap();
+    let home = std::env::var("HOME").unwrap();
+    assert_eq!(
+        read.worktree_directory,
+        Some(format!("{home}/ade/wt")),
+        "~ expands on read"
+    );
+}
+
+#[test]
+fn test_normalize_worktree_directory_rules() {
+    use ade_core::settings::worktree_directory::normalize_worktree_directory;
+    let home = "/Users/ade";
+    assert!(normalize_worktree_directory("/abs", None).is_ok());
+    assert!(normalize_worktree_directory("~/wt", Some(home)).is_ok());
+    assert!(matches!(
+        normalize_worktree_directory("rel/wt", None),
+        Err(ade_core::Error::InvalidWorktreeDirectory(_))
+    ));
+    assert!(matches!(
+        normalize_worktree_directory("~/wt", None),
+        Err(ade_core::Error::InvalidWorktreeDirectory(_))
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// E1-05: update stores only the delta vs .ade.json (file keeps precedence)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_update_stores_only_delta_vs_ade_json() {
+    let fx = Fixture::new();
+    // A repo that already carries shareable values when added.
+    std::fs::write(
+        fx.repo.join(".ade.json"),
+        r#"{"preservePatterns": [".env"], "shellSetup": "source .envrc"}"#,
+    )
+    .unwrap();
+    fx.settings
+        .seed_project_settings(&fx.project_id, &fx.repo)
+        .unwrap();
+
+    // The panel sends the effective merged object; unchanged fields must NOT
+    // be materialized into the DB (the file keeps winning on read).
+    let effective = fx
+        .settings
+        .get_project_settings(&fx.project_id, &fx.repo)
+        .unwrap();
+    fx.settings
+        .update_project_settings(&fx.project_id, &fx.repo, &effective)
+        .unwrap();
+    let (_, shareable_json, _) = fx
+        .db
+        .conn()
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT base_project_settings_json, shareable_project_settings_json, base_project_settings_json FROM project_settings WHERE project_id = 'p1'",
+            [],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+        )
+        .unwrap();
+    let shareable: serde_json::Value = serde_json::from_str(&shareable_json).unwrap();
+    assert_eq!(
+        shareable.get("preservePatterns"),
+        None,
+        "unchanged preservePatterns must stay out of the DB: {shareable_json}"
+    );
+    assert_eq!(
+        shareable.get("shellSetup"),
+        None,
+        "unchanged shellSetup must stay out of the DB: {shareable_json}"
+    );
+
+    // A genuine override IS stored (and beats the file on read).
+    let mut changed = effective.clone();
+    changed.preserve_patterns = Some(vec!["local.env".into()]);
+    fx.settings
+        .update_project_settings(&fx.project_id, &fx.repo, &changed)
+        .unwrap();
+    let read = fx
+        .settings
+        .get_project_settings(&fx.project_id, &fx.repo)
+        .unwrap();
+    assert_eq!(
+        read.preserve_patterns.as_deref(),
+        Some(&["local.env".to_string()][..]),
+        "override wins over the file"
     );
 }

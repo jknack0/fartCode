@@ -28,6 +28,9 @@ pub fn run() {
             commands::projects::delete_project,
             commands::tasks::list_tasks,
             commands::tasks::toggle_pin,
+            commands::settings::get_project_settings,
+            commands::settings::update_project_settings,
+            commands::settings::share_with_team,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

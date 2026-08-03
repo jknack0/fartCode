@@ -2,6 +2,7 @@
 // create (⌘⇧N) / delete with confirmation, and pin toggling. The visible
 // tree order is the task-switch navigation order (E2-10 contract).
 import { useEffect, useState } from "react";
+import ProjectSettings from "./ProjectSettings";
 import { useSidebar } from "../store/sidebar";
 
 function CreateProjectDialog({ onClose }: { onClose: () => void }) {
@@ -86,6 +87,7 @@ export default function Sidebar() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // ⌘⇧N / Ctrl+Shift+N → create project.
   useEffect(() => {
@@ -109,9 +111,18 @@ export default function Sidebar() {
     <aside className="sidebar">
       <div className="sidebar-header">
         <span className="brand">ade</span>
-        <button title="Add project (⌘⇧N)" onClick={() => setCreateOpen(true)}>
-          +
-        </button>
+        <div className="header-actions">
+          <button
+            title="Project settings"
+            onClick={() => setSettingsOpen(true)}
+            disabled={!selectedProjectId}
+          >
+            ⚙
+          </button>
+          <button title="Add project (⌘⇧N)" onClick={() => setCreateOpen(true)}>
+            +
+          </button>
+        </div>
       </div>
 
       {pinnedCount > 0 && (
@@ -188,6 +199,15 @@ export default function Sidebar() {
         </ul>
       </section>
 
+      {settingsOpen && selectedProjectId && (
+        <ProjectSettings
+          projectId={selectedProjectId}
+          projectName={
+            projects.find((p) => p.id === selectedProjectId)?.name ?? selectedProjectId
+          }
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
       {createOpen && <CreateProjectDialog onClose={() => setCreateOpen(false)} />}
       {deleteTarget &&
         (() => {
