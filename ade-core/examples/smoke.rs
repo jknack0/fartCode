@@ -905,6 +905,27 @@ fn main() {
         "shell arithmetic sees ADE_PORT",
     );
 
+    // -- 21. View state (E1-08) ---------------------------------------------
+    use ade_core::view_state;
+    let vs_db: std::sync::Arc<dyn ade_core::db::Db> = db.clone();
+    view_state::save(
+        &vs_db,
+        "view-state:app:sidebar",
+        &serde_json::json!({"collapsed": {"p1": true}}),
+    )
+    .unwrap();
+    let restored = view_state::get(&vs_db, "view-state:app:sidebar")
+        .unwrap()
+        .unwrap();
+    check(
+        restored["collapsed"]["p1"] == true,
+        "view state round-trips",
+    );
+    check(
+        view_state::save(&vs_db, "nope", &serde_json::Value::Null).is_err(),
+        "view-state keys are prefix-enforced",
+    );
+
     println!(
         "\n== SMOKE {} ==",
         if failures == 0 { "OK" } else { "FAILED" }

@@ -103,3 +103,12 @@ export function updateProjectSettings(
 export function shareWithTeam(projectId: string): Promise<boolean> {
   return invoke("share_with_team", { projectId });
 }
+
+// -- View state (E1-08) -------------------------------------------------------
+
+export function getViewState(key: string): Promise<unknown> {
+  return invoke("get_view_state", { key });
+}
+export function setViewState(key: string, value: unknown): Promise<void> {
+  return invoke("set_view_state", { key, value });
+}

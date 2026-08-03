@@ -5,3 +5,4 @@
 pub mod projects;
 pub mod settings;
 pub mod tasks;
+pub mod view_state;

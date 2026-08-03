@@ -15,5 +15,6 @@ pub mod settings;
 pub mod shell_escape;
 pub mod tasks;
 pub mod terminals;
+pub mod view_state;
 
 pub use error::Error;

@@ -2,6 +2,7 @@
 // stub ("Project chat — coming in Phase 1"); task tabs arrive with their
 // tickets.
 import { useEffect } from "react";
+import Onboarding from "./components/Onboarding";
 import Sidebar from "./components/Sidebar";
 import { useSidebar } from "./store/sidebar";
 import { wireSidebarEvents } from "./store/sidebar";
@@ -21,6 +22,7 @@ function App() {
   return (
     <main className="shell">
       <Sidebar />
+      <Onboarding />
       <section className="main">
         {error && <p className="error">{error}</p>}
         {selectedTaskId ? (

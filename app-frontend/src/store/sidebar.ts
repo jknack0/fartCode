@@ -10,6 +10,7 @@ import {
   listProjects,
   listTasks,
   onAdeEvent,
+  setViewState,
   togglePin as apiTogglePin,
 } from "../lib/tauri";
 
@@ -30,7 +31,9 @@ interface SidebarState {
   togglePin: (id: string) => Promise<void>;
 }
 
-export const useSidebar = create<SidebarState>((set, get) => ({
+const SIDEBAR_VIEW_STATE_KEY = "view-state:app:sidebar";
+
+export const useSidebar = create<SidebarState>((set) => ({
   projects: [],
   tasksByProject: {},
   collapsed: {},
@@ -42,15 +45,41 @@ export const useSidebar = create<SidebarState>((set, get) => ({
   load: async () => {
     set({ loading: true, error: null });
     try {
+      // Restore persisted view state first (E1-08: layout restores after
+      // restart).
+      const saved = (await import("../lib/tauri").then((m) =>
+        m.getViewState(SIDEBAR_VIEW_STATE_KEY),
+      )) as {
+        collapsed?: Record<string, boolean>;
+        selectedProjectId?: string | null;
+        selectedTaskId?: string | null;
+      } | null;
       const projects = await listProjects();
       const tasksByProject: Record<string, TaskDto[]> = {};
       for (const p of projects) {
         tasksByProject[p.id] = await listTasks(p.id);
       }
-      set({ projects, tasksByProject, loading: false });
+      const validProject = saved?.selectedProjectId
+        ? projects.find((p) => p.id === saved.selectedProjectId)
+        : undefined;
+      // Restore task selection too (E1-08: layout restores after restart) —
+      // a saved task id only counts if it still exists under the project.
+      const validTask = validProject && saved?.selectedTaskId
+        ? (tasksByProject[validProject.id] ?? []).some((t) => t.id === saved.selectedTaskId)
+          ? saved.selectedTaskId
+          : null
+        : null;
+      set({
+        projects,
+        tasksByProject,
+        collapsed: saved?.collapsed ?? {},
+        selectedProjectId: validProject ? validProject.id : null,
+        selectedTaskId: validTask,
+        loading: false,
+      });
       // Default selection: first project (acceptance: "lands on an empty (or
       // first) project").
-      if (!get().selectedProjectId && projects.length > 0) {
+      if (!validProject && projects.length > 0) {
         set({ selectedProjectId: projects[0].id });
       }
     } catch (e) {
@@ -58,11 +87,18 @@ export const useSidebar = create<SidebarState>((set, get) => ({
     }
   },
 
-  selectProject: (id) =>
-    set({ selectedProjectId: id, selectedTaskId: null }),
-  selectTask: (id) => set({ selectedTaskId: id }),
-  toggleCollapsed: (id) =>
-    set((s) => ({ collapsed: { ...s.collapsed, [id]: !s.collapsed[id] } })),
+  selectProject: (id) => {
+    set({ selectedProjectId: id, selectedTaskId: null });
+    persistSidebarView();
+  },
+  selectTask: (id) => {
+    set({ selectedTaskId: id });
+    persistSidebarView();
+  },
+  toggleCollapsed: (id) => {
+    set((s) => ({ collapsed: { ...s.collapsed, [id]: !s.collapsed[id] } }));
+    persistSidebarView();
+  },
 
   createProject: async (path) => {
     const created = await apiCreateProject(path);
@@ -122,6 +158,16 @@ export function visibleTaskOrder(state: SidebarState): TaskDto[] {
     }
   }
   return order;
+}
+
+/// Persists collapse + selection (fire-and-forget; the backend owns the KV).
+function persistSidebarView() {
+  const s = useSidebar.getState();
+  setViewState(SIDEBAR_VIEW_STATE_KEY, {
+    collapsed: s.collapsed,
+    selectedProjectId: s.selectedProjectId,
+    selectedTaskId: s.selectedTaskId,
+  }).catch(() => {});
 }
 
 // Wire backend events into the store (project add/delete, task create/delete).
