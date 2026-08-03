@@ -270,6 +270,44 @@ mod tests {
     }
 
     #[test]
+    fn flush_is_bounded_with_a_daemonized_grandchild() {
+        // E1-06 regression: a script that daemonizes a grandchild holding the
+        // pty slave never sends EOF — flush()/Drop must return bounded and
+        // the reader buffer must stay capped.
+        let mgr = PortablePtyManager;
+        let tmp = tempfile::tempdir().unwrap();
+        let mut handle = mgr
+            .spawn("/bin/bash", &[], tmp.path(), &[], PtySize::default())
+            .unwrap();
+        // >1 MiB of output (exercises the cap) + a backgrounded grandchild
+        // that keeps the slave open after the shell exits.
+        handle
+            .write("dd if=/dev/zero bs=4096 count=512 2>/dev/null\nsleep 30 &\nexit\n")
+            .unwrap();
+        handle.wait_exit(Duration::from_secs(10)).unwrap();
+
+        let started = std::time::Instant::now();
+        handle.flush().unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "flush must be bounded, took {:?}",
+            started.elapsed()
+        );
+
+        let mut buf = Vec::new();
+        let mut total = 0usize;
+        while handle.try_read(&mut buf).unwrap_or(false) {
+            total += buf.len();
+            buf.clear();
+        }
+        assert!(
+            total <= READER_BUFFER_CAP + 8192,
+            "reader buffer capped: drained {total} bytes"
+        );
+        handle.kill().unwrap();
+    }
+
+    #[test]
     fn handle_is_send() {
         fn assert_send<T: Send>(_: &T) {}
         let mgr = PortablePtyManager;
