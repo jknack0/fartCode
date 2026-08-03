@@ -189,7 +189,7 @@ fn launches_agent_in_worktree_with_allowlisted_env_and_prompt() {
         .and_then(|rest| rest.split(' ').next())
         .and_then(|p| p.parse::<u32>().ok());
     assert!(
-        port.is_some_and(|p| p >= 50000 && p < 60000),
+        port.is_some_and(|p| (50000..60000).contains(&p)),
         "ADE_PORT injected (50000-59999): {report}"
     );
     assert!(
