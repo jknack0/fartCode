@@ -15,6 +15,7 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 
+use ade_core::conversations::ConversationStore;
 use ade_core::db::{Db, SqliteDb};
 use ade_core::events::EventBus;
 use ade_core::projects::ProjectStore;
@@ -657,6 +658,66 @@ fn main() {
     check(
         op_seen[1],
         "pty initial prompt emits agent start placeholder",
+    );
+
+    // -- 15. Conversations (E2-05): session supervisor ------------------------
+    let conv_store = ade_core::conversations::DbConversationStore::new(db.clone(), bus.clone());
+    let conv = conv_store
+        .create(ade_core::conversations::CreateConversationParams {
+            id: Some("smoke-conv-1".into()),
+            project_id: dup.id.clone(),
+            task_id: Some(op_task.task.id.clone()),
+            scope: None,
+            provider: Some("codex".into()),
+            title: "smoke conv".into(),
+            auto_approve: None,
+            model: Some("o4-mini".into()),
+            initial_prompt: Some("Fix it".into()),
+            initial_queue: None,
+            is_initial_conversation: false,
+            r#type: Some(ade_core::conversations::model::ConversationType::Pty),
+        })
+        .unwrap();
+    check(
+        conv.session_id.as_deref() == Some("smoke-conv-1"),
+        "pty conversation gets a stable session id at creation",
+    );
+    let pty_sid = ade_core::conversations::make_pty_session_id(&dup.id, &op_task.task.id, &conv.id);
+    check(
+        ade_core::conversations::parse_pty_session_id(&pty_sid).is_some(),
+        "pty session id parses",
+    );
+
+    // Resume round-trips via session_id: set a native id, then resolve.
+    conv_store
+        .set_session_id(&conv.id, "  native-codex-42  ")
+        .unwrap();
+    let (sid, resuming) = ade_core::conversations::resolve_agent_session_command_args(
+        "codex",
+        &conv.id,
+        conv_store
+            .get(&conv.id)
+            .unwrap()
+            .unwrap()
+            .session_id
+            .as_deref(),
+        true,
+        None,
+    );
+    check(
+        sid == "native-codex-42" && resuming,
+        "codex resume uses the native session id",
+    );
+
+    // Hydrate after restart: fresh store over the same DB → resume state.
+    let conv_store2 = ade_core::conversations::DbConversationStore::new(db.clone(), bus.clone());
+    let hydrated = conv_store2
+        .hydrate(&dup.id, &op_task.task.id, &conv.id)
+        .unwrap();
+    check(
+        hydrated.is_resuming
+            && hydrated.conversation.session_id.as_deref() == Some("native-codex-42"),
+        "hydrate after restart restores the resume state",
     );
 
     println!(
