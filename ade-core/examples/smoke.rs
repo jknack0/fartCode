@@ -772,6 +772,52 @@ fn main() {
         "claude installs via curl",
     );
 
+    // -- 18. Prompt delivery (E3-03) ------------------------------------------
+    use ade_core::pty::{
+        build_command, cleanup_spilled_prompt, maybe_spill_prompt, CommandContext,
+    };
+    let claude_p = ade_providers::get("claude").unwrap();
+    let cmd = build_command(
+        &CommandContext {
+            cli: "/usr/local/bin/claude".into(),
+            auto_approve: true,
+            initial_prompt: Some("Fix the bug".into()),
+            session_id: Some("smoke-conv-1".into()),
+            model: "sonnet".into(),
+            ..Default::default()
+        },
+        claude_p,
+    );
+    check(
+        cmd.args.contains(&"--dangerously-skip-permissions".into())
+            && cmd.args.last().map(String::as_str) == Some("Fix the bug"),
+        "claude builds the prompt + auto-approve flags",
+    );
+    let amp_p = ade_providers::get("amp").unwrap();
+    let amp_cmd = build_command(
+        &CommandContext {
+            cli: "/usr/local/bin/amp".into(),
+            initial_prompt: Some("Do it".into()),
+            model: "ultra".into(),
+            ..Default::default()
+        },
+        amp_p,
+    );
+    check(
+        amp_cmd.command == "bash" && amp_cmd.args[1].contains("| /usr/local/bin/amp"),
+        "amp receives the prompt on stdin",
+    );
+    let big = "y".repeat(100 * 1024);
+    let (deliverable, spilled) = maybe_spill_prompt(&big, &dup.path).unwrap();
+    check(
+        deliverable.starts_with('@') && spilled.is_some(),
+        "100KB prompt spills to a temp file",
+    );
+    if let Some(path) = &spilled {
+        cleanup_spilled_prompt(path);
+        check(!path.exists(), "spilled prompt file is cleaned on exit");
+    }
+
     println!(
         "\n== SMOKE {} ==",
         if failures == 0 { "OK" } else { "FAILED" }

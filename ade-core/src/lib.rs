@@ -10,6 +10,7 @@ pub mod error;
 pub mod events;
 pub mod git;
 pub mod projects;
+pub mod pty;
 pub mod settings;
 pub mod shell_escape;
 pub mod tasks;

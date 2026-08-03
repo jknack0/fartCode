@@ -27,10 +27,13 @@
     "sessionIdOnResumeOnly": true,
     "resumeWithoutSessionFlag": "-C",
     "modelFlag": null,
-    "defaultArgs": []
+    "defaultArgs": [],
+    "omitAutoApproveOnResume": true
   },
   "sessions": "resumable",
-  "binaries": ["kimi"],
+  "binaries": [
+    "kimi"
+  ],
   "defaultModel": null,
   "envVars": []
 }

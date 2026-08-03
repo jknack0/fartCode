@@ -24,6 +24,9 @@ def prompt_arm(p):
         return f'PromptStrategy::Keystroke'
     return f'PromptStrategy::Argv {{ flag: {flag} }}'
 
+def opt_usize(v):
+    return "None" if v is None else f"Some({int(v)})"
+
 def prompt_desc(p):
     return (
         "PromptDescriptor {\n"
@@ -35,6 +38,13 @@ def prompt_desc(p):
         f"            session_id_on_resume_only: {str(bool(p['sessionIdOnResumeOnly'])).lower()},\n"
         f"            resume_without_session_flag: {opt_str(p['resumeWithoutSessionFlag'])},\n"
         f"            model_flag: {opt_str(p['modelFlag'])},\n"
+        f"            new_conversation_flag: {opt_str(p.get('newConversationFlag'))},\n"
+        f"            session_id_always: {str(bool(p.get('sessionIdAlways', False))).lower()},\n"
+        f"            omit_auto_approve_on_resume: {str(bool(p.get('omitAutoApproveOnResume', False))).lower()},\n"
+        f"            initial_prompt_via_stdin_pipe: {str(bool(p.get('initialPromptViaStdinPipe', False))).lower()},\n"
+        f"            deduplicate_flags: {vec_str(p.get('deduplicateFlags') or [])},\n"
+        f"            submit_sequence: {opt_str(p.get('submitSequence'))},\n"
+        f"            submit_delay_ms: {opt_usize(p.get('submitDelayMs'))},\n"
         f"            default_args: vec![{', '.join(s(a) + '.to_string()' for a in p['defaultArgs'])}],\n"
         "        }"
     )

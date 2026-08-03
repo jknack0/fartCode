@@ -24,6 +24,16 @@ pub struct PromptDescriptor {
     pub session_id_on_resume_only: bool,
     pub resume_without_session_flag: Option<String>,
     pub model_flag: Option<String>,
+    /// E3-03 additions (reference buildStandardCommand spec).
+    pub new_conversation_flag: Option<String>,
+    pub session_id_always: bool,
+    pub omit_auto_approve_on_resume: bool,
+    pub initial_prompt_via_stdin_pipe: bool,
+    pub deduplicate_flags: Vec<String>,
+    /// Keystroke delivery: sequence typed to submit the prompt (default
+    /// `\r`), and the delay before it when the payload must land first.
+    pub submit_sequence: Option<String>,
+    pub submit_delay_ms: Option<u64>,
     pub default_args: Vec<String>,
 }
 

@@ -27,10 +27,13 @@
     "sessionIdOnResumeOnly": true,
     "resumeWithoutSessionFlag": null,
     "modelFlag": "-m",
-    "defaultArgs": []
+    "defaultArgs": [],
+    "initialPromptViaStdinPipe": true
   },
   "sessions": "resumable",
-  "binaries": ["amp"],
+  "binaries": [
+    "amp"
+  ],
   "defaultModel": "low",
   "envVars": []
 }

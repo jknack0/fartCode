@@ -27,10 +27,17 @@
     "sessionIdOnResumeOnly": true,
     "resumeWithoutSessionFlag": "resume --last",
     "modelFlag": "-m",
-    "defaultArgs": []
+    "defaultArgs": [],
+    "deduplicateFlags": [
+      "--dangerously-bypass-approvals-and-sandbox"
+    ]
   },
   "sessions": "resumable",
-  "binaries": ["codex"],
+  "binaries": [
+    "codex"
+  ],
   "defaultModel": "gpt-5.6-sol",
-  "envVars": ["OPENAI_API_KEY"]
+  "envVars": [
+    "OPENAI_API_KEY"
+  ]
 }

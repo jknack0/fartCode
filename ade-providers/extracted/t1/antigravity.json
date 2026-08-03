@@ -27,10 +27,14 @@
     "sessionIdOnResumeOnly": false,
     "resumeWithoutSessionFlag": null,
     "modelFlag": "--model",
-    "defaultArgs": []
+    "defaultArgs": [],
+    "sessionIdAlways": true
   },
   "sessions": "resumable",
-  "binaries": ["agy", "antigravity"],
+  "binaries": [
+    "agy",
+    "antigravity"
+  ],
   "defaultModel": "Gemini 3.5 Flash (Medium)",
   "envVars": []
 }

@@ -27,10 +27,13 @@
     "sessionIdOnResumeOnly": false,
     "resumeWithoutSessionFlag": null,
     "modelFlag": null,
-    "defaultArgs": []
+    "defaultArgs": [],
+    "newConversationFlag": "--new"
   },
   "sessions": "resumable",
-  "binaries": ["letta"],
+  "binaries": [
+    "letta"
+  ],
   "defaultModel": null,
   "envVars": []
 }
