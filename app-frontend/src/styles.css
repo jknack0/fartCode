@@ -873,3 +873,17 @@ button.danger {
   font: inherit;
   font-size: 12px;
 }
+
+/* -- E2-12 task terminals -------------------------------------------------- */
+
+.terminal-container {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 6px;
+  background: #0d1424;
+  overflow: hidden;
+}
+
+.terminal-container .xterm {
+  height: 100%;
+}

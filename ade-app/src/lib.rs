@@ -6,6 +6,9 @@
 mod app;
 mod commands;
 mod indexer;
+mod terminals;
+
+use std::sync::Arc;
 
 use app::App;
 use tauri::Manager;
@@ -58,6 +61,10 @@ pub fn run() {
                 ),
                 Err(e) => tracing::warn!(error = %e, "boot rehydration failed"),
             });
+            // E2-12: interactive task terminals (needs the window handle for
+            // event emission; created here rather than in App::init).
+            let terminal_manager = Arc::new(terminals::TerminalManager::new(app.handle().clone()));
+            app.manage(terminal_manager);
             app.manage(app_state);
             Ok(())
         })
@@ -74,6 +81,10 @@ pub fn run() {
             commands::provider_accounts::remove_provider_account,
             commands::provider_accounts::set_default_provider_account,
             commands::provider_accounts::list_providers,
+            commands::terminals::terminal_open,
+            commands::terminals::terminal_write,
+            commands::terminals::terminal_resize,
+            commands::terminals::terminal_close,
             commands::settings::get_project_settings,
             commands::settings::update_project_settings,
             commands::settings::share_with_team,

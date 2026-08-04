@@ -4,6 +4,7 @@
 import { CommandId, createRegistry, registerCommand } from "./registry";
 import { useConversations } from "../store/conversations";
 import { useSidebar, visibleTaskOrder } from "../store/sidebar";
+import { terminalOpen } from "./tauri";
 import { useTabs, type PaneId } from "../store/tabs";
 import { useUi } from "../store/ui";
 
@@ -119,6 +120,26 @@ export function registerAllCommands(): void {
       if (!sb.selectedTaskId || !sb.selectedProjectId) return;
       const pane = useTabs.getState().activePaneByTask[sb.selectedTaskId] ?? "left";
       void openConversationTab(sb.selectedTaskId, sb.selectedProjectId, pane);
+    },
+  });
+  registerCommand(registry, {
+    id: "new-terminal",
+    label: "New terminal",
+    defaultKeys: ["⌘⇧T"],
+    scope: "task-view",
+    run: () => {
+      const sb = useSidebar.getState();
+      if (!sb.selectedTaskId) return;
+      const taskId = sb.selectedTaskId;
+      const pane = useTabs.getState().activePaneByTask[taskId] ?? "left";
+      void (async () => {
+        const terminalId = await terminalOpen(taskId, 24, 80);
+        useTabs.getState().addTab(taskId, pane, {
+          id: terminalId,
+          kind: "terminal",
+          title: "Terminal",
+        });
+      })();
     },
   });
   registerCommand(registry, {

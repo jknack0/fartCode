@@ -54,6 +54,7 @@ pub fn toggle_pin(app: State<'_, Arc<App>>, id: String) -> Result<TaskDto, Strin
 #[tauri::command]
 pub fn delete_task(
     app: State<'_, Arc<App>>,
+    terminals: State<'_, Arc<crate::terminals::TerminalManager>>,
     project_id: String,
     task_id: String,
     delete_worktree: Option<bool>,
@@ -65,5 +66,8 @@ pub fn delete_task(
     };
     app.deletion
         .delete_task(&project_id, &task_id, &options)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // E2-12: deleting a task closes its interactive terminals.
+    terminals.close_task(&task_id);
+    Ok(())
 }

@@ -49,6 +49,7 @@ export type CommandId =
   | "add-and-send-context"
   | "new-conversation"
   | "new-conversation-right-split"
+  | "new-terminal"
   | "toggle-sidebar"
   | "toggle-right-panel"
   | "previous-task"

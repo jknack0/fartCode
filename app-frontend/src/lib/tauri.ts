@@ -261,3 +261,48 @@ export interface ProviderDto {
 export function listProviders(): Promise<ProviderDto[]> {
   return invoke("list_providers");
 }
+
+// -- E2-12 interactive terminals ---------------------------------------------
+
+export function terminalOpen(
+  taskId: string,
+  rows: number,
+  cols: number,
+): Promise<string> {
+  return invoke("terminal_open", { taskId, rows, cols });
+}
+
+export function terminalWrite(terminalId: string, data: string): Promise<void> {
+  return invoke("terminal_write", { terminalId, data });
+}
+
+export function terminalResize(
+  terminalId: string,
+  cols: number,
+  rows: number,
+): Promise<void> {
+  return invoke("terminal_resize", { terminalId, cols, rows });
+}
+
+export function terminalClose(terminalId: string): Promise<void> {
+  return invoke("terminal_close", { terminalId });
+}
+
+/** Subscribe to terminal output chunks (base64); returns an unsubscribe fn. */
+export function onTerminalOutput(
+  cb: (payload: { terminalId: string; data: string }) => void,
+): Promise<() => void> {
+  return listen<{ terminalId: string; data: string }>("terminal:output", (e) =>
+    cb(e.payload),
+  );
+}
+
+/** Subscribe to terminal exit notices; returns an unsubscribe fn. */
+export function onTerminalExited(
+  cb: (payload: { terminalId: string; exitCode: number | null }) => void,
+): Promise<() => void> {
+  return listen<{ terminalId: string; exitCode: number | null }>(
+    "terminal:exited",
+    (e) => cb(e.payload),
+  );
+}

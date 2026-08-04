@@ -16,7 +16,7 @@ import {
   setViewState,
   type ConversationDto,
 } from "../lib/tauri";
-import { isTabKind, type Tab } from "../lib/tab-registry";
+import { isTabKind, TAB_KINDS, type Tab } from "../lib/tab-registry";
 import { useConversations } from "./conversations";
 
 export type PaneId = "left" | "right";
@@ -68,7 +68,10 @@ function sanitizePane(pane: Pane | undefined): Pane | null {
       typeof t?.id === "string" &&
       typeof t?.title === "string" &&
       typeof t?.kind === "string" &&
-      isTabKind(t.kind),
+      isTabKind(t.kind) &&
+      // Ephemeral kinds (terminals) do not survive a reload — their PTY is
+      // gone; drop them from restored state.
+      !TAB_KINDS[t.kind].ephemeral,
   );
   if (tabs.length === 0) return null;
   const activeId = pane.activeId && tabs.some((t) => t.id === pane.activeId)
