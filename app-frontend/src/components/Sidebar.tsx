@@ -37,8 +37,12 @@ function CreateProjectDialog({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             onClick={async () => {
-              const selected = await open({ directory: true, multiple: false });
-              if (selected) setPath(selected as string);
+              try {
+                const selected = await open({ directory: true, multiple: false });
+                if (selected) setPath(selected as string);
+              } catch (e) {
+                setError("Dialog failed: " + String(e));
+              }
             }}
           >
             Browse…
