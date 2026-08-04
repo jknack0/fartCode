@@ -76,6 +76,9 @@ pub fn run() {
             commands::search::resource_sample,
             commands::search::get_resource_monitor_enabled,
             commands::search::set_resource_monitor_enabled,
+            commands::conversations::list_conversations,
+            commands::conversations::create_conversation,
+            commands::conversations::delete_conversation,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -142,3 +142,47 @@ export function getResourceMonitorEnabled(): Promise<boolean> {
 export function setResourceMonitorEnabled(enabled: boolean): Promise<void> {
   return invoke("set_resource_monitor_enabled", { enabled });
 }
+
+// -- E2-08 conversation commands ------------------------------------------------
+
+export type ConversationDto = {
+  id: string;
+  projectId: string;
+  taskId: string | null;
+  provider: string | null;
+  title: string;
+  agentStatus: string | null;
+  sessionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export function listConversations(taskId: string): Promise<ConversationDto[]> {
+  return invoke("list_conversations", { taskId });
+}
+
+export function createConversation(
+  projectId: string,
+  taskId: string,
+  provider: string | null,
+  title: string,
+  model: string | null,
+  initialPrompt: string | null,
+): Promise<ConversationDto> {
+  return invoke("create_conversation", {
+    projectId,
+    taskId,
+    provider,
+    title,
+    model,
+    initialPrompt,
+  });
+}
+
+export function deleteConversation(
+  projectId: string,
+  taskId: string,
+  conversationId: string,
+): Promise<void> {
+  return invoke("delete_conversation", { projectId, taskId, conversationId });
+}

@@ -1,8 +1,9 @@
-// ade app shell (E1-04): sidebar + main view. The project view is a Phase 0
-// stub ("Project chat — coming in Phase 1"); task tabs arrive with their
-// tickets.
+// ade app shell (E1-04/E2-08): sidebar + main view.
+
 import { useEffect } from "react";
 import CommandPalette from "./components/CommandPalette";
+import ConversationList from "./components/ConversationList";
+import ConversationView from "./components/ConversationView";
 import Onboarding from "./components/Onboarding";
 import ResourceMonitor from "./components/ResourceMonitor";
 import Sidebar from "./components/Sidebar";
@@ -42,10 +43,16 @@ function App() {
       <ResourceMonitor />
       <section className="main">
         {error && <p className="error">{error}</p>}
-        {selectedTaskId ? (
-          <div className="placeholder">
-            <h1>Task {selectedTaskId.slice(0, 8)}</h1>
-            <p className="muted">Task tabs (chat, terminal, files) arrive with E2-series tickets.</p>
+        {selectedTaskId && selectedProjectId ? (
+          <div className="task-layout">
+            <ConversationList
+              taskId={selectedTaskId}
+              projectId={selectedProjectId}
+            />
+            <ConversationView
+              taskId={selectedTaskId}
+              projectId={selectedProjectId}
+            />
           </div>
         ) : selectedProjectId ? (
           <div className="placeholder">

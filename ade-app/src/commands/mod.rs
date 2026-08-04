@@ -2,6 +2,7 @@
 //! Commands map errors to `String` and return DTOs (AGENTS.md: commands are
 //! thin).
 
+pub mod conversations;
 pub mod projects;
 pub mod search;
 pub mod settings;
