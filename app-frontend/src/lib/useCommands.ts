@@ -20,6 +20,9 @@ import { useUi } from "../store/ui";
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
+  // xterm's hidden helper textarea is a key sink, not a text editor —
+  // app chords (⌘W, ⌘⇧T, ...) must still fire while a terminal is focused.
+  if (target.classList.contains("xterm-helper-textarea")) return false;
   const tag = target.tagName;
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
 }

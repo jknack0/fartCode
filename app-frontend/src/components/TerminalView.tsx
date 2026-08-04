@@ -13,6 +13,42 @@ import {
   terminalWrite,
 } from "../lib/tauri";
 
+// PTY lifecycle is reference-counted OUTSIDE the React effect: StrictMode
+// runs dev effects as mount → cleanup → remount, so a close fired from
+// cleanup would kill the shell before the remounted view could use it.
+// Close only when the LAST view lets go — deferred one beat so an immediate
+// remount cancels the pending close.
+const ptyRefs = new Map<string, number>();
+const pendingCloses = new Map<string, number>();
+
+function acquirePty(id: string): void {
+  const pending = pendingCloses.get(id);
+  if (pending !== undefined) {
+    clearTimeout(pending);
+    pendingCloses.delete(id);
+  }
+  ptyRefs.set(id, (ptyRefs.get(id) ?? 0) + 1);
+}
+
+function releasePty(id: string): void {
+  const refs = (ptyRefs.get(id) ?? 1) - 1;
+  if (refs > 0) {
+    ptyRefs.set(id, refs);
+    return;
+  }
+  ptyRefs.delete(id);
+  pendingCloses.set(
+    id,
+    window.setTimeout(() => {
+      pendingCloses.delete(id);
+      // Releasing the last view kills the shell (⌘W, split collapse, task
+      // switch teardown all funnel through unmount). Errors are fine — the
+      // PTY may already be gone (restart-survival: tabs outlive shells).
+      void terminalClose(id).catch(() => {});
+    }, 250),
+  );
+}
+
 function base64ToBytes(b64: string): Uint8Array {
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
@@ -33,7 +69,10 @@ export default function TerminalView({
 
     const term = new Terminal({
       cursorBlink: true,
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+      // Nerd Fonts first so Powerline/nerd glyphs (, , icons) render;
+      // machines without them fall back to the system mono stack.
+      fontFamily:
+        '"JetBrainsMono Nerd Font Mono", "MesloLGS Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
       fontSize: 12,
       theme: {
         background: "#0d1424",
@@ -46,6 +85,11 @@ export default function TerminalView({
     term.loadAddon(fit);
     term.open(container);
     fit.fit();
+    // Terminal-first task view: selecting a task must land the keyboard in
+    // the shell immediately — no click required.
+    term.focus();
+
+    acquirePty(terminalId);
 
     let disposed = false;
     let exited = false;
@@ -83,10 +127,7 @@ export default function TerminalView({
       resizeObserver.disconnect();
       unsubs.forEach((un) => un());
       term.dispose();
-      // Releasing the tab kills the shell (⌘W, split collapse, task switch
-      // teardown all funnel through unmount). Errors are fine — the PTY may
-      // already be gone (restart-survival: tabs outlive their shells).
-      void terminalClose(terminalId).catch(() => {});
+      releasePty(terminalId);
     };
   }, [terminalId]);
 

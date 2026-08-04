@@ -69,6 +69,11 @@ one exists).
 - Worktree paths validated by realpath containment; never delete the project root.
 - Versioned JSON (`read_versioned`/`write_versioned`) for all JSON DB columns.
 - Tests use `tempfile` / `:memory:` — never touch real app data paths.
+- **Never kill a process in an effect cleanup a remount will re-use** —
+  dev StrictMode runs effects mount → cleanup → remount; TerminalView's
+  cleanup used to kill the PTY (E2-12 "can't type" bug). PTY lifecycle now
+  lives in a module-level refcount with a deferred close; also xterm's
+  helper textarea is NOT an editable target for `skipInEditor` chords.
 - Before touching DB, PTY, SSH, or provider-spawning code, read the matching
   `reference/emdash/agents/risky-areas/*.md` page (reference impl is a clone of
   `generalaction/emdash`, Electron + TS).
