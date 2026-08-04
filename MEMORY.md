@@ -9,32 +9,34 @@ one exists).
 - **Work tracking is GitHub issues only** (`jknack0/ade`) — `tickets-phase0.md`
   was retired 2026-08-04; its Appendix is preserved as `phase0-checklists.md`.
   New work = new issue (`phase:0`/`phase:2` + `size:*` labels, milestone "Phase 0").
-- **Phase 0 is fully closed** (2026-08-04). Only #21 E2-11 (ACP path,
-  phase 2) remains open. E14-01 shipped the keybinding registry; E1-07..
-  E1-09 were re-audited against acceptance (E1-09 fix in `7a6c71c`).
-- **HEAD (16b8e8f, 2026-08-04):** E14-01 keybinding registry — single
-  window keydown listener + command registry (`app-frontend/src/lib/
-  registry.ts`, default map in `commands.ts`), scope precedence
+- **Phase 0 is fully closed** (2026-08-04). **Phase 2 started:** E2-11
+  (ACP path) was broken into #28–#33 (E2-11-1…6); #28 is done (2827012).
+  #34 E3-07 (provider accounts) was filed as the env-injection prerequisite.
+- **HEAD (2827012, 2026-08-04):** E2-11-1 — ade-acp is a real ACP v1
+  client: stdio JSON-RPC transport + client lifecycle (initialize/new/load/
+  prompt/cancel/set_mode/set_config_option) + scoped fs handlers +
+  permission surfacing. Wire types from `agent-client-protocol-schema`
+  v1.6 (ADR-0024); test fixture `ade-acp/src/bin/fake_acp_adapter.rs`;
+  8 integration tests in `ade-acp/tests/protocol_integration.rs`.
+- **E14-01 (16b8e8f):** keybinding registry — scope precedence
   modal > editor > conversation-view > task-view > project-view > global,
-  user overrides in `view-state:app:keybindings`. Settings modal (⌘,)
-  remaps chords; hints render from the live registry. E2-10's
+  user overrides in `view-state:app:keybindings`. E2-10's
   `lib/shortcuts.ts` was superseded and deleted.
-- **E2-10 (1df8f15):** task-switch nav (⌘⌥↑/↓, visible-tree order) +
-  per-task tabs (conversations as tabs, registry in `app-frontend/src/
-  lib/tab-registry.tsx`, tab state persisted under
-  `view-state:task:<id>:tabs`).
 - **E2-08 removed the standalone conversation list** — conversations now live
   under tasks (create-task command + sidebar).
 - **E2-07 shipped terminal persistence/resume** — boot rehydration orchestration,
   tmux kill, remote hook, dirty-check on worktree open (ADR-0022 for the
   sync-command decision).
 
-## Key decisions (see decisions/ for full ADRs, 0001–0023)
+## Key decisions (see decisions/ for full ADRs, 0001–0024)
 
 - **Git strategy:** `git2` v0.21 for worktree lifecycle (add/list/prune); shell
   out to `git` CLI for everything else. `gix` rejected (no worktree ops as of 0.86).
 - **git2::Repository is `!Sync`** — all git operations go through the serialized
   GitOps impl (ADR-0003).
+- **ACP wire types** come from the official `agent-client-protocol-schema`
+  crate; transport/client/SessionManager are ours (ADR-0024, PRD §10.1
+  resolved). Workspace `rust-version` = 1.88 because of it.
 - **SQLite migrations are append-only** — never hand-edit an applied migration
   (ADR-0001).
 - **Settings** use layered precedence + KV store (ADR-0002).
