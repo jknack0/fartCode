@@ -11,10 +11,11 @@ one exists).
   New work = new issue (`phase:0`/`phase:2` + `size:*` labels, milestone "Phase 0").
 - **Phase 0 is fully closed** (2026-08-04). **Phase 2 in progress:** E2-11
   broken into #28–#33; #28 (2827012), #34 (9041aad), #29 (2ca862a) done.
-  **#35 E2-12 interactive task terminal done (713dfbd)** — ⌘⇧T opens a
-  PTY-backed shell at the task worktree; work-inside-ade path for agents
-  like omp. Next E2-11: **#30 E2-11-3** (SessionManager + session-id
-  persistence).
+  **#35 E2-12 interactive task terminal done (713dfbd) + terminal-first
+  default (5ea481d)** — selecting a task opens a shell in its worktree;
+  chat is summoned-only (⌘T/⌘D), never auto-opened; no + button on the
+  tab bar. Work-inside-ade path for agents like omp. Next E2-11:
+  **#30 E2-11-3** (SessionManager + session-id persistence).
 - **HEAD (2827012, 2026-08-04):** E2-11-1 — ade-acp is a real ACP v1
   client: stdio JSON-RPC transport + client lifecycle (initialize/new/load/
   prompt/cancel/set_mode/set_config_option) + scoped fs handlers +
