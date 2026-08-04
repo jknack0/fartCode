@@ -7,6 +7,17 @@
   --muted: #9ca3af;
   --line: #26324a;
   --danger: #dc2626;
+
+  /* conversation / task-layout */
+  --border: #26324a;
+  --bg-sidebar: #182236;
+  --fg-muted: #9ca3af;
+  --fg: #e5e7eb;
+  --bg-hover: #1e2d4a;
+  --bg-active: #243454;
+  --accent: #d97706;
+  --bg-badge: #26324a;
+  --bg-input: #101828;
 }
 
 * {
@@ -164,9 +175,20 @@ body {
 .main {
   flex: 1;
   display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* when showing the empty-state placeholder */
+.main:has(.placeholder) {
   align-items: center;
   justify-content: center;
   padding: 24px;
+}
+
+.main > .task-layout {
+  flex: 1;
+  min-height: 0;
 }
 
 .placeholder {
