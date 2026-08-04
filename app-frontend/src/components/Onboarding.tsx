@@ -3,6 +3,7 @@
 // app lands on the (empty) project view. Completion is recorded in
 // view-state so it shows once.
 import { useEffect, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { getViewState, setViewState } from "../lib/tauri";
 import { useSidebar } from "../store/sidebar";
 
@@ -66,13 +67,24 @@ export default function Onboarding() {
           <>
             <h2>Add a project</h2>
             <p className="muted">Path to a local git repository.</p>
-            <input
-              autoFocus
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addProject()}
-              placeholder="/path/to/repo"
-            />
+            <div className="path-picker">
+              <input
+                autoFocus
+                value={path}
+                onChange={(e) => setPath(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addProject()}
+                placeholder="/path/to/repo"
+              />
+              <button
+                type="button"
+                onClick={async () => {
+                  const selected = await open({ directory: true, multiple: false });
+                  if (selected) setPath(selected as string);
+                }}
+              >
+                Browse…
+              </button>
+            </div>
             {error && <p className="error">{error}</p>}
             <div className="modal-actions">
               <button onClick={() => setStep("agent")}>Skip</button>

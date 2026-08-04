@@ -3,6 +3,7 @@
 // tree order is the task-switch navigation order (E2-10 contract).
 import { useEffect, useState } from "react";
 import ProjectSettings from "./ProjectSettings";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useSidebar } from "../store/sidebar";
 import { useUi } from "../store/ui";
 
@@ -25,13 +26,24 @@ function CreateProjectDialog({ onClose }: { onClose: () => void }) {
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Add project</h2>
         <p className="muted">Path to a local git repository</p>
-        <input
-          autoFocus
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
-          placeholder="/path/to/repo"
-        />
+        <div className="path-picker">
+          <input
+            autoFocus
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+            placeholder="/path/to/repo"
+          />
+          <button
+            type="button"
+            onClick={async () => {
+              const selected = await open({ directory: true, multiple: false });
+              if (selected) setPath(selected as string);
+            }}
+          >
+            Browse…
+          </button>
+        </div>
         {error && <p className="error">{error}</p>}
         <div className="modal-actions">
           <button onClick={onClose}>Cancel</button>

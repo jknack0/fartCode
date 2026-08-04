@@ -32,6 +32,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
         .setup(|app| {
             let app_state = App::init(std::env::var("ADE_DB_FILE").ok().as_deref())?;
