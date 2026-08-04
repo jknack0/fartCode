@@ -9,9 +9,9 @@ one exists).
 - **Work tracking is GitHub issues only** (`jknack0/ade`) — `tickets-phase0.md`
   was retired 2026-08-04; its Appendix is preserved as `phase0-checklists.md`.
   New work = new issue (`phase:0`/`phase:2` + `size:*` labels, milestone "Phase 0").
-- **Phase 0 is fully closed** (2026-08-04). **Phase 2 started:** E2-11
-  (ACP path) was broken into #28–#33 (E2-11-1…6); #28 is done (2827012).
-  #34 E3-07 (provider accounts) was filed as the env-injection prerequisite.
+- **Phase 0 is fully closed** (2026-08-04). **Phase 2 in progress:** E2-11
+  broken into #28–#33; #28 done (2827012). #34 E3-07 done (9041aad).
+  Next: **#29 E2-11-2** (worker + process hosts + env injection).
 - **HEAD (2827012, 2026-08-04):** E2-11-1 — ade-acp is a real ACP v1
   client: stdio JSON-RPC transport + client lifecycle (initialize/new/load/
   prompt/cancel/set_mode/set_config_option) + scoped fs handlers +
@@ -37,6 +37,10 @@ one exists).
 - **ACP wire types** come from the official `agent-client-protocol-schema`
   crate; transport/client/SessionManager are ours (ADR-0024, PRD §10.1
   resolved). Workspace `rust-version` = 1.88 because of it.
+- **keyring v3 needs a backend feature** (`apple-native` on macOS,
+  `sync-secret-service` on Linux) — without one it silently uses a mock
+  store and secrets vanish across calls. Secrets never cross a Tauri
+  command boundary (maskedSecret DTOs only).
 - **SQLite migrations are append-only** — never hand-edit an applied migration
   (ADR-0001).
 - **Settings** use layered precedence + KV store (ADR-0002).
