@@ -2,7 +2,6 @@
 
 import { useEffect } from "react";
 import CommandPalette from "./components/CommandPalette";
-import ConversationList from "./components/ConversationList";
 import ConversationView from "./components/ConversationView";
 import Onboarding from "./components/Onboarding";
 import ResourceMonitor from "./components/ResourceMonitor";
@@ -17,7 +16,6 @@ function App() {
   const error = useSidebar((s) => s.error);
   const setPaletteOpen = useUi((s) => s.setPaletteOpen);
 
-  // ⌘K / Ctrl+K → command palette.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -44,16 +42,7 @@ function App() {
       <section className="main">
         {error && <p className="error">{error}</p>}
         {selectedTaskId && selectedProjectId ? (
-          <div className="task-layout">
-            <ConversationList
-              taskId={selectedTaskId}
-              projectId={selectedProjectId}
-            />
-            <ConversationView
-              taskId={selectedTaskId}
-              projectId={selectedProjectId}
-            />
-          </div>
+          <ConversationView taskId={selectedTaskId} />
         ) : selectedProjectId ? (
           <div className="placeholder">
             <h1>Project chat</h1>
@@ -63,8 +52,7 @@ function App() {
           <div className="placeholder">
             <h1>ade</h1>
             <p className="muted">
-              Add a project with ⌘⇧N to get started. The agent experience lands
-              with Phase 0 tickets.
+              Add a project with the + button to get started.
             </p>
           </div>
         )}
