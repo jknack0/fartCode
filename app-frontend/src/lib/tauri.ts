@@ -48,6 +48,10 @@ export function createProject(path: string): Promise<ProjectDto> {
 export function deleteProject(id: string): Promise<void> {
   return invoke("delete_project", { id });
 }
+export function createTask(projectId: string, name: string): Promise<TaskDto> {
+  return invoke("create_task", { projectId, name });
+}
+
 export function listTasks(projectId: string): Promise<TaskDto[]> {
   return invoke("list_tasks", { projectId });
 }

@@ -99,6 +99,7 @@ export default function Sidebar() {
     selectTask,
     toggleCollapsed,
     togglePin,
+    createTask,
     deleteProject,
   } = useSidebar();
 
@@ -188,6 +189,7 @@ export default function Sidebar() {
                   {collapsed[p.id] ? "▸" : "▾"}
                 </button>
                 <span className="project-name">{p.name}</span>
+                <button className="add-task-btn" title="New task" onClick={(e) => { e.stopPropagation(); createTask(p.id); }}>+</button>
               </div>
               {!collapsed[p.id] && (
                 <ul>

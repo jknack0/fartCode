@@ -5,6 +5,7 @@ import {
   AdeEvent,
   ProjectDto,
   TaskDto,
+  createTask as apiCreateTask,
   createProject as apiCreateProject,
   deleteProject as apiDeleteProject,
   listProjects,
@@ -26,6 +27,7 @@ interface SidebarState {
   selectProject: (id: string) => void;
   selectTask: (id: string) => void;
   toggleCollapsed: (id: string) => void;
+  createTask: (projectId: string) => Promise<void>;
   createProject: (path: string) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   togglePin: (id: string) => Promise<void>;
@@ -98,6 +100,17 @@ export const useSidebar = create<SidebarState>((set) => ({
   toggleCollapsed: (id) => {
     set((s) => ({ collapsed: { ...s.collapsed, [id]: !s.collapsed[id] } }));
     persistSidebarView();
+  },
+
+  createTask: async (projectId: string) => {
+    const task = await apiCreateTask(projectId, "New task");
+    set((s) => {
+      const tasks = [...(s.tasksByProject[projectId] ?? []), task];
+      return {
+        tasksByProject: { ...s.tasksByProject, [projectId]: tasks },
+        selectedTaskId: task.id,
+      };
+    });
   },
 
   createProject: async (path) => {
