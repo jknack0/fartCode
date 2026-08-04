@@ -1,7 +1,7 @@
 # PRD — ade, an Agentic Development Environment (Rust + Tauri)
 
 **Status:** v0.3 (architecture decisions + expanded Phase 0 tickets) · **Last updated:** after adding [`ARCHITECTURE.md`](./ARCHITECTURE.md)
-**Spawnable tickets:** Phase 0 (E0 + E1 + E2 + E3 subset + E14-01) expanded in [`tickets-phase0.md`](./tickets-phase0.md)
+**Spawnable tickets:** Phase 0 (E0 + E1 + E2 + E3 subset + E14-01) tracked as GitHub issues — `gh issue list -R jknack0/ade --label phase:0`
 **Author:** Generated from research of https://ade.ai (landing + docs) + the reference repo source
 **Purpose:** Feature baseline + implementation plan so individual tickets can be spawned per epic.
 **Target stack:** Rust core + Tauri 2 (web frontend). macOS, Windows, Linux.

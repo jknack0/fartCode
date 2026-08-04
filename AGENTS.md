@@ -10,7 +10,13 @@ Read these in order:
    boundaries, event bus, DB schema, code patterns. If a ticket contradicts this file,
    this file wins (update the ticket).
 2. **`PRD.md`** — product spec and epic inventory.
-3. **`tickets-phase0.md`** — spawnable tickets for Phase 0.
+3. **GitHub issues** — the single source of truth for work
+   (`gh issue list -R jknack0/ade`; Phase 0 tickets use `phase:0`/`phase:2` +
+   `size:*` labels, milestone "Phase 0"). New work gets a new issue — no ticket
+   docs. Cross-cutting Phase 0 checklists live in `phase0-checklists.md`.
+4. **`MEMORY.md`** — project-level working memory: current milestone state,
+   key decisions, and conventions that bite. Check it before starting work; update
+   it when you land something durable (newest entries first).
 
 ## Workspace layout
 

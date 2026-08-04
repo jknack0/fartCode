@@ -1,7 +1,7 @@
 # Architecture — ade
 
 **Audience:** AI coding agents implementing Phase 0 tickets.
-**Companion to:** `PRD.md` (product spec), `tickets-phase0.md` (work breakdown).
+**Companion to:** `PRD.md` (product spec), GitHub issues (work breakdown — `gh issue list -R jknack0/ade`).
 
 Every decision here is binding. Tickets assume this document exists; if a ticket
 contradicts this file, this file wins (update the ticket).
