@@ -94,41 +94,75 @@ body {
   padding: 0;
 }
 
-.project-row,
-.task-row {
+.sidebar li { position: relative; }
+
+/* ---- project row ---- */
+
+.project-row {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 12px;
+  padding: 5px 12px 5px 8px;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
+  font-weight: 600;
+  font-size: 13px;
 }
 
-.project-row:hover,
-.task-row:hover {
-  background: rgba(217, 119, 6, 0.08);
-}
+.project-row:hover { background: rgba(217, 119, 6, 0.08); }
+.project-row.selected { background: rgba(217, 119, 6, 0.14); }
 
-.project-row.selected,
-.task-row.selected {
-  background: rgba(217, 119, 6, 0.18);
-  border-left: 2px solid var(--amber);
-}
-
-.chevron {
+.project-row .chevron {
   background: none;
   border: none;
   color: var(--muted);
   cursor: pointer;
   font-size: 10px;
-  width: 14px;
+  width: 16px;
   padding: 0;
+  flex-shrink: 0;
 }
 
-.project-name {
-  font-weight: 600;
+.project-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+
+.add-task-btn {
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+  opacity: 0;
+  flex-shrink: 0;
 }
+.project-row:hover .add-task-btn { opacity: 1; }
+
+/* ---- task rows (indented children) ---- */
+
+.project-row + ul {
+  /* left-border tree line */
+  margin-left: 10px;
+  border-left: 1px solid var(--line);
+}
+
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 12px 3px 16px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.task-row:hover { background: rgba(217, 119, 6, 0.06); }
+.task-row.selected { background: rgba(217, 119, 6, 0.12); }
 
 .task-row .task-name {
   flex: 1;
