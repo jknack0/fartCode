@@ -110,6 +110,16 @@ pub enum Error {
     #[error("empty session id")]
     EmptySessionId,
 
+    // -- Provider accounts (E3-07) --
+    #[error("provider account not found: {0}")]
+    ProviderAccountNotFound(String),
+
+    #[error("credential store error: {0}")]
+    CredentialStore(String),
+
+    #[error("secret not found for credential_ref {0}")]
+    CredentialSecretMissing(String),
+
     // -- I/O --
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

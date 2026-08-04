@@ -4,6 +4,7 @@
 
 pub mod conversations;
 pub mod projects;
+pub mod provider_accounts;
 pub mod search;
 pub mod settings;
 pub mod tasks;

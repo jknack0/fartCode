@@ -24,3 +24,13 @@ ade-git = { path = "../ade-git" }
 ade-providers = { path = "../ade-providers" }
 ade-terminal = { path = "../ade-terminal" }
 tempfile = "3"
+
+# Keyring needs a platform backend enabled per-OS — with NO backend feature
+# keyring v3 silently falls back to a mock store (secrets appear to work but
+# vanish across calls). macOS: Keychain; other unix: secret-service over D-Bus
+# (typed CredentialStore error when no service is present — see secrets.rs).
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { workspace = true, features = ["apple-native"] }
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+keyring = { workspace = true, features = ["sync-secret-service"] }

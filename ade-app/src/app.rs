@@ -13,6 +13,7 @@ use ade_core::events::EventBus;
 use ade_core::events::{BroadcastEventBus, InternalEvent};
 use ade_core::projects::worktrees::WorktreeManager;
 use ade_core::projects::DbProjectStore;
+use ade_core::provider_accounts::ProviderAccountStore;
 use ade_core::pty::launcher::{NoopRemoteRehydrate, Rehydrator};
 use ade_core::pty::sessions::SessionRegistry;
 use ade_core::settings::DbSettingsStore;
@@ -36,6 +37,8 @@ pub struct App {
     pub rehydrator: Rehydrator,
     /// E2-09 task deletion/teardown.
     pub deletion: TaskDeletionService,
+    /// E3-07 provider credentials (keyring-backed).
+    pub provider_accounts: Arc<ProviderAccountStore>,
 }
 
 impl App {
@@ -55,6 +58,7 @@ impl App {
         ));
         let tasks = Arc::new(DbTaskStore::new(db.clone(), event_bus.clone()));
         let conversations = Arc::new(DbConversationStore::new(db.clone(), event_bus.clone()));
+        let provider_accounts = Arc::new(ProviderAccountStore::new(db.clone()));
 
         // E2-09: one registry shared by boot rehydration (launches register)
         // and task deletion (cancel + reap).
@@ -100,6 +104,7 @@ impl App {
             event_bus,
             rehydrator,
             deletion,
+            provider_accounts,
         }))
     }
 }

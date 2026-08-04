@@ -5,6 +5,7 @@ import { useReducer, useState } from "react";
 import { chordFromEvent, formatChord, isBindableChord } from "../lib/keychord";
 import { bindings, clearAllOverrides, saveOverride } from "../lib/useCommands";
 import { useUi } from "../store/ui";
+import ProviderAccounts from "./ProviderAccounts";
 
 export default function SettingsModal({ onClose }: { onClose: () => void }) {
   // Registry mutations are outside zustand — bump to re-render after them.
@@ -126,6 +127,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             ))}
           </tbody>
         </table>
+
+        <ProviderAccounts />
 
         <div className="modal-actions">
           <button

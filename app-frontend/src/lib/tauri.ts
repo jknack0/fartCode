@@ -208,3 +208,56 @@ export function deleteConversation(
 ): Promise<void> {
   return invoke("delete_conversation", { projectId, taskId, conversationId });
 }
+
+// -- E3-07 provider accounts -------------------------------------------------
+
+export interface ProviderAccountDto {
+  id: string;
+  providerId: string;
+  accountId: string;
+  label: string | null;
+  isDefault: boolean;
+  /** Server-computed mask of the keyring secret — never the secret. */
+  maskedSecret: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export function listProviderAccounts(
+  providerId: string | null,
+): Promise<ProviderAccountDto[]> {
+  return invoke("list_provider_accounts", { providerId });
+}
+
+export function addProviderAccount(
+  providerId: string,
+  accountId: string,
+  secret: string,
+  label: string | null,
+): Promise<ProviderAccountDto> {
+  return invoke("add_provider_account", { providerId, accountId, secret, label });
+}
+
+export function removeProviderAccount(id: string): Promise<void> {
+  return invoke("remove_provider_account", { id });
+}
+
+export function setDefaultProviderAccount(id: string): Promise<void> {
+  return invoke("set_default_provider_account", { id });
+}
+
+export interface ProviderDto {
+  id: string;
+  name: string;
+  description: string;
+  websiteUrl: string | null;
+  capabilities: string[];
+  models: string[];
+  defaultModel: string | null;
+  binaries: string[];
+  promptStrategy: string;
+}
+
+export function listProviders(): Promise<ProviderDto[]> {
+  return invoke("list_providers");
+}

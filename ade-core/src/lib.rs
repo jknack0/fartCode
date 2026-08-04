@@ -10,6 +10,7 @@ pub mod error;
 pub mod events;
 pub mod git;
 pub mod projects;
+pub mod provider_accounts;
 pub mod pty;
 pub mod resource_monitor;
 pub mod search;
