@@ -11,6 +11,16 @@ import { useUi } from "../store/ui";
 export const registry = createRegistry();
 
 /** Create a conversation and open it as a tab in the given pane (E2-10). */
+/** Opens a new terminal tab (⌘⇧T and the task-open default). */
+async function openTerminalTab(taskId: string, pane: PaneId): Promise<void> {
+  const terminalId = await terminalOpen(taskId, 24, 80);
+  useTabs.getState().addTab(taskId, pane, {
+    id: terminalId,
+    kind: "terminal",
+    title: "Terminal",
+  });
+}
+
 async function openConversationTab(
   taskId: string,
   projectId: string,
@@ -132,14 +142,9 @@ export function registerAllCommands(): void {
       if (!sb.selectedTaskId) return;
       const taskId = sb.selectedTaskId;
       const pane = useTabs.getState().activePaneByTask[taskId] ?? "left";
-      void (async () => {
-        const terminalId = await terminalOpen(taskId, 24, 80);
-        useTabs.getState().addTab(taskId, pane, {
-          id: terminalId,
-          kind: "terminal",
-          title: "Terminal",
-        });
-      })();
+      void openTerminalTab(taskId, pane).catch((e) =>
+        console.error("terminal open failed", e),
+      );
     },
   });
   registerCommand(registry, {

@@ -6,30 +6,15 @@ import { useConversations } from "../store/conversations";
 
 export default function TabBar({
   taskId,
-  projectId,
   pane,
 }: {
   taskId: string;
-  projectId: string;
   pane: PaneId;
 }) {
   const panes = useTabs((s) => s.panesByTask[taskId]);
   const activePane = useTabs((s) => s.activePaneByTask[taskId] ?? "left");
   const paneState = panes?.[pane];
   if (!paneState) return null;
-
-  const newConversation = () => {
-    void (async () => {
-      const conv = await useConversations
-        .getState()
-        .create(taskId, projectId, undefined, "New conversation", undefined);
-      useTabs.getState().addTab(taskId, pane, {
-        id: conv.id,
-        kind: "conversation",
-        title: conv.title,
-      });
-    })();
-  };
 
   const activate = (tabId: string) => {
     useTabs.getState().setActiveTab(taskId, pane, tabId);
@@ -58,13 +43,6 @@ export default function TabBar({
           </button>
         </div>
       ))}
-      <button
-        className="tab-add"
-        title="New conversation (⌘T)"
-        onClick={newConversation}
-      >
-        +
-      </button>
     </div>
   );
 }

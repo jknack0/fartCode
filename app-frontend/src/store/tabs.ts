@@ -9,12 +9,11 @@
 // in `lib/tab-registry.tsx` and flow through the same machinery.
 import { create } from "zustand";
 import {
-  createConversation as apiCreateConversation,
   getViewState,
   listConversations,
   onAdeEvent,
   setViewState,
-  type ConversationDto,
+  terminalOpen,
 } from "../lib/tauri";
 import { isTabKind, TAB_KINDS, type Tab } from "../lib/tab-registry";
 import { useConversations } from "./conversations";
@@ -42,7 +41,7 @@ interface TabsState {
   activePaneByTask: Record<string, PaneId>;
   loadedByTask: Record<string, boolean>;
 
-  ensureTabs: (taskId: string, taskName: string, projectId: string) => Promise<void>;
+  ensureTabs: (taskId: string, taskName: string) => Promise<void>;
   addTab: (taskId: string, pane: PaneId, tab: Tab) => void;
   closeTab: (taskId: string, pane: PaneId, tabId: string) => void;
   jumpToTab: (taskId: string, pane: PaneId, n: number) => void;
@@ -52,12 +51,6 @@ interface TabsState {
   setActiveTab: (taskId: string, pane: PaneId, tabId: string) => void;
   dropTask: (taskId: string) => void;
 }
-
-const convTab = (c: ConversationDto): Tab => ({
-  id: c.id,
-  kind: "conversation",
-  title: c.title,
-});
 
 /// Validates a persisted pane: registry-known kinds only, at least one tab,
 /// active id present.
@@ -95,7 +88,7 @@ export const useTabs = create<TabsState>((set, get) => ({
   activePaneByTask: {},
   loadedByTask: {},
 
-  ensureTabs: async (taskId, taskName, projectId) => {
+  ensureTabs: async (taskId, taskName) => {
     if (get().loadedByTask[taskId] || hydrating.has(taskId)) return;
     hydrating.add(taskId);
     try {
@@ -105,17 +98,14 @@ export const useTabs = create<TabsState>((set, get) => ({
       ]);
       const byId = new Map(convs.map((c) => [c.id, c]));
 
-      // Reconcile persisted tabs against live conversations: drop tabs whose
-      // conversation is gone, add tabs for conversations created meanwhile.
-      // With no saved state the pane starts from the task's conversations.
+      // Reconcile persisted tabs: keep only registered kinds with live
+      // backing. Conversation tabs are never force-added — they exist only
+      // when the user opened them (terminal-first default below).
       const reconcile = (pane: Pane | undefined): Pane => {
         const clean = sanitizePane(pane);
         const kept = clean
           ? clean.tabs.filter((t) => t.kind !== "conversation" || byId.has(t.id))
           : [];
-        for (const c of convs) {
-          if (!kept.some((t) => t.id === c.id)) kept.push(convTab(c));
-        }
         if (kept.length === 0) return { tabs: [], activeId: null };
         const activeId =
           clean && clean.tabs.some((t) => t.id === clean.activeId)
@@ -127,18 +117,20 @@ export const useTabs = create<TabsState>((set, get) => ({
       let left = reconcile(saved?.left);
       let right = saved?.right ? reconcile(saved.right) : null;
       if (right && right.tabs.length === 0) right = null;
-      if (left.tabs.length === 0 && convs.length === 0) {
-        // Backend creates an initial conversation per task; this is the
-        // belt-and-suspenders path for tasks created before that landed.
-        const created = await apiCreateConversation(
-          projectId,
-          taskId,
-          null,
-          taskName,
-          null,
-          null,
-        );
-        left = { tabs: [convTab(created)], activeId: created.id };
+      if (left.tabs.length === 0) {
+        // Terminal-first: a task's default surface is a shell in its
+        // worktree; conversation tabs are summoned explicitly (⌘T), never
+        // auto-opened. (E2-12: work inside ade.)
+        try {
+          const terminalId = await terminalOpen(taskId, 24, 80);
+          left = {
+            tabs: [{ id: terminalId, kind: "terminal", title: taskName }],
+            activeId: terminalId,
+          };
+        } catch (e) {
+          console.warn("terminal_open failed on task open:", e);
+          left = { tabs: [], activeId: null };
+        }
       }
       const panes: TaskPanes = { left, right };
       set((s) => ({

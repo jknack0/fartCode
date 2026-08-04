@@ -21,8 +21,8 @@ export default function TaskView({
   const panes = useTabs((s) => s.panesByTask[taskId]);
 
   useEffect(() => {
-    void useTabs.getState().ensureTabs(taskId, taskName, projectId);
-  }, [taskId, taskName, projectId]);
+    void useTabs.getState().ensureTabs(taskId, taskName);
+  }, [taskId, taskName]);
 
   if (!panes) return null;
 
@@ -42,12 +42,12 @@ export default function TaskView({
     <div className="task-view">
       <div className="task-panes">
         <section className="pane">
-          <TabBar taskId={taskId} projectId={projectId} pane="left" />
+          <TabBar taskId={taskId} pane="left" />
           {renderPane("left", panes.left)}
         </section>
         {panes.right && (
           <section className="pane">
-            <TabBar taskId={taskId} projectId={projectId} pane="right" />
+            <TabBar taskId={taskId} pane="right" />
             {renderPane("right", panes.right)}
           </section>
         )}
