@@ -15,8 +15,11 @@ export default function ResourceMonitor() {
   const [sample, setSample] = useState<ResourceSampleDto | null>(null);
 
   useEffect(() => {
+    // Re-fetch whenever the panel is opened: the palette's "Toggle resource
+    // monitor" command flips the persisted setting and opens the panel in one
+    // action, so reading only at mount would render nothing after a toggle.
     getResourceMonitorEnabled().then(setEnabled).catch(() => {});
-  }, []);
+  }, [open]);
 
   useEffect(() => {
     if (!open || !enabled) return;

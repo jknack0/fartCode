@@ -68,9 +68,13 @@ export default function CommandPalette() {
       title: "Toggle resource monitor",
       hint: "CPU / memory panel",
       run: () => {
+        // Enable -> open the panel; disable -> close it. Opening on disable
+        // would pop a panel that immediately renders nothing.
         getResourceMonitorEnabled()
-          .then((enabled) => setResourceMonitorEnabled(!enabled))
-          .then(() => setResourceOpen(true))
+          .then((enabled) => {
+            const next = !enabled;
+            return setResourceMonitorEnabled(next).then(() => setResourceOpen(next));
+          })
           .catch(() => {});
         setOpen(false);
       },
