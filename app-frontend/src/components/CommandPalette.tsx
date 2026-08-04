@@ -1,6 +1,7 @@
 // Command palette (E1-09): ⌘K finds anything — commands + FTS search results
 // over projects/tasks/conversations. Selecting a result runs its action.
 import { useEffect, useRef, useState } from "react";
+import { hint } from "../lib/useCommands";
 import {
   SearchResultDto,
   getResourceMonitorEnabled,
@@ -19,6 +20,7 @@ interface PaletteCommand {
 
 export default function CommandPalette() {
   const open = useUi((s) => s.paletteOpen);
+  useUi((s) => s.bindingsVersion);
   const setOpen = useUi((s) => s.setPaletteOpen);
   const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
   const setResourceOpen = useUi((s) => s.setResourceOpen);
@@ -57,7 +59,7 @@ export default function CommandPalette() {
     {
       id: "new-project",
       title: "New project…",
-      hint: "⌘⇧N",
+      hint: hint("new-project") || "⌘⇧N",
       run: () => {
         setOpen(false);
         setCreateProjectOpen(true);
@@ -135,8 +137,6 @@ export default function CommandPalette() {
               setSelected((s) => Math.max(s - 1, 0));
             } else if (e.key === "Enter") {
               run(selected);
-            } else if (e.key === "Escape") {
-              setOpen(false);
             }
           }}
         />

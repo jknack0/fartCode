@@ -1,5 +1,6 @@
 // Conversation view (E2-08): terminal placeholder, message input,
 // context pills. Conversations live under tasks — no separate list panel.
+// Input shortcuts are commands (E14-01): ⌘Enter send, ⌘⇧A add context.
 
 import { useEffect } from "react";
 import { useConversations } from "../store/conversations";
@@ -12,36 +13,11 @@ export default function ConversationView({
   const draftPrompt = useConversations((s) => s.draftPrompt);
   const contextItems = useConversations((s) => s.contextItems);
   const setDraftPrompt = useConversations((s) => s.setDraftPrompt);
-  const addContextFile = useConversations((s) => s.addContextFile);
-  const addContextPrompt = useConversations((s) => s.addContextPrompt);
   const removeContextItem = useConversations((s) => s.removeContextItem);
-  const clearContext = useConversations((s) => s.clearContext);
+  const send = useConversations((s) => s.send);
   const load = useConversations((s) => s.load);
 
   useEffect(() => { load(taskId); }, [taskId]);
-
-  const send = () => {
-    if (!draftPrompt.trim()) return;
-    clearContext();
-  };
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-        e.preventDefault();
-        send();
-      }
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "a") {
-        e.preventDefault();
-        const raw = prompt("Add context - path to a file, or '@ text':");
-        if (!raw) return;
-        if (raw.startsWith("@")) addContextPrompt(raw.slice(1).trim());
-        else addContextFile(raw.trim());
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [draftPrompt, contextItems]);
 
   return (
     <div className="conversation-view">
@@ -66,16 +42,10 @@ export default function ConversationView({
         <textarea
           value={draftPrompt}
           onChange={(e) => setDraftPrompt(e.target.value)}
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-              e.preventDefault();
-              send();
-            }
-          }}
           placeholder="Type a message"
           rows={2}
         />
-        <button className="primary" onClick={send} disabled={!draftPrompt.trim()}>
+        <button className="primary" onClick={send} disabled={!draftPrompt.trim()} title="⌘Enter">
           Send
         </button>
       </div>

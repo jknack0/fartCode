@@ -701,3 +701,93 @@ button.danger {
   display: flex;
   flex-direction: column;
 }
+
+/* -- E14-01 shortcuts settings ------------------------------------------- */
+
+.shortcuts-settings {
+  width: 620px;
+  max-height: 85vh;
+}
+
+.shortcut-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.shortcut-table th {
+  text-align: left;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.shortcut-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.shortcut-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.customized-mark {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber);
+  display: inline-block;
+}
+
+.shortcut-scope {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.shortcut-chord {
+  background: var(--navy);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.shortcut-chord.customized {
+  border-color: var(--amber-dim);
+  color: var(--amber);
+}
+
+.shortcut-chord:hover {
+  border-color: var(--amber-dim);
+}
+
+.shortcut-editing {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px dashed var(--amber);
+  border-radius: 4px;
+  color: var(--amber);
+  outline: none;
+}
+
+.shortcut-reset {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  margin-left: 4px;
+  font-size: 13px;
+}
+
+.shortcut-reset:hover {
+  color: var(--amber);
+}

@@ -1,18 +1,21 @@
 // Onboarding (E1-08): skip-able steps — add a project, (optional) install an
 // agent, (optional) sign in. Offline-OK: everything can be skipped and the
 // app lands on the (empty) project view. Completion is recorded in
-// view-state so it shows once.
+// view-state so it shows once. The modal registry (E14-01) tracks it.
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getViewState, setViewState } from "../lib/tauri";
 import { useSidebar } from "../store/sidebar";
+import { useUi } from "../store/ui";
 
 const ONBOARDING_KEY = "view-state:app:onboarding";
 
-type Step = "welcome" | "add-project" | "agent" | "signin" | "done";
+type Step = "welcome" | "add-project" | "agent" | "signin";
 
 export default function Onboarding() {
-  const [step, setStep] = useState<Step | null>(null);
+  const openFlag = useUi((s) => s.onboardingOpen);
+  const setOpenFlag = useUi((s) => s.setOnboardingOpen);
+  const [step, setStep] = useState<Step>("welcome");
   const [path, setPath] = useState("");
   const [error, setError] = useState<string | null>(null);
   const createProject = useSidebar((s) => s.createProject);
@@ -30,19 +33,18 @@ export default function Onboarding() {
   useEffect(() => {
     getViewState(ONBOARDING_KEY)
       .then((v) => {
-        if ((v as { done?: boolean } | null)?.done !== true) {
-          setStep("welcome");
-        }
+        const done = (v as { done?: boolean } | null)?.done === true;
+        setOpenFlag(!done);
       })
-      .catch(() => setStep("welcome"));
-  }, []);
-
-  if (step === null || step === "done") return null;
+      .catch(() => setOpenFlag(true));
+  }, [setOpenFlag]);
 
   const finish = () => {
     setViewState(ONBOARDING_KEY, { done: true }).catch(() => {});
-    setStep("done");
+    setOpenFlag(false);
   };
+
+  if (!openFlag) return null;
 
   return (
     <div className="modal-backdrop">

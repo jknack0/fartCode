@@ -1,33 +1,23 @@
-// ade app shell (E1-04/E2-08/E2-10): sidebar + task view with tabs.
+// ade app shell (E1-04/E2-08/E2-10/E14-01): sidebar + task view with tabs.
+// All keyboard shortcuts are registry commands (lib/commands.ts); the single
+// dispatch listener is installed by useCommands().
 
 import { useEffect } from "react";
 import CommandPalette from "./components/CommandPalette";
+import Modals from "./components/Modals";
 import Onboarding from "./components/Onboarding";
 import ResourceMonitor from "./components/ResourceMonitor";
 import Sidebar from "./components/Sidebar";
 import TaskView from "./components/TaskView";
-import { useTaskShortcuts } from "./lib/shortcuts";
+import { useCommands } from "./lib/useCommands";
 import { useSidebar, wireSidebarEvents } from "./store/sidebar";
 import { wireTabsEvents } from "./store/tabs";
-import { useUi } from "./store/ui";
 
 function App() {
   const load = useSidebar((s) => s.load);
   const selectedProjectId = useSidebar((s) => s.selectedProjectId);
   const selectedTaskId = useSidebar((s) => s.selectedTaskId);
   const error = useSidebar((s) => s.error);
-  const setPaletteOpen = useUi((s) => s.setPaletteOpen);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setPaletteOpen(true);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [setPaletteOpen]);
 
   useEffect(() => {
     load().catch(() => {});
@@ -39,13 +29,14 @@ function App() {
     };
   }, [load]);
 
-  useTaskShortcuts();
+  useCommands();
 
   return (
     <main className="shell">
       <Sidebar />
       <Onboarding />
       <CommandPalette />
+      <Modals />
       <ResourceMonitor />
       <section className="main">
         {error && <p className="error">{error}</p>}

@@ -1,95 +1,10 @@
-// Sidebar (E1-04): projects → tasks tree with a pinned section, project
-// create (⌘⇧N) / delete with confirmation, and pin toggling. The visible
-// tree order is the task-switch navigation order (E2-10 contract).
-import { useEffect, useState } from "react";
-import ProjectSettings from "./ProjectSettings";
-import { open } from "@tauri-apps/plugin-dialog";
-import { useSidebar } from "../store/sidebar";
+// Sidebar (E1-04): projects → tasks tree with a pinned section and pin
+// toggling. The visible tree order is the task-switch navigation order
+// (E2-10 contract). Shortcuts are commands (E14-01): ⌘⇧N add project, ⌘N
+// add task, ⌘Backspace delete task, ⌘B toggles this panel.
 import { useUi } from "../store/ui";
-
-function CreateProjectDialog({ onClose }: { onClose: () => void }) {
-  const [path, setPath] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const createProject = useSidebar((s) => s.createProject);
-
-  const submit = async () => {
-    try {
-      await createProject(path.trim());
-      onClose();
-    } catch (e) {
-      setError(String(e));
-    }
-  };
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Add project</h2>
-        <p className="muted">Path to a local git repository</p>
-        <div className="path-picker">
-          <input
-            autoFocus
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submit()}
-            placeholder="/path/to/repo"
-          />
-          <button
-            type="button"
-            onClick={async () => {
-              try {
-                const selected = await open({ directory: true, multiple: false });
-                if (selected) setPath(selected as string);
-              } catch (e) {
-                setError("Dialog failed: " + String(e));
-              }
-            }}
-          >
-            Browse…
-          </button>
-        </div>
-        {error && <p className="error">{error}</p>}
-        <div className="modal-actions">
-          <button onClick={onClose}>Cancel</button>
-          <button className="primary" onClick={submit} disabled={!path.trim()}>
-            Add
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ConfirmDelete({
-  title,
-  name,
-  message,
-  onConfirm,
-  onClose,
-}: {
-  title: string;
-  name: string;
-  message: string;
-  onConfirm: () => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>{title}</h2>
-        <p>
-          Delete <strong>{name}</strong>? {message}
-        </p>
-        <div className="modal-actions">
-          <button onClick={onClose}>Cancel</button>
-          <button className="danger" onClick={onConfirm}>
-            Delete
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+import { useSidebar } from "../store/sidebar";
+import { hint } from "../lib/useCommands";
 
 export default function Sidebar() {
   const {
@@ -103,46 +18,17 @@ export default function Sidebar() {
     toggleCollapsed,
     togglePin,
     createTask,
-    deleteProject,
-    deleteTask,
   } = useSidebar();
 
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
-  const [deleteTaskTarget, setDeleteTaskTarget] = useState<{
-    projectId: string;
-    taskId: string;
-  } | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const createOpen = useUi((s) => s.createProjectOpen);
-  const setCreateOpen = useUi((s) => s.setCreateProjectOpen);
+  const sidebarVisible = useUi((s) => s.sidebarVisible);
+  // Re-renders hint text when keybindings change (E14-01 hint rendering).
+  useUi((s) => s.bindingsVersion);
+  const setProjectSettingsOpen = useUi((s) => s.setProjectSettingsOpen);
+  const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
+  const setDeleteProjectTarget = useUi((s) => s.setDeleteProjectTarget);
+  const setDeleteTaskTarget = useUi((s) => s.setDeleteTaskTarget);
 
-  // ⌘⇧N / Ctrl+Shift+N → create project.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "n") {
-        e.preventDefault();
-        setCreateOpen(true);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  // ⌘Backspace / Ctrl+Backspace → delete the selected task (E2-09).
-  // Skipped while typing in a field (backspace edits text there).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.key !== "Backspace") return;
-      const el = e.target as HTMLElement | null;
-      const tag = el?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || el?.isContentEditable) return;
-      if (!selectedTaskId || !selectedProjectId) return;
-      e.preventDefault();
-      setDeleteTaskTarget({ projectId: selectedProjectId, taskId: selectedTaskId });
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [selectedTaskId, selectedProjectId]);
+  if (!sidebarVisible) return null;
 
   const pinnedCount = projects.reduce(
     (n, p) =>
@@ -157,12 +43,15 @@ export default function Sidebar() {
         <div className="header-actions">
           <button
             title="Project settings"
-            onClick={() => setSettingsOpen(true)}
+            onClick={() => setProjectSettingsOpen(true)}
             disabled={!selectedProjectId}
           >
             ⚙
           </button>
-          <button title="Add project (⌘⇧N)" onClick={() => setCreateOpen(true)}>
+          <button
+            title={`Add project (${hint("new-project")})`}
+            onClick={() => setCreateProjectOpen(true)}
+          >
             +
           </button>
         </div>
@@ -203,7 +92,7 @@ export default function Sidebar() {
                 onClick={() => selectProject(p.id)}
                 onContextMenu={(e) => {
                   e.preventDefault();
-                  setDeleteTarget(p.id);
+                  setDeleteProjectTarget(p.id);
                 }}
                 title="Right-click to delete"
               >
@@ -217,7 +106,16 @@ export default function Sidebar() {
                   {collapsed[p.id] ? "▸" : "▾"}
                 </button>
                 <span className="project-name">{p.name}</span>
-                <button className="add-task-btn" title="New task" onClick={(e) => { e.stopPropagation(); createTask(p.id); }}>+</button>
+                <button
+                  className="add-task-btn"
+                  title={`New task (${hint("add-task")})`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    createTask(p.id);
+                  }}
+                >
+                  +
+                </button>
               </div>
               {!collapsed[p.id] && (
                 <ul>
@@ -245,58 +143,11 @@ export default function Sidebar() {
           ))}
           {projects.length === 0 && (
             <li className="empty">
-              No projects yet. Press ⌘⇧N to add one.
+              No projects yet. Press {hint("new-project") || "⌘⇧N"} to add one.
             </li>
           )}
         </ul>
       </section>
-
-      {settingsOpen && selectedProjectId && (
-        <ProjectSettings
-          projectId={selectedProjectId}
-          projectName={
-            projects.find((p) => p.id === selectedProjectId)?.name ?? selectedProjectId
-          }
-          onClose={() => setSettingsOpen(false)}
-        />
-      )}
-      {createOpen && <CreateProjectDialog onClose={() => setCreateOpen(false)} />}
-      {deleteTarget &&
-        (() => {
-          const target = projects.find((p) => p.id === deleteTarget);
-          return (
-            <ConfirmDelete
-              title="Delete project"
-              name={target?.name ?? deleteTarget}
-              message="Tasks, worktrees, and rows are torn down. The repository on disk is left untouched."
-              onClose={() => setDeleteTarget(null)}
-              onConfirm={() => {
-                deleteProject(deleteTarget).catch(() => {});
-                setDeleteTarget(null);
-              }}
-            />
-          );
-        })()}
-      {deleteTaskTarget &&
-        (() => {
-          const target = (tasksByProject[deleteTaskTarget.projectId] ?? []).find(
-            (t) => t.id === deleteTaskTarget.taskId,
-          );
-          return (
-            <ConfirmDelete
-              title="Delete task"
-              name={target?.name ?? deleteTaskTarget.taskId}
-              message="Running agents are stopped and the worktree is removed. The source branch stays."
-              onClose={() => setDeleteTaskTarget(null)}
-              onConfirm={() => {
-                deleteTask(deleteTaskTarget.projectId, deleteTaskTarget.taskId).catch(
-                  (e) => console.error("delete task failed", e),
-                );
-                setDeleteTaskTarget(null);
-              }}
-            />
-          );
-        })()}
     </aside>
   );
 }
@@ -324,14 +175,14 @@ function TaskRow({
         e.preventDefault();
         onPin();
       }}
-      title="Click to open · right-click to pin/unpin · ⌘Backspace to delete"
+      title={`Click to open · right-click to pin/unpin · ${hint("delete-task") || "⌘⌫"} to delete`}
     >
       <span className={`status-dot status-${task.status}`} />
       <span className="task-name">{task.name}</span>
       {task.isPinned && <span className="pin">📌</span>}
       <button
         className="delete-task-btn"
-        title="Delete task (⌘Backspace)"
+        title={`Delete task (${hint("delete-task") || "⌘⌫"})`}
         onClick={(e) => {
           e.stopPropagation();
           onDelete(projectId, task.id);

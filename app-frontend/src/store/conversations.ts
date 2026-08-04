@@ -34,6 +34,8 @@ interface ConversationState {
   addContextPrompt: (text: string) => void;
   removeContextItem: (index: number) => void;
   clearContext: () => void;
+  /** Sends the current draft (clears draft + context). */
+  send: () => void;
 }
 
 export const useConversations = create<ConversationState>((set) => ({
@@ -94,4 +96,5 @@ export const useConversations = create<ConversationState>((set) => ({
       contextItems: s.contextItems.filter((_, i) => i !== index),
     })),
   clearContext: () => set({ contextItems: [], draftPrompt: "" }),
+  send: () => set((s) => (s.draftPrompt.trim() ? { contextItems: [], draftPrompt: "" } : s)),
 }));
