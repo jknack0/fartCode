@@ -35,3 +35,4 @@ Thumbs.db
 
 # ── Tauri-generated schemas ────────────────────────────────
 ade-app/gen/
+.omp/extensions/emdash-hook.ts
