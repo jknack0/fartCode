@@ -528,7 +528,7 @@ fn main() {
 
     // Remove: worktree dir gone + metadata pruned, project root untouched.
     wt_manager
-        .remove_worktree(&dup, "smoke-task-1", "smoke-ws-1", &wt.path)
+        .remove_worktree(&dup, "smoke-task-1", "smoke-ws-1", &wt.path, false)
         .unwrap();
     check(!wt.path.exists(), "removed worktree directory is gone");
     check(
@@ -998,6 +998,7 @@ fn main() {
         hook_env: None,
         respawn_resume: false,
         tmux_enabled: false,
+        pty_session_id: None,
     };
     check(true, "launcher context carries the full launch surface");
 
@@ -1070,6 +1071,7 @@ fn main() {
         rh_db.clone(),
         false,
         Arc::new(NoopRemoteRehydrate),
+        None,
     );
     // Empty DB -> nothing to resume, no errors.
     let empty_summary = rehydrator.rehydrate_all().unwrap();

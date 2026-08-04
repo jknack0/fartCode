@@ -13,6 +13,7 @@
 //! operations that need libgit2.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::Error;
 
@@ -101,6 +102,11 @@ pub trait GitOps: Send + Sync {
 
     /// Remove a worktree directory + `git worktree prune`.
     fn worktree_remove(&self, repo_path: &Path, worktree_path: &Path) -> Result<(), Error>;
+
+    /// `git -C <repo> worktree prune` with a hard deadline — cleanup paths
+    /// (task deletion, E2-09) must never hang on a wedged git. Returns
+    /// `Error::GitTimeout` when prune does not finish within `timeout`.
+    fn worktree_prune_timed(&self, repo_path: &Path, timeout: Duration) -> Result<(), Error>;
     /// `git -C <worktree> status --porcelain` — empty output means the
     /// worktree is clean (no uncommitted changes or untracked files). Used as
     /// a dirty-check before `rm -rf` (E2-07 follow-up).
@@ -109,6 +115,10 @@ pub trait GitOps: Send + Sync {
     /// `git -C <repo> branch --no-track <name> <start_point>` (no upstream set —
     /// the reference's create flow uses `--no-track`).
     fn branch_create(&self, repo_path: &Path, name: &str, start_point: &str) -> Result<(), Error>;
+
+    /// `git -C <repo> branch -d -- <name>` (`-D` when `force`). Used by task
+    /// deletion (E2-09) when the workspace provisioned its own branch.
+    fn branch_delete(&self, repo_path: &Path, name: &str, force: bool) -> Result<(), Error>;
 
     // -- E2-02 additions -----------------------------------------------------
 

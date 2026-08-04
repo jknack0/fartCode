@@ -10,6 +10,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Duration;
 
 pub use ade_core::git::{BranchRef, GitOps, WorktreeEntry};
 use ade_core::Error;
@@ -226,6 +227,10 @@ impl GitOps for Git2Ops {
         let repo = Self::open_repo(repo_path)?;
         prune_locked(&repo)
     }
+    fn worktree_prune_timed(&self, repo_path: &Path, timeout: Duration) -> Result<(), Error> {
+        // libgit2 prune has no timeout knob; the CLI's bounded version does.
+        self.cli.worktree_prune_timed(repo_path, timeout)
+    }
 
     fn is_worktree_clean(&self, repo: &Path, worktree: &Path) -> Result<bool, Error> {
         // Delegates to the shell — git2's status API requires index
@@ -288,6 +293,9 @@ impl GitOps for Git2Ops {
     }
     fn branch_create(&self, repo_path: &Path, name: &str, start_point: &str) -> Result<(), Error> {
         self.cli.branch_create(repo_path, name, start_point)
+    }
+    fn branch_delete(&self, repo_path: &Path, name: &str, force: bool) -> Result<(), Error> {
+        self.cli.branch_delete(repo_path, name, force)
     }
     fn config_get(&self, repo_path: &Path, key: &str) -> Result<Option<String>, Error> {
         self.cli.config_get(repo_path, key)

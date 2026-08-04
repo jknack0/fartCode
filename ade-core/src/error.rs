@@ -60,6 +60,11 @@ pub enum Error {
     #[error("git error: {0}")]
     Git(String),
 
+    /// Cleanup git ops (e.g. `worktree prune` on task deletion) run with a
+    /// bounded timeout so a wedged git can never hang teardown.
+    #[error("git operation timed out: {0}")]
+    GitTimeout(String),
+
     #[error("worktree path already exists: {0}")]
     WorktreeExists(PathBuf),
 
@@ -87,6 +92,10 @@ pub enum Error {
         signal: Option<String>,
         output_tail: String,
     },
+
+    /// A running PTY session was cancelled by teardown (E2-09 task deletion).
+    #[error("session cancelled")]
+    SessionCancelled,
 
     #[error("agent executable not found: {0}")]
     AgentNotFound(String),

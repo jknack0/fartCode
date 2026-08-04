@@ -314,12 +314,14 @@ fn test_list_by_project_orders_by_recency() {
     fx.create("first");
     let second = fx.create("second");
     // datetime('now') has 1s resolution — bump recency deterministically.
+    // A hardcoded date would tie once the wall clock reaches it, so pin
+    // the bump relative to `now` (always strictly in the future).
     fx.db
         .conn()
         .lock()
         .unwrap()
         .execute(
-            "UPDATE tasks SET updated_at = '2026-08-04 00:00:00' WHERE id = ?1",
+            "UPDATE tasks SET updated_at = datetime('now', '+1 day') WHERE id = ?1",
             [&second.id],
         )
         .unwrap();

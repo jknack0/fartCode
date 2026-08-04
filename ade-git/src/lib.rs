@@ -10,8 +10,10 @@
 
 pub mod git2ops;
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 pub use ade_core::git::{BranchRef, GitOps, WorktreeEntry};
 use ade_core::Error;
@@ -329,6 +331,54 @@ impl GitOps for CliGit {
         self.run_ok(Some(repo_path), ["worktree", "prune"])
     }
 
+    fn worktree_prune_timed(&self, repo_path: &Path, timeout: Duration) -> Result<(), Error> {
+        // Bounded prune (reference pruneGitWorktrees: 5s timeout + the
+        // NON_INTERACTIVE_ENV already applied by git_cmd). Poll try_wait —
+        // the CLI never streams enough output to deadlock on full pipes.
+        let mut cmd = git_cmd(Some(repo_path));
+        cmd.args(["worktree", "prune"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| Error::Git(format!("failed to spawn git: {e}")))?;
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    if status.success() {
+                        return Ok(());
+                    }
+                    let stderr = child
+                        .stderr
+                        .take()
+                        .map(|mut s| {
+                            let mut buf = String::new();
+                            let _ = Read::read_to_string(&mut s, &mut buf);
+                            buf
+                        })
+                        .unwrap_or_default();
+                    return Err(Error::Git(format!(
+                        "git worktree prune failed: {}",
+                        stderr.trim()
+                    )));
+                }
+                Ok(None) => {
+                    if std::time::Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(Error::GitTimeout(format!(
+                            "git worktree prune exceeded {}s",
+                            timeout.as_secs()
+                        )));
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(e) => return Err(Error::Git(format!("git worktree prune wait: {e}"))),
+            }
+        }
+    }
+
     fn is_worktree_clean(&self, _repo: &Path, worktree: &Path) -> Result<bool, Error> {
         let output = std::process::Command::new("git")
             .arg("-C")
@@ -357,6 +407,13 @@ impl GitOps for CliGit {
             Some(repo_path),
             ["branch", "--no-track", "--", name, start_point],
         )
+    }
+
+    fn branch_delete(&self, repo_path: &Path, name: &str, force: bool) -> Result<(), Error> {
+        // `--` so dash-leading names are not parsed as options (reference
+        // `deleteBranch` parity: `-d` safe delete, `-D` forced).
+        let flag = if force { "-D" } else { "-d" };
+        self.run_ok(Some(repo_path), ["branch", flag, "--", name])
     }
 
     fn config_get(&self, repo_path: &Path, key: &str) -> Result<Option<String>, Error> {

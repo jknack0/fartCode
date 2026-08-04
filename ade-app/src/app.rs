@@ -11,9 +11,12 @@ use ade_core::db::{Db, SqliteDb};
 use ade_core::dependencies::{HostDependencyStore, ProcessInstallRunner};
 use ade_core::events::EventBus;
 use ade_core::events::{BroadcastEventBus, InternalEvent};
+use ade_core::projects::worktrees::WorktreeManager;
 use ade_core::projects::DbProjectStore;
 use ade_core::pty::launcher::{NoopRemoteRehydrate, Rehydrator};
+use ade_core::pty::sessions::SessionRegistry;
 use ade_core::settings::DbSettingsStore;
+use ade_core::tasks::deletion::TaskDeletionService;
 use ade_core::tasks::DbTaskStore;
 
 pub struct App {
@@ -31,6 +34,8 @@ pub struct App {
     /// E2-07 boot rehydration orchestration (call `rehydrate_all` on a
     /// background thread after init).
     pub rehydrator: Rehydrator,
+    /// E2-09 task deletion/teardown.
+    pub deletion: TaskDeletionService,
 }
 
 impl App {
@@ -51,6 +56,10 @@ impl App {
         let tasks = Arc::new(DbTaskStore::new(db.clone(), event_bus.clone()));
         let conversations = Arc::new(DbConversationStore::new(db.clone(), event_bus.clone()));
 
+        // E2-09: one registry shared by boot rehydration (launches register)
+        // and task deletion (cancel + reap).
+        let sessions = Arc::new(SessionRegistry::new());
+
         // E2-07 boot rehydration: previously-spawned PTY conversations are
         // resumed after DB init (reference boot order). The app shell calls
         // `rehydrate_all` on a background thread (each launch blocks).
@@ -67,6 +76,19 @@ impl App {
             db.clone(),
             false, // auto-approve defaults off on boot
             Arc::new(NoopRemoteRehydrate),
+            Some(sessions.clone()),
+        );
+
+        // E2-09 task deletion/teardown.
+        let worktrees =
+            WorktreeManager::new(db.clone(), settings.clone(), Arc::new(ade_git::CliGit));
+        let deletion = TaskDeletionService::new(
+            db.clone(),
+            tasks.clone(),
+            conversations.clone(),
+            projects.clone(),
+            worktrees,
+            sessions,
         );
 
         Ok(Arc::new(Self {
@@ -77,6 +99,7 @@ impl App {
             conversations,
             event_bus,
             rehydrator,
+            deletion,
         }))
     }
 }

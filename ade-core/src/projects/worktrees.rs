@@ -22,6 +22,10 @@ use crate::projects::provider::worktree_pool_path;
 use crate::settings::{SettingsStore, DEFAULT_PRESERVE_PATTERNS};
 use crate::Error;
 
+/// Reference `pruneGitWorktrees`: cleanup prunes are bounded (5s) +
+/// non-interactive so a wedged git cannot hang task teardown (E2-09).
+pub const WORKTREE_PRUNE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// What a task's workspace turned out to be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkspaceKind {
@@ -78,6 +82,11 @@ pub struct WorktreeManager {
 impl WorktreeManager {
     pub fn new(db: Arc<dyn Db>, settings: Arc<dyn SettingsStore>, git: Arc<dyn GitOps>) -> Self {
         Self { db, settings, git }
+    }
+
+    /// The git backend (E2-09 branch deletion drives it directly).
+    pub fn git(&self) -> &Arc<dyn GitOps> {
+        &self.git
     }
 
     /// `git worktree prune` for the project (constructor-prune behavior;
@@ -225,14 +234,23 @@ impl WorktreeManager {
     }
 
     /// Removes a task's worktree. Guards: never the project root, never a
-    /// path outside the pool, and never a workspace shared with sibling tasks.
+    /// path outside the pool, and never a workspace shared with sibling
+    /// tasks. Returns `Ok(true)` when the worktree was removed, `Ok(false)`
+    /// when siblings kept it (reference `removeWorktreeIfUnused`).
+    ///
+    /// `force`: skip the dirty-check — task DELETION is user-confirmed and
+    /// the reference removes unconditionally; non-deletion flows pass
+    /// `false` so uncommitted agent work is never destroyed silently
+    /// (E2-07 follow-up). Cleanup prunes with a bounded timeout (reference
+    /// 5s + non-interactive env) so a wedged git cannot hang teardown.
     pub fn remove_worktree(
         &self,
         project: &Project,
         task_id: &str,
         workspace_id: &str,
         worktree_path: &Path,
-    ) -> Result<(), Error> {
+        force: bool,
+    ) -> Result<bool, Error> {
         let project_real =
             std::fs::canonicalize(&project.path).unwrap_or_else(|_| project.path.clone());
         let worktree_real =
@@ -255,24 +273,35 @@ impl WorktreeManager {
                 workspace_id,
                 "workspace has sibling tasks — keeping shared worktree"
             );
-            return Ok(());
+            return Ok(false);
         }
 
         // Dirty-check (E2-07 follow-up): uncommitted work in the worktree is
-        // the product's core premise. Destroying it unconditionally on
-        // task teardown is data loss.
-        if !self
-            .git
-            .is_worktree_clean(&project.path, worktree_path)
-            .unwrap_or(false)
+        // the product's core premise. Destroying it outside a confirmed
+        // delete is data loss.
+        if !force
+            && !self
+                .git
+                .is_worktree_clean(&project.path, worktree_path)
+                .unwrap_or(false)
         {
             return Err(Error::DirtyWorktree(format!(
                 "worktree {} has uncommitted changes — refusing to remove",
                 worktree_path.display()
             )));
         }
-        self.git.worktree_remove(&project.path, worktree_path)?;
-        Ok(())
+        if worktree_path.exists() {
+            std::fs::remove_dir_all(worktree_path)?;
+        }
+        // Bounded prune (reference pruneGitWorktrees): failure is non-fatal —
+        // the directory is already gone; stale metadata heals on next prune.
+        if let Err(e) = self
+            .git
+            .worktree_prune_timed(&project.path, WORKTREE_PRUNE_TIMEOUT)
+        {
+            tracing::warn!(error = %e, "worktree prune after removal failed (non-fatal)");
+        }
+        Ok(true)
     }
 
     // -- internals -----------------------------------------------------------

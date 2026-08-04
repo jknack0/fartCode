@@ -1,5 +1,6 @@
-//! Task commands (E1-04 sidebar: list, pin toggle).
+//! Task commands (E1-04 sidebar: list, pin toggle; E2-09 delete).
 
+use ade_core::tasks::deletion::DeleteTaskOptions;
 use ade_core::tasks::{CreateTaskOptions, TaskDto, TaskStore};
 use std::sync::Arc;
 
@@ -44,5 +45,25 @@ pub fn toggle_pin(app: State<'_, Arc<App>>, id: String) -> Result<TaskDto, Strin
     app.tasks
         .set_pinned(&id, !task.is_pinned)
         .map(|t| TaskDto::from(&t))
+        .map_err(|e| e.to_string())
+}
+
+/// E2-09: deletes the task with full teardown (running sessions reaped,
+/// view state dropped, worktree removed when unused). Options follow the
+/// reference `DeleteTaskOptions` defaults.
+#[tauri::command]
+pub fn delete_task(
+    app: State<'_, Arc<App>>,
+    project_id: String,
+    task_id: String,
+    delete_worktree: Option<bool>,
+    delete_branch: Option<bool>,
+) -> Result<(), String> {
+    let options = DeleteTaskOptions {
+        delete_worktree: delete_worktree.unwrap_or(true),
+        delete_branch: delete_branch.unwrap_or(false),
+    };
+    app.deletion
+        .delete_task(&project_id, &task_id, &options)
         .map_err(|e| e.to_string())
 }

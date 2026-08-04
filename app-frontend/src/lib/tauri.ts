@@ -59,6 +59,24 @@ export function togglePin(id: string): Promise<TaskDto> {
   return invoke("toggle_pin", { id });
 }
 
+export interface DeleteTaskOptions {
+  deleteWorktree?: boolean;
+  deleteBranch?: boolean;
+}
+
+export function deleteTask(
+  projectId: string,
+  taskId: string,
+  options: DeleteTaskOptions = {},
+): Promise<void> {
+  return invoke("delete_task", {
+    projectId,
+    taskId,
+    deleteWorktree: options.deleteWorktree ?? null,
+    deleteBranch: options.deleteBranch ?? null,
+  });
+}
+
 /** Subscribe to backend events; returns an unsubscribe fn. */
 export function onAdeEvent(cb: (event: AdeEvent) => void): Promise<() => void> {
   return listen<AdeEvent>("ade:event", (e) => cb(e.payload));

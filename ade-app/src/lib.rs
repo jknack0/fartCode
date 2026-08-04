@@ -68,6 +68,7 @@ pub fn run() {
             commands::tasks::create_task,
             commands::tasks::list_tasks,
             commands::tasks::toggle_pin,
+            commands::tasks::delete_task,
             commands::settings::get_project_settings,
             commands::settings::update_project_settings,
             commands::settings::share_with_team,

@@ -315,14 +315,14 @@ fn remove_worktree_refuses_dirty_worktree() {
     // Make an uncommitted change in the worktree.
     std::fs::write(wt.join("CHANGES.txt"), "unsaved work").unwrap();
     let err = wm
-        .remove_worktree(&project, &task_id, &workspace_id, &wt)
+        .remove_worktree(&project, &task_id, &workspace_id, &wt, false)
         .unwrap_err();
     assert!(matches!(err, ade_core::Error::DirtyWorktree(_)), "{err:?}");
 
     // After committing, removal succeeds.
     git_ok(&wt, ["add", "."]);
     git_commit(&wt, "save CHANGES.txt");
-    wm.remove_worktree(&project, &task_id, &workspace_id, &wt)
+    wm.remove_worktree(&project, &task_id, &workspace_id, &wt, false)
         .unwrap();
     assert!(!wt.exists(), "worktree removed after commit");
 }

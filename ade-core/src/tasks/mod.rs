@@ -1,6 +1,7 @@
 //! Tasks domain: durable task rows with lifecycle operations and events
 //! (ARCHITECTURE.md §2, ticket E2-01).
 
+pub mod deletion;
 pub mod lifecycle;
 pub mod model;
 pub mod naming;
@@ -441,15 +442,24 @@ impl TaskStore for DbTaskStore {
     }
 
     fn delete(&self, id: &str) -> Result<(), Error> {
+        // Reference `deleteTask` early-return: a vanished row is a clean
+        // no-op (double-delete / delete-during-provision safety).
+        if self.get(id)?.is_none() {
+            return Ok(());
+        }
         // Capture the workspace row before the task row vanishes —
         // `workspaces` has no FK to `tasks`, so bare DELETE leaks the row.
-        // Only clean the row when no sibling tasks still reference it.
-        let workspace_id: Option<String> = self.with_conn(|conn| {
+        // Only clean the row when no sibling tasks still reference it; a
+        // `project-root` workspace outlives every task (reference
+        // deleteWorkspaceIfUnused guard).
+        let workspace: Option<(String, Option<String>)> = self.with_conn(|conn| {
             Ok(conn
                 .query_row(
-                    "SELECT workspace_id FROM tasks WHERE id = ?1",
+                    "SELECT workspace_id, \
+                            (SELECT kind FROM workspaces WHERE id = tasks.workspace_id) \
+                     FROM tasks WHERE id = ?1",
                     [id],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .optional()?)
         })?;
@@ -458,19 +468,33 @@ impl TaskStore for DbTaskStore {
             Ok(())
         })?;
         // Tear down the workspace row when no sibling tasks remain.
-        if let Some(wid) = workspace_id {
-            let siblings: i32 = self.with_conn(|conn| {
-                Ok(conn.query_row(
-                    "SELECT COUNT(*) FROM tasks WHERE workspace_id = ?1",
-                    [&wid],
-                    |row| row.get(0),
-                )?)
-            })?;
-            if siblings == 0 {
-                self.with_conn(|conn| {
-                    conn.execute("DELETE FROM workspaces WHERE id = ?1", [&wid])?;
-                    Ok(())
+        if let Some((wid, kind)) = workspace {
+            if kind.as_deref() == Some("project-root") {
+                // Shared by every no-worktree task — never delete.
+            } else {
+                let siblings: i32 = self.with_conn(|conn| {
+                    Ok(conn.query_row(
+                        "SELECT COUNT(*) FROM tasks WHERE workspace_id = ?1",
+                        [&wid],
+                        |row| row.get(0),
+                    )?)
                 })?;
+                if siblings == 0 {
+                    self.with_conn(|conn| {
+                        conn.execute("DELETE FROM workspaces WHERE id = ?1", [&wid])?;
+                        // The workspace's derived file index orphans too
+                        // (reference workspaceFileIndexService.deleteIndex).
+                        conn.execute(
+                            "DELETE FROM workspace_file_index WHERE workspace_id = ?1",
+                            [&wid],
+                        )?;
+                        conn.execute(
+                            "DELETE FROM workspace_file_index_meta WHERE workspace_id = ?1",
+                            [&wid],
+                        )?;
+                        Ok(())
+                    })?;
+                }
             }
         }
         self.event_bus

@@ -8,6 +8,7 @@ import {
   createTask as apiCreateTask,
   createProject as apiCreateProject,
   deleteProject as apiDeleteProject,
+  deleteTask as apiDeleteTask,
   listProjects,
   listTasks,
   onAdeEvent,
@@ -30,6 +31,7 @@ interface SidebarState {
   createTask: (projectId: string) => Promise<void>;
   createProject: (path: string) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
+  deleteTask: (projectId: string, taskId: string) => Promise<void>;
   togglePin: (id: string) => Promise<void>;
 }
 
@@ -134,6 +136,21 @@ export const useSidebar = create<SidebarState>((set) => ({
           : s.selectedProjectId;
       return { projects, tasksByProject, selectedProjectId, selectedTaskId: null };
     });
+  },
+
+  deleteTask: async (projectId, taskId) => {
+    await apiDeleteTask(projectId, taskId);
+    // Local removal for immediate feedback (the backend also re-fires
+    // task:deleted → wireSidebarEvents reloads; idempotent).
+    set((s) => ({
+      tasksByProject: {
+        ...s.tasksByProject,
+        [projectId]: (s.tasksByProject[projectId] ?? []).filter(
+          (t) => t.id !== taskId,
+        ),
+      },
+      selectedTaskId: s.selectedTaskId === taskId ? null : s.selectedTaskId,
+    }));
   },
 
   togglePin: async (id) => {

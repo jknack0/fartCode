@@ -8,14 +8,15 @@
 //! semantics, env, and respawn policy match the reference `local-pty.ts`.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ade_providers::{PromptStrategy, ProviderDescriptor};
 
 use crate::conversations::ConversationTypeDto as ConversationType;
 use crate::conversations::{
-    model::Conversation, resolve_agent_session_command_args, ConversationStore,
+    make_pty_session_id, model::Conversation, resolve_agent_session_command_args, ConversationStore,
 };
 use crate::db::Db;
 use crate::dependencies::HostDependencyStore;
@@ -62,6 +63,10 @@ pub struct AgentLaunchContext {
     pub respawn_resume: bool,
     /// Disables respawn (reference: "disabled when tmux enabled").
     pub tmux_enabled: bool,
+    /// Registry key (`make_pty_session_id`) for teardown (E2-09). When set
+    /// AND the launcher holds a registry, the launch registers itself and
+    /// polls the cancel flag — delete reaps the session cooperatively.
+    pub pty_session_id: Option<String>,
 }
 
 impl AgentLaunchContext {
@@ -96,6 +101,7 @@ impl AgentLaunchContext {
             hook_env: None,
             respawn_resume: false,
             tmux_enabled: false,
+            pty_session_id: None,
         }
     }
 }
@@ -118,6 +124,9 @@ pub struct AgentLauncher {
     /// "persist conversations.session_id on every start/resume" — the
     /// restart-survival contract).
     conversations: Option<Arc<dyn ConversationStore>>,
+    /// When set, launches with a `pty_session_id` register themselves so
+    /// task deletion can cancel + reap them (E2-09).
+    sessions: Option<Arc<super::sessions::SessionRegistry>>,
 }
 
 impl AgentLauncher {
@@ -131,12 +140,23 @@ impl AgentLauncher {
             deps,
             events,
             conversations: None,
+            sessions: None,
         }
     }
 
     /// Opts into session-id persistence (E2-07).
     pub fn with_conversation_store(mut self, store: Arc<dyn ConversationStore>) -> Self {
         self.conversations = Some(store);
+        self
+    }
+
+    /// Opts into the teardown registry (E2-09): launches carrying a
+    /// `pty_session_id` register themselves and honor cancellation.
+    pub fn with_session_registry(
+        mut self,
+        registry: Arc<super::sessions::SessionRegistry>,
+    ) -> Self {
+        self.sessions = Some(registry);
         self
     }
 
@@ -176,6 +196,13 @@ impl AgentLauncher {
             hook_env: None,
             respawn_resume: false,
             tmux_enabled: false,
+            // E2-09 teardown key (reference session-targets:
+            // makePtySessionId(projectId, taskId, conversationId)).
+            pty_session_id: Some(make_pty_session_id(
+                &worktree.project_id,
+                &worktree.task_id,
+                &conversation.id,
+            )),
         };
         self.run(&ctx)
     }
@@ -259,6 +286,19 @@ impl AgentLauncher {
             last_signal: None,
         };
 
+        // E2-09: register the session so task deletion can cancel + reap it.
+        // The guard unregisters + marks exit on EVERY return path (normal
+        // exit, error, cancellation) — teardown waits on the exited flag.
+        let session_flags = match (&self.sessions, &ctx.pty_session_id) {
+            (Some(reg), Some(sid)) => Some(reg.register(sid, Some(ctx.provider_id.clone()))),
+            _ => None,
+        };
+        let _session_guard = SessionGuard::new(
+            self.sessions.clone(),
+            ctx.pty_session_id.clone(),
+            session_flags.clone(),
+        );
+
         loop {
             spawns += 1;
             self.events.send(InternalEvent::AgentRunStarted {
@@ -311,19 +351,42 @@ impl AgentLauncher {
                 }
             }
 
-            let exit = match handle.wait_exit(AGENT_WAIT_TIMEOUT) {
-                Ok(exit) => exit,
-                Err(Error::LifecycleScriptTimeout(_)) => {
+            // E2-09: wait while polling the teardown cancel flag. Cancel
+            // kills the child and ends the launch (never respawns a deleted
+            // task's agent). The deadline keeps the old fallback semantics:
+            // a session past the window is force-killed and treated as an
+            // exit with no code.
+            let cancel_flag = session_flags.as_ref().map(|f| f.cancel.clone());
+            let mut cancelled = false;
+            let deadline = Instant::now() + AGENT_WAIT_TIMEOUT;
+            let exit = loop {
+                match handle.try_wait_exit() {
+                    Ok(Some(exit)) => break exit,
+                    Ok(None) => {}
+                    Err(e) => return Err(e),
+                }
+                if cancel_flag
+                    .as_ref()
+                    .is_some_and(|f| f.load(Ordering::SeqCst))
+                {
+                    let _ = handle.kill();
+                    cancelled = true;
+                    break crate::terminals::pty::PtyExit {
+                        exit_code: None,
+                        signal: None,
+                    };
+                }
+                if Instant::now() >= deadline {
                     // The agent ran past the fallback window — treat as an
                     // exit with no code so the respawn policy still applies
                     // (the session is genuinely long-running).
                     let _ = handle.kill();
-                    crate::terminals::pty::PtyExit {
+                    break crate::terminals::pty::PtyExit {
                         exit_code: None,
                         signal: None,
-                    }
+                    };
                 }
-                Err(e) => return Err(e),
+                std::thread::sleep(Duration::from_millis(20));
             };
             let _ = handle.flush();
             // Spill cleanup happens in SpillGuard::drop on every exit path
@@ -342,7 +405,9 @@ impl AgentLauncher {
 
             // Reference semantics: MAX_RESPAWNS respawns AFTER the initial
             // launch (initial + MAX_RESPAWNS = 3 spawns at the default).
-            let should_respawn = ctx.respawn_resume && !ctx.tmux_enabled && spawns <= MAX_RESPAWNS;
+            // Cancellation (E2-09 teardown) never respawns.
+            let should_respawn =
+                !cancelled && ctx.respawn_resume && !ctx.tmux_enabled && spawns <= MAX_RESPAWNS;
             if !should_respawn {
                 break;
             }
@@ -567,12 +632,15 @@ impl Rehydrator {
         db: Arc<dyn Db>,
         default_auto_approve: bool,
         remote: Arc<dyn RemoteRehydrate>,
+        sessions: Option<Arc<super::sessions::SessionRegistry>>,
     ) -> Self {
+        let mut launcher =
+            AgentLauncher::new(pty, deps, events).with_conversation_store(conversations.clone());
+        if let Some(reg) = sessions {
+            launcher = launcher.with_session_registry(reg);
+        }
         Self {
-            launcher: Arc::new(
-                AgentLauncher::new(pty, deps, events)
-                    .with_conversation_store(conversations.clone()),
-            ),
+            launcher: Arc::new(launcher),
             conversations,
             tasks,
             projects,
@@ -630,6 +698,7 @@ impl Rehydrator {
                     }
                     let target = RehydrateTarget {
                         provider_id,
+                        project_id: project.id.clone(),
                         task_id: task.id.clone(),
                         task_name: task.name.clone(),
                         worktree: PathBuf::from(&worktree_path),
@@ -676,6 +745,8 @@ impl Rehydrator {
 #[derive(Debug, Clone)]
 pub struct RehydrateTarget {
     pub provider_id: String,
+    /// Owning project — part of the teardown session key (E2-09).
+    pub project_id: String,
     pub task_id: String,
     pub task_name: String,
     pub worktree: PathBuf,
@@ -691,6 +762,42 @@ impl Drop for SpillGuard<'_> {
     fn drop(&mut self) {
         if let Some(path) = self.0 {
             cleanup_spilled_prompt(path);
+        }
+    }
+}
+
+/// Unregisters a teardown-tracked session when the launch scope exits — on
+/// EVERY path (normal exit, error, cancellation), and marks the exited flag
+/// so a concurrent `terminate` unblocks (E2-09).
+struct SessionGuard {
+    sessions: Option<Arc<super::sessions::SessionRegistry>>,
+    session_id: Option<String>,
+    flags: Option<super::sessions::SessionFlags>,
+}
+
+impl SessionGuard {
+    fn new(
+        sessions: Option<Arc<super::sessions::SessionRegistry>>,
+        session_id: Option<String>,
+        flags: Option<super::sessions::SessionFlags>,
+    ) -> Self {
+        Self {
+            sessions,
+            session_id,
+            flags,
+        }
+    }
+}
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        // Exited first: a teardown waiting on the flag must unblock even if
+        // the unregister races it.
+        if let Some(flags) = &self.flags {
+            flags.exited.store(true, Ordering::SeqCst);
+        }
+        if let (Some(reg), Some(sid)) = (&self.sessions, &self.session_id) {
+            reg.unregister(sid);
         }
     }
 }

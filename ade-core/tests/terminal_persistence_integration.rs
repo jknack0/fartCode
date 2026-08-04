@@ -168,6 +168,7 @@ impl Fixture {
             hook_env: None,
             respawn_resume: false,
             tmux_enabled: false,
+            pty_session_id: None,
         }
     }
 
@@ -207,6 +208,7 @@ fn kill_restart_rehydrates_with_resume_flags() {
     let launcher = fx.launcher();
     let target = RehydrateTarget {
         provider_id: "amp".into(),
+        project_id: "p1".into(),
         task_id: fx.task_id.clone(),
         task_name: "Persist me".into(),
         worktree: fx._worktree.path().to_path_buf(),
@@ -350,6 +352,7 @@ fn boot_rehydrator_walks_projects_tasks_conversations() {
         db.clone(),
         false,
         Arc::new(NoopRemoteRehydrate),
+        None,
     );
 
     let summary = rehydrator.rehydrate_all().unwrap();

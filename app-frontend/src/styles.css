@@ -197,6 +197,20 @@ body {
   opacity: 0.8;
 }
 
+.delete-task-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0;
+  flex-shrink: 0;
+}
+.task-row:hover .delete-task-btn { opacity: 1; }
+.delete-task-btn:hover { color: var(--danger); }
+
 .empty {
   padding: 4px 12px;
   color: var(--muted);

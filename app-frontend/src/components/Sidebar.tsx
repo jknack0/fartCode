@@ -61,21 +61,24 @@ function CreateProjectDialog({ onClose }: { onClose: () => void }) {
 }
 
 function ConfirmDelete({
+  title,
   name,
+  message,
   onConfirm,
   onClose,
 }: {
+  title: string;
   name: string;
+  message: string;
   onConfirm: () => void;
   onClose: () => void;
 }) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Delete project</h2>
+        <h2>{title}</h2>
         <p>
-          Delete <strong>{name}</strong>? Tasks, worktrees, and rows are torn
-          down. The repository on disk is left untouched.
+          Delete <strong>{name}</strong>? {message}
         </p>
         <div className="modal-actions">
           <button onClick={onClose}>Cancel</button>
@@ -101,9 +104,14 @@ export default function Sidebar() {
     togglePin,
     createTask,
     deleteProject,
+    deleteTask,
   } = useSidebar();
 
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deleteTaskTarget, setDeleteTaskTarget] = useState<{
+    projectId: string;
+    taskId: string;
+  } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const createOpen = useUi((s) => s.createProjectOpen);
   const setCreateOpen = useUi((s) => s.setCreateProjectOpen);
@@ -119,6 +127,22 @@ export default function Sidebar() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // ⌘Backspace / Ctrl+Backspace → delete the selected task (E2-09).
+  // Skipped while typing in a field (backspace edits text there).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key !== "Backspace") return;
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || el?.isContentEditable) return;
+      if (!selectedTaskId || !selectedProjectId) return;
+      e.preventDefault();
+      setDeleteTaskTarget({ projectId: selectedProjectId, taskId: selectedTaskId });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedTaskId, selectedProjectId]);
 
   const pinnedCount = projects.reduce(
     (n, p) =>
@@ -155,9 +179,13 @@ export default function Sidebar() {
                   <TaskRow
                     key={t.id}
                     task={t}
+                    projectId={p.id}
                     selected={selectedTaskId === t.id}
                     onSelect={() => selectTask(t.id)}
                     onPin={() => togglePin(t.id)}
+                    onDelete={(projectId, taskId) =>
+                      setDeleteTaskTarget({ projectId, taskId })
+                    }
                   />
                 )),
             )}
@@ -199,9 +227,13 @@ export default function Sidebar() {
                       <TaskRow
                         key={t.id}
                         task={t}
+                        projectId={p.id}
                         selected={selectedTaskId === t.id}
                         onSelect={() => selectTask(t.id)}
                         onPin={() => togglePin(t.id)}
+                        onDelete={(projectId, taskId) =>
+                          setDeleteTaskTarget({ projectId, taskId })
+                        }
                       />
                     ))}
                   {(tasksByProject[p.id] ?? []).filter((t) => !t.archivedAt).length === 0 && (
@@ -234,11 +266,33 @@ export default function Sidebar() {
           const target = projects.find((p) => p.id === deleteTarget);
           return (
             <ConfirmDelete
+              title="Delete project"
               name={target?.name ?? deleteTarget}
+              message="Tasks, worktrees, and rows are torn down. The repository on disk is left untouched."
               onClose={() => setDeleteTarget(null)}
               onConfirm={() => {
                 deleteProject(deleteTarget).catch(() => {});
                 setDeleteTarget(null);
+              }}
+            />
+          );
+        })()}
+      {deleteTaskTarget &&
+        (() => {
+          const target = (tasksByProject[deleteTaskTarget.projectId] ?? []).find(
+            (t) => t.id === deleteTaskTarget.taskId,
+          );
+          return (
+            <ConfirmDelete
+              title="Delete task"
+              name={target?.name ?? deleteTaskTarget.taskId}
+              message="Running agents are stopped and the worktree is removed. The source branch stays."
+              onClose={() => setDeleteTaskTarget(null)}
+              onConfirm={() => {
+                deleteTask(deleteTaskTarget.projectId, deleteTaskTarget.taskId).catch(
+                  (e) => console.error("delete task failed", e),
+                );
+                setDeleteTaskTarget(null);
               }}
             />
           );
@@ -249,14 +303,18 @@ export default function Sidebar() {
 
 function TaskRow({
   task,
+  projectId,
   selected,
   onSelect,
   onPin,
+  onDelete,
 }: {
   task: { id: string; name: string; status: string; isPinned: boolean };
+  projectId: string;
   selected: boolean;
   onSelect: () => void;
   onPin: () => void;
+  onDelete: (projectId: string, taskId: string) => void;
 }) {
   return (
     <li
@@ -266,11 +324,21 @@ function TaskRow({
         e.preventDefault();
         onPin();
       }}
-      title="Click to open · right-click to pin/unpin"
+      title="Click to open · right-click to pin/unpin · ⌘Backspace to delete"
     >
       <span className={`status-dot status-${task.status}`} />
       <span className="task-name">{task.name}</span>
       {task.isPinned && <span className="pin">📌</span>}
+      <button
+        className="delete-task-btn"
+        title="Delete task (⌘Backspace)"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete(projectId, task.id);
+        }}
+      >
+        &times;
+      </button>
     </li>
   );
 }
