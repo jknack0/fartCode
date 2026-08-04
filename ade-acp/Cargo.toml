@@ -6,3 +6,12 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+agent-client-protocol-schema = { workspace = true }
+parking_lot = "0.12"
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

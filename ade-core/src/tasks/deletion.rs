@@ -181,9 +181,7 @@ impl TaskDeletionService {
                         kind: row.get(1)?,
                         path: row.get(2)?,
                         branch_name: row.get(3)?,
-                        config: config
-                            .as_deref()
-                            .and_then(|c| serde_json::from_str(c).ok()),
+                        config: config.as_deref().and_then(|c| serde_json::from_str(c).ok()),
                     })
                 },
             )
