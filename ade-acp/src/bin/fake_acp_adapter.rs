@@ -103,6 +103,15 @@ fn handle_prompt(
 ) {
     let text = prompt_text(&request["params"]);
 
+    if text.contains("envcheck") {
+        // Echo the value of ADE_TEST_ENV the adapter process received —
+        // E2-11-2 asserts server-resolved env reaches the adapter.
+        let value = std::env::var("ADE_TEST_ENV").unwrap_or_else(|_| "<unset>".into());
+        agent_chunk(out, session_id, &format!("ENV: {value}"));
+        reply(out, request, json!({ "stopReason": "end_turn" }));
+        return;
+    }
+
     if text.contains("emitgarbage") {
         let mut stdout = out.lock();
         stdout.write_all(b"this is not json\n").unwrap();

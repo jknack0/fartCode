@@ -84,6 +84,26 @@ impl AcpClient {
         })
     }
 
+    /// Adopts a transport built elsewhere (E2-11-2: the worker's process
+    /// hosts spawn the adapter and hand the child to the client).
+    pub fn from_transport(
+        transport: Arc<StdioTransport>,
+        updates_rx: broadcast::Receiver<serde_json::Value>,
+        events_rx: mpsc::Receiver<Incoming>,
+        handlers_root: Option<std::path::PathBuf>,
+        permission_resolver: impl Fn(crate::handlers::PermissionRequest, Arc<crate::handlers::PermissionAnswerer>)
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self {
+        Self {
+            transport,
+            updates_rx,
+            events_rx: Mutex::new(events_rx),
+            handlers: Arc::new(LocalHandlers::new(handlers_root, permission_resolver)),
+        }
+    }
+
     /// Performs the `initialize` handshake, rejecting version mismatches.
     pub async fn initialize(&self) -> Result<InitializeResult, Error> {
         let request = InitializeRequest::new(PROTOCOL_VERSION)

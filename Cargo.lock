@@ -82,6 +82,17 @@ dependencies = [
 [[package]]
 name = "ade-runtime"
 version = "0.1.0"
+dependencies = [
+ "ade-acp",
+ "agent-client-protocol-schema",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "ade-scheduler"

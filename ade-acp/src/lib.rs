@@ -21,7 +21,9 @@ pub mod transport;
 
 pub use client::{AcpClient, InitializeResult, PromptResult, SessionUpdateEvent};
 pub use error::Error;
-pub use handlers::{ClientHandlers, LocalHandlers, PermissionDecision, PermissionRequest};
+pub use handlers::{
+    ClientHandlers, LocalHandlers, PermissionAnswerer, PermissionDecision, PermissionRequest,
+};
 pub use transport::{Incoming, StdioTransport};
 /// ACP method names (stable strings from the v1 spec; the schema crate keeps
 /// its constants `pub(crate)`).

@@ -57,6 +57,12 @@ impl StdioTransport {
     /// `updates` receives `session/update` notification params as raw JSON
     /// (typed at the client layer); `events` receives agent requests and
     /// the closed signal.
+    /// Spawns the adapter locally and starts the reader pump (convenience
+    /// wrapper over [`StdioTransport::from_child`]).
+    ///
+    /// `updates` receives `session/update` notification params as raw JSON
+    /// (typed at the client layer); `events` receives agent requests and
+    /// the closed signal.
     pub async fn spawn(
         program: impl AsRef<std::ffi::OsStr>,
         args: &[String],
@@ -74,7 +80,18 @@ impl StdioTransport {
         if let Some(dir) = cwd {
             cmd.current_dir(dir);
         }
-        let mut child = cmd.spawn()?;
+        let child = cmd.spawn()?;
+        Self::from_child(child, updates, events_tx)
+    }
+
+    /// Adopts an already-spawned child (e.g. from a remote process host,
+    /// E2-11-2 SSH transport seam) and starts the reader pump. The child
+    /// MUST have piped stdin/stdout.
+    pub fn from_child(
+        mut child: tokio::process::Child,
+        updates: broadcast::Sender<serde_json::Value>,
+        events_tx: mpsc::Sender<Incoming>,
+    ) -> Result<Self, Error> {
         let stdin = child
             .stdin
             .take()
@@ -175,6 +192,14 @@ impl StdioTransport {
             .await
             .map_err(|e| Error::Closed(format!("adapter stdin flush: {e}")))?;
         Ok(())
+    }
+
+    /// Waits for the adapter to exit and returns its exit code (None when
+    /// the OS provides none). Call on the normal-exit path; use `shutdown`
+    /// for forced teardown — do not mix both on one transport.
+    pub async fn wait_exit(&self) -> Option<i32> {
+        let mut child = self.child.lock().await;
+        child.wait().await.ok().and_then(|status| status.code())
     }
 
     /// Terminates the adapter (best-effort kill, then reap).
