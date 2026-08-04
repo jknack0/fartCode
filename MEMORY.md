@@ -10,8 +10,9 @@ one exists).
   was retired 2026-08-04; its Appendix is preserved as `phase0-checklists.md`.
   New work = new issue (`phase:0`/`phase:2` + `size:*` labels, milestone "Phase 0").
 - **Phase 0 is fully closed** (2026-08-04). **Phase 2 in progress:** E2-11
-  broken into #28–#33; #28 done (2827012). #34 E3-07 done (9041aad).
-  Next: **#29 E2-11-2** (worker + process hosts + env injection).
+  broken into #28–#33; #28 done (2827012), #34 E3-07 done (9041aad),
+  #29 E2-11-2 done (2ca862a). Next: **#30 E2-11-3** (SessionManager +
+  SessionCell + session-id persistence).
 - **HEAD (2827012, 2026-08-04):** E2-11-1 — ade-acp is a real ACP v1
   client: stdio JSON-RPC transport + client lifecycle (initialize/new/load/
   prompt/cancel/set_mode/set_config_option) + scoped fs handlers +
