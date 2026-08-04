@@ -27,6 +27,8 @@ interface SidebarState {
   load: () => Promise<void>;
   selectProject: (id: string) => void;
   selectTask: (id: string) => void;
+  /** Task-switch navigation (E2-10): select a task and its project. */
+  switchToTask: (task: TaskDto) => void;
   toggleCollapsed: (id: string) => void;
   createTask: (projectId: string) => Promise<void>;
   createProject: (path: string) => Promise<void>;
@@ -97,6 +99,10 @@ export const useSidebar = create<SidebarState>((set) => ({
   },
   selectTask: (id) => {
     set({ selectedTaskId: id });
+    persistSidebarView();
+  },
+  switchToTask: (task) => {
+    set({ selectedProjectId: task.projectId, selectedTaskId: task.id });
     persistSidebarView();
   },
   toggleCollapsed: (id) => {

@@ -1,12 +1,14 @@
-// ade app shell (E1-04/E2-08): sidebar + main view.
+// ade app shell (E1-04/E2-08/E2-10): sidebar + task view with tabs.
 
 import { useEffect } from "react";
 import CommandPalette from "./components/CommandPalette";
-import ConversationView from "./components/ConversationView";
 import Onboarding from "./components/Onboarding";
 import ResourceMonitor from "./components/ResourceMonitor";
 import Sidebar from "./components/Sidebar";
+import TaskView from "./components/TaskView";
+import { useTaskShortcuts } from "./lib/shortcuts";
 import { useSidebar, wireSidebarEvents } from "./store/sidebar";
+import { wireTabsEvents } from "./store/tabs";
 import { useUi } from "./store/ui";
 
 function App() {
@@ -30,8 +32,14 @@ function App() {
   useEffect(() => {
     load().catch(() => {});
     const unlisten = wireSidebarEvents();
-    return () => unlisten();
+    const unlistenTabs = wireTabsEvents();
+    return () => {
+      unlisten();
+      unlistenTabs();
+    };
   }, [load]);
+
+  useTaskShortcuts();
 
   return (
     <main className="shell">
@@ -42,7 +50,7 @@ function App() {
       <section className="main">
         {error && <p className="error">{error}</p>}
         {selectedTaskId && selectedProjectId ? (
-          <ConversationView taskId={selectedTaskId} />
+          <TaskView taskId={selectedTaskId} projectId={selectedProjectId} />
         ) : selectedProjectId ? (
           <div className="placeholder">
             <h1>Project chat</h1>
