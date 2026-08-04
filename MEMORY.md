@@ -9,17 +9,20 @@ one exists).
 - **Work tracking is GitHub issues only** (`jknack0/ade`) — `tickets-phase0.md`
   was retired 2026-08-04; its Appendix is preserved as `phase0-checklists.md`.
   New work = new issue (`phase:0`/`phase:2` + `size:*` labels, milestone "Phase 0").
-- **Phase 0 — E1 (Foundation) and E2 (Task Engine) are done through E2-10.**
-  Remaining open issues: **#21 E2-11** (ACP path, phase 2), **#27 E14-01**
-  (keybinding registry). E3-01..E3-04 + E3-08 closed. E1-07/E1-08/E1-09
-  re-audited 2026-08-04 against acceptance criteria (issues #8/#9/#10) —
-  only E1-09 needed fixes (see below).
-- **HEAD (7a6c71c, 2026-08-04):** E1-09 audit fix — resource monitor panel
-  re-fetches the enabled flag when opened; palette toggle opens the panel
-  only when enabling. Preceded by E2-10 (`1df8f15`): task-switch nav
-  (⌘⌥↑/↓, visible-tree order) + per-task tabs (conversations as tabs,
-  registry in `app-frontend/src/lib/tab-registry.tsx`, tab state persisted
-  under `view-state:task:<id>:tabs`).
+- **Phase 0 is fully closed** (2026-08-04). Only #21 E2-11 (ACP path,
+  phase 2) remains open. E14-01 shipped the keybinding registry; E1-07..
+  E1-09 were re-audited against acceptance (E1-09 fix in `7a6c71c`).
+- **HEAD (16b8e8f, 2026-08-04):** E14-01 keybinding registry — single
+  window keydown listener + command registry (`app-frontend/src/lib/
+  registry.ts`, default map in `commands.ts`), scope precedence
+  modal > editor > conversation-view > task-view > project-view > global,
+  user overrides in `view-state:app:keybindings`. Settings modal (⌘,)
+  remaps chords; hints render from the live registry. E2-10's
+  `lib/shortcuts.ts` was superseded and deleted.
+- **E2-10 (1df8f15):** task-switch nav (⌘⌥↑/↓, visible-tree order) +
+  per-task tabs (conversations as tabs, registry in `app-frontend/src/
+  lib/tab-registry.tsx`, tab state persisted under
+  `view-state:task:<id>:tabs`).
 - **E2-08 removed the standalone conversation list** — conversations now live
   under tasks (create-task command + sidebar).
 - **E2-07 shipped terminal persistence/resume** — boot rehydration orchestration,
