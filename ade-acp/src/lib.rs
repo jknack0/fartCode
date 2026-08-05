@@ -18,6 +18,7 @@ pub mod client;
 pub mod error;
 pub mod handlers;
 pub mod session;
+pub mod transcript;
 pub mod transport;
 
 pub use client::{AcpClient, InitializeResult, PromptResult, SessionUpdateEvent};
@@ -26,8 +27,9 @@ pub use handlers::{
     ClientHandlers, LocalHandlers, PermissionAnswerer, PermissionDecision, PermissionRequest,
 };
 pub use session::{
-    Lifecycle, QueuedPrompt, SessionCell, SessionIdStore, SessionManager, StartInput, StartOutcome,
-    Turn, TurnOutcome,
+    Lifecycle, LiveModels, PendingPermission, PermissionRequestedEvent, PromptDraft, QueuedPrompt,
+    SessionCell, SessionEvents, SessionIdStore, SessionManager, SessionState, StartInput,
+    StartOutcome, TurnOutcome,
 };
 pub use transport::{Incoming, StdioTransport};
 

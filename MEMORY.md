@@ -4,6 +4,29 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## Current state (2026-08-05, latest)
+
+- **#31 E2-11-4 Transcript reducer + live models:** `ade-acp::transcript`
+  owns the full port of the reference reducer — pure
+  `(ParserState, ReducerInput) → ParserState` fold (`reducer::reduce`),
+  stateful `TranscriptParser` (push/settle_turn/begin_replay/end_replay/
+  replay), `SessionUpdate → NormalizedEvent` decoder, reference-format id
+  synthesis, and serde-camelCase live models (reduced turns w/ message/
+  thinking/tool-lifecycle/plan items, config selectors, usage, title,
+  agents, plan). `SessionCell` now owns parser + `RawAcpLog` (50k-entry
+  in-memory raw-traffic export); raw `Turn.updates` is GONE — history is
+  reduced turns, prompt text = synthetic user-message item. Event seams =
+  `SessionEvents` trait fired by the cell; `ade-app::acp_events::
+  TauriAcpEvents` emits `acp:update` / `acp:transcript` (full LiveModels
+  snapshot) / `acp:permission_request` keyed by conversationId —
+  bypassing the internal bus (terminal:output precedent). ADR-0029.
+  Scoped down: no EnrichHook → no subagent/search/mcp/web-fetch event
+  kinds; terminal live models stay empty until the Phase-4 `terminal`
+  capability. `StartInput` gained `provider_id` + `events` (replaces
+  `update_sink`). Fake adapter has a `rich` prompt behavior exercising
+  every slice. Tests: 6 reducer goldens + 5 browser-free event/integration
+  tests. Next: **#32 E2-11-5** (commands + conversation-store wiring).
+
 ## Current state (2026-08-05, later)
 
 - **UI redesign — Signal → "emdash world" (impeccable new-work, seed e3c1a90f):**

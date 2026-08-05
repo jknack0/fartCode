@@ -3,6 +3,7 @@
 //! Wires the domain services (ARCHITECTURE §7), registers the E1-04 command
 //! modules, and forwards internal events to the frontend.
 
+mod acp_events;
 mod app;
 mod commands;
 mod indexer;
@@ -74,6 +75,10 @@ pub fn run() {
             // event emission; created here rather than in App::init).
             let terminal_manager = Arc::new(terminals::TerminalManager::new(app.handle().clone()));
             app.manage(terminal_manager);
+            // E2-11-4: ACP live-model event emitter (`acp:update` /
+            // `acp:transcript` / `acp:permission_request`); #32 hands it
+            // to the SessionManager via `StartInput::events`.
+            app.manage(acp_events::TauriAcpEvents::new(app.handle().clone()));
             app.manage(app_state);
             Ok(())
         })

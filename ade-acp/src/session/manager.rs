@@ -28,9 +28,9 @@ use crate::client::AcpClient;
 use crate::error::Error;
 use crate::handlers::{PermissionAnswerer, PermissionRequest};
 use crate::session::cell::{
-    Callbacks, ChatHistory, HistoryPage, Lifecycle, QueuedPrompt, SessionCell, SessionState,
-    UpdateSink,
+    ChatHistory, HistoryPage, Lifecycle, QueuedPrompt, SessionCell, SessionState,
 };
+use crate::session::events::SessionEvents;
 
 /// Persistence seam for ACP session ids (`conversations.session_id`).
 ///
@@ -48,6 +48,8 @@ pub trait SessionIdStore: Send + Sync {
 pub struct StartInput {
     /// Conversation this session belongs to.
     pub conversation_id: String,
+    /// Provider id (for the raw log + event payloads).
+    pub provider_id: String,
     /// Workspace root the adapter operates in (fs/* scoping + session cwd).
     pub cwd: PathBuf,
     /// Persisted provider session id to resume (`session/load`), if any.
@@ -56,8 +58,9 @@ pub struct StartInput {
     pub supports_load_session: bool,
     /// Prompts queued for delivery once the session is ready, in order.
     pub initial_queue: Vec<QueuedPrompt>,
-    /// Live update feed (raw for now; the reducer subscribes in E2-11-4).
-    pub update_sink: Option<UpdateSink>,
+    /// Live-model event sink (`acp:update` / `acp:transcript` /
+    /// `acp:permission_request`); wired by the app layer (#32).
+    pub events: Option<Arc<dyn SessionEvents>>,
     /// The client driving this session (spawned by the caller — test rig or
     /// the E2-11-2 process host).
     pub client: Arc<AcpClient>,
@@ -297,7 +300,6 @@ impl SessionManager {
             None => ChatHistory {
                 committed: Vec::new(),
                 active: None,
-                replay: Vec::new(),
             },
         }
     }
@@ -343,10 +345,26 @@ impl SessionManager {
         }
     }
 
+    /// Full live-model snapshot for the `acp:transcript` consumers
+    /// (#32's `acp_history` command returns this). `None` when the
+    /// conversation is not running.
+    pub fn live_models(&self, conversation_id: &str) -> Option<crate::session::events::LiveModels> {
+        self.cell_opt(conversation_id)
+            .map(|cell| cell.live_models())
+    }
+
+    /// Raw ACP traffic log export (debug artifact). `None` when the
+    /// conversation is not running.
+    pub fn export_raw_log(&self, conversation_id: &str) -> Option<String> {
+        self.cell_opt(conversation_id)
+            .map(|cell| cell.export_raw_log())
+    }
+
     // -- routing -----------------------------------------------------------
 
     /// Routes a host-delivered `session/update` to its conversation
-    /// (reference `onSessionUpdate`, minus the raw-log/live-model steps).
+    /// (reference `onSessionUpdate`; the cell folds the update into its
+    /// parser + raw log and fires the live-model events).
     /// Unknown sessions are warned and dropped.
     pub fn route_update(&self, session_id: &SessionId, update: SessionUpdate) {
         let Some(conversation_id) = self.routes.lock().get(session_id.0.as_ref()).cloned() else {
@@ -396,10 +414,10 @@ impl SessionManager {
     fn register_cell(&self, input: &StartInput, session_id: SessionId) -> Arc<SessionCell> {
         let cell = Arc::new(SessionCell::new(
             input.conversation_id.clone(),
+            &input.provider_id,
             session_id.clone(),
             Arc::clone(&input.client),
-            Callbacks::default(),
-            input.update_sink.clone(),
+            input.events.clone(),
         ));
         self.cells.lock().insert(
             input.conversation_id.clone(),

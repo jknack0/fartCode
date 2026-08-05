@@ -1,19 +1,21 @@
-//! E2-11-3 acceptance: SessionManager + SessionCell against the fake
-//! adapter binary.
+//! E2-11-3 acceptance (kept green under the E2-11-4 reduced transcript):
+//! SessionManager + SessionCell against the fake adapter binary.
 //!
 //! Covers: start → prompt → stop with session-id persistence and restart
 //! resume; queue ordering + edit/remove/reorder while idle between turns;
 //! permission routing through the cell; unknown-conversation errors.
+//! E2-11-4 changed the history shape: turns are now reduced
+//! `TranscriptTurn`s (no raw update stream; the prompt text is the
+//! synthetic user-message item).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use ade_acp::{
-    Error, Lifecycle, QueuedPrompt, SessionIdStore, SessionManager, StartInput, TurnOutcome,
-};
-use agent_client_protocol_schema::v1::{SessionId, SessionUpdate};
+use ade_acp::session::{SessionIdStore, SessionManager, StartInput};
+use ade_acp::{Error, Lifecycle, QueuedPrompt};
+use agent_client_protocol_schema::v1::SessionId;
 use parking_lot::Mutex;
 
 fn adapter_path() -> PathBuf {
@@ -81,11 +83,12 @@ fn start_input(
 ) -> StartInput {
     StartInput {
         conversation_id: conversation_id.to_string(),
+        provider_id: "fake".to_string(),
         cwd: cwd.to_path_buf(),
         session_id,
         supports_load_session: true,
         initial_queue: Vec::new(),
-        update_sink: None,
+        events: None,
         client,
     }
 }
@@ -102,14 +105,31 @@ async fn eventually(f: impl Fn() -> bool) {
     }
 }
 
-fn agent_text(turn: &ade_acp::Turn) -> String {
-    turn.updates
+/// The prompt text of a reduced turn = its synthetic user-message item.
+fn prompt_text(turn: &ade_acp::transcript::TranscriptTurn) -> &str {
+    turn.items
         .iter()
-        .filter_map(|u| match &u.update {
-            SessionUpdate::AgentMessageChunk(chunk) => match &chunk.content {
-                agent_client_protocol_schema::v1::ContentBlock::Text(t) => Some(t.text.to_string()),
-                _ => None,
-            },
+        .find_map(|item| match item {
+            ade_acp::transcript::TranscriptItem::Message(m)
+                if m.role == ade_acp::transcript::Role::User =>
+            {
+                Some(m.text.as_str())
+            }
+            _ => None,
+        })
+        .unwrap_or("")
+}
+
+/// Concatenated assistant text of a reduced turn.
+fn agent_text(turn: &ade_acp::transcript::TranscriptTurn) -> String {
+    turn.items
+        .iter()
+        .filter_map(|item| match item {
+            ade_acp::transcript::TranscriptItem::Message(m)
+                if m.role == ade_acp::transcript::Role::Assistant =>
+            {
+                Some(m.text.clone())
+            }
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -140,7 +160,7 @@ async fn start_prompt_stop_persists_session_id() {
     let history = manager.get_chat_history("conv-1");
     assert_eq!(history.committed.len(), 1);
     let turn = &history.committed[0];
-    assert_eq!(turn.prompt_text, "hello there");
+    assert_eq!(prompt_text(turn), "hello there");
     assert!(agent_text(turn).contains("Hello from the fake adapter."));
     let state = manager.get_session_state("conv-1");
     assert_eq!(state.lifecycle, Lifecycle::Ready);
@@ -187,11 +207,15 @@ async fn restart_resumes_persisted_session() {
     assert!(outcome.resumed, "resume must take the session/load path");
     assert_eq!(outcome.session_id.0.as_ref(), "fake-session-1");
 
-    // Replayed history landed in the cell (the fake adapter replays two
-    // updates on session/load).
+    // Replayed history settled as committed turns (the fake adapter replays
+    // two updates — user + agent message — which form one turn).
     let history = h2.manager.get_chat_history("conv-1");
-    assert_eq!(history.replay.len(), 2, "replay must capture both updates");
-    assert!(history.committed.is_empty());
+    assert_eq!(
+        history.committed.len(),
+        1,
+        "replay must settle as one committed turn"
+    );
+    assert!(history.active.is_none());
 
     // The resumed session still runs prompts on the SAME session id.
     let queued = h2
@@ -201,8 +225,8 @@ async fn restart_resumes_persisted_session() {
         .unwrap();
     assert!(!queued);
     let history = h2.manager.get_chat_history("conv-1");
-    assert_eq!(history.committed.len(), 1);
-    assert_eq!(history.committed[0].prompt_text, "after resume");
+    assert_eq!(history.committed.len(), 2);
+    assert_eq!(prompt_text(&history.committed[1]), "after resume");
     // Persistence ran again on resume (same id).
     assert_eq!(h2.store.get("conv-1").as_deref(), Some("fake-session-1"));
 }
@@ -238,11 +262,7 @@ async fn initial_queue_runs_in_order() {
     // The initial queue drains in order.
     eventually(|| manager.get_chat_history("conv-q").committed.len() == 3).await;
     let history = manager.get_chat_history("conv-q");
-    let texts: Vec<&str> = history
-        .committed
-        .iter()
-        .map(|t| t.prompt_text.as_str())
-        .collect();
+    let texts: Vec<&str> = history.committed.iter().map(prompt_text).collect();
     assert_eq!(texts, ["first", "second", "third"]);
     let seqs: Vec<u64> = history.committed.iter().map(|t| t.seq).collect();
     assert_eq!(seqs, [0, 1, 2]);
@@ -298,10 +318,13 @@ async fn queue_ops_while_busy_then_ordered_drain_after_cancel() {
     eventually(|| manager.get_chat_history("conv-q2").committed.len() == 3).await;
     let history = manager.get_chat_history("conv-q2");
     // Turn 0: the cancelled hang. Turns 1+2: the queue in reordered order.
-    assert_eq!(history.committed[0].prompt_text, "hang please");
-    assert_eq!(history.committed[0].outcome, Some(TurnOutcome::Cancelled));
-    assert_eq!(history.committed[1].prompt_text, "q3");
-    assert_eq!(history.committed[2].prompt_text, "q1-edited");
+    assert_eq!(prompt_text(&history.committed[0]), "hang please");
+    assert_eq!(
+        history.committed[0].outcome,
+        Some(ade_acp::transcript::TranscriptTurnOutcome::Cancelled { reason: None })
+    );
+    assert_eq!(prompt_text(&history.committed[1]), "q3");
+    assert_eq!(prompt_text(&history.committed[2]), "q1-edited");
     let state = manager.get_session_state("conv-q2");
     assert_eq!(state.lifecycle, Lifecycle::Ready);
     assert!(state.queued_prompts.is_empty());
@@ -356,18 +379,15 @@ async fn permission_round_trip_through_cell() {
     let history = manager.get_chat_history("conv-p");
     assert_eq!(history.committed.len(), 1);
     let turn = &history.committed[0];
-    // The allowed tool completed.
-    let completed = turn.updates.iter().any(|u| {
-        matches!(
-            &u.update,
-            SessionUpdate::ToolCallUpdate(update)
-                if matches!(
-                    update.fields.status,
-                    Some(agent_client_protocol_schema::v1::ToolCallStatus::Completed)
-                )
-        )
+    // The allowed tool completed — visible as a done edit-kind tool item
+    // (the fake adapter's "tool" branch drives a diff-less edit call).
+    let tool_done = turn.items.iter().any(|item| match item {
+        ade_acp::transcript::TranscriptItem::Tool(t) => {
+            t.tool_call_id == "call_001" && t.status == ade_acp::transcript::ToolStatus::Done
+        }
+        _ => false,
     });
-    assert!(completed, "allowed tool call must complete");
+    assert!(tool_done, "allowed tool call must complete");
     assert!(manager
         .get_session_state("conv-p")
         .pending_permissions
@@ -465,11 +485,11 @@ async fn draft_rev_guard_and_history_pagination() {
             .unwrap();
     }
     let page1 = manager.get_history("conv-d", None, 2);
-    let texts: Vec<&str> = page1.turns.iter().map(|t| t.prompt_text.as_str()).collect();
+    let texts: Vec<&str> = page1.turns.iter().map(prompt_text).collect();
     assert_eq!(texts, ["turn 2", "turn 3"]);
     assert_eq!(page1.next_cursor, Some(2));
     let page2 = manager.get_history("conv-d", page1.next_cursor, 2);
-    let texts: Vec<&str> = page2.turns.iter().map(|t| t.prompt_text.as_str()).collect();
+    let texts: Vec<&str> = page2.turns.iter().map(prompt_text).collect();
     assert_eq!(texts, ["turn 0", "turn 1"]);
     assert_eq!(page2.next_cursor, Some(0));
     let page3 = manager.get_history("conv-d", page2.next_cursor, 2);

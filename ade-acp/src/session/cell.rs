@@ -1,17 +1,18 @@
-//! Session cell — one ACP conversation's live state (ticket E2-11-3).
+//! Session cell — one ACP conversation's live state (ticket E2-11-3,
+//! reduced transcript wired in E2-11-4).
 //!
 //! Ports the reference `packages/runtime/src/acp-agents/session/cell.ts`
 //! (with its `machine/machine.ts` phase logic folded in). One cell owns one
 //! conversation's lifecycle (starting → ready → working/cancelling →
-//! closed), the prompt queue, pending permission requests, and the committed
-//! turn history. The full transcript-reducer/live-model split arrives with
-//! E2-11-4; until then each [`Turn`] keeps its raw `session/update` stream.
+//! closed), the prompt queue, pending permission requests, the transcript
+//! parser (reducer + live models), and the raw-traffic debug log.
 //!
 //! Deviations from the reference, deliberately:
-//! - No 250ms quiescence timer: updates are only accepted while a turn is in
-//!   flight or during replay (v1 adapters stream agent output inside turns).
-//! - No background-agent counting (`AgentsChanged`): subagent updates arrive
-//!   with the transcript reducer.
+//! - No 250ms quiescence timer: updates are only accepted while a turn is
+//!   in flight or during replay (v1 adapters stream agent output inside
+//!   turns).
+//! - No background-agent counting (`AgentsChanged`): the agent slice is
+//!   driven by the reducer's baseline events only.
 //! - The queued-prompt continuation runs inside the sending task's loop
 //!   instead of a machine effect + callback round-trip (same final state).
 
@@ -22,14 +23,23 @@ use agent_client_protocol_schema::v1::{
     ContentBlock, PermissionOption, SessionId, StopReason, ToolCallUpdate,
 };
 use parking_lot::Mutex;
+use serde::Serialize;
 use tokio::sync::oneshot;
 
 use crate::client::{AcpClient, SessionUpdateEvent};
 use crate::error::Error;
 use crate::handlers::{PermissionAnswerer, PermissionDecision, PermissionRequest};
+use crate::session::events::{LiveModels, PermissionRequestedEvent, SessionEvents};
+use crate::transcript::models::{
+    DoneTurnReason, ErrorTurnReason, TranscriptTurn, TranscriptTurnOutcome,
+};
+use crate::transcript::normalize::{MessageRole, NormalizedEvent};
+use crate::transcript::raw_log::{iso_now, now_ms, RawAcpEvent, RawAcpLog, RawAcpLogMeta};
+use crate::transcript::TranscriptParser;
 
 /// Lifecycle phase of one session (reference `SessionPhase`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Lifecycle {
     /// `session/new` / `session/load` sent; waiting for ready/replay end.
     Starting,
@@ -55,22 +65,8 @@ impl Lifecycle {
     }
 }
 
-/// One prompt turn.
-#[derive(Debug, Clone)]
-pub struct Turn {
-    /// Turn index within the conversation (0-based, creation order).
-    pub seq: u64,
-    /// `turn-<seq>`.
-    pub id: String,
-    /// The user prompt text that started the turn.
-    pub prompt_text: String,
-    /// `None` while the turn is in flight.
-    pub outcome: Option<TurnOutcome>,
-    /// `session/update` events received during the turn, arrival order.
-    pub updates: Vec<SessionUpdateEvent>,
-}
-
-/// How a turn ended (reference `TranscriptTurnOutcome`, flattened).
+/// How a turn ended (reference `TranscriptTurnOutcome`, flattened for the
+/// control plane; mapped to the transcript outcome at settle time).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TurnOutcome {
     /// The adapter answered with a stop reason (`end_turn`, `max_tokens`, …).
@@ -82,7 +78,8 @@ pub enum TurnOutcome {
 }
 
 /// A prompt waiting for a free turn slot (reference `QueuedPrompt`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct QueuedPrompt {
     pub id: String,
     pub text: String,
@@ -90,7 +87,8 @@ pub struct QueuedPrompt {
 }
 
 /// A permission request surfaced by the adapter, awaiting a user decision.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PendingPermission {
     /// Our correlation id — pass to [`SessionCell::resolve_permission`].
     pub request_id: String,
@@ -103,14 +101,16 @@ pub struct PendingPermission {
 }
 
 /// Prompt-composer draft (reference `PromptDraft`, rev-guarded).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PromptDraft {
     pub text: String,
     pub rev: u64,
 }
 
 /// Snapshot of the cell for UI/state consumers (reference `SessionState`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionState {
     pub lifecycle: Lifecycle,
     pub active_turn_id: Option<String>,
@@ -125,34 +125,21 @@ pub struct SessionState {
     pub can_cancel: bool,
 }
 
-/// Committed history + the in-flight turn (reference `AcpChatHistory`).
+/// Committed history + the in-flight turn, reduced (reference
+/// `AcpChatHistory`).
 #[derive(Debug, Clone)]
 pub struct ChatHistory {
-    pub committed: Vec<Turn>,
-    pub active: Option<Turn>,
-    /// History replayed by `session/load` (before the first live turn).
-    pub replay: Vec<SessionUpdateEvent>,
+    pub committed: Vec<TranscriptTurn>,
+    pub active: Option<TranscriptTurn>,
 }
 
 /// One page of committed history, newest-last (reference `HistoryPage`).
 #[derive(Debug, Clone)]
 pub struct HistoryPage {
-    pub turns: Vec<Turn>,
+    pub turns: Vec<TranscriptTurn>,
     /// Seq to pass as `before` for the next (older) page; `None` when done.
     pub next_cursor: Option<u64>,
 }
-
-/// State-change notifications (reference `SessionCellCallbacks`, shrunken to
-/// what has consumers this ticket — transcript/draft callbacks return with
-/// the live models in E2-11-4).
-#[derive(Default, Clone)]
-pub struct Callbacks {
-    pub on_state_changed: Option<Arc<dyn Fn() + Send + Sync>>,
-}
-
-/// Live feed of routed `session/update` events (raw for now; reduced in
-/// E2-11-4). Fired once per event, replay included.
-pub type UpdateSink = Arc<dyn Fn(&SessionUpdateEvent) + Send + Sync>;
 
 struct PermissionSlot {
     tx: oneshot::Sender<PermissionDecision>,
@@ -164,58 +151,62 @@ struct Inner {
     queued: VecDeque<QueuedPrompt>,
     pending: Vec<PendingPermission>,
     slots: HashMap<String, PermissionSlot>,
-    committed: Vec<Turn>,
-    active: Option<Turn>,
-    replay: Vec<SessionUpdateEvent>,
     replaying: bool,
     last_stop_reason: Option<String>,
     next_turn_index: u64,
     draft: Option<PromptDraft>,
     draft_rev: u64,
+    parser: TranscriptParser,
 }
 
-/// Owns one ACP conversation: state machine, prompt queue, turn quiescence,
-/// permission broker (ticket E2-11-3).
+/// Owns one ACP conversation: state machine, prompt queue, permission
+/// broker, transcript parser, raw log (tickets E2-11-3 / E2-11-4).
 pub struct SessionCell {
     conversation_id: String,
     acp_session_id: SessionId,
     client: Arc<AcpClient>,
-    callbacks: Callbacks,
-    update_sink: Option<UpdateSink>,
+    events: Option<Arc<dyn SessionEvents>>,
+    raw_log: Mutex<RawAcpLog>,
     inner: Mutex<Inner>,
 }
 
 impl SessionCell {
     /// Builds a cell in the [`Lifecycle::Starting`] phase. The manager calls
-    /// [`SessionCell::mark_ready`] (new session) or [`SessionCell::begin_replay`]
-    /// / [`SessionCell::end_replay`] (loaded session) once the adapter answered.
+    /// [`SessionCell::mark_ready`] (new session) or
+    /// [`SessionCell::begin_replay`] / [`SessionCell::end_replay`] (loaded
+    /// session) once the adapter answered.
     pub fn new(
         conversation_id: String,
+        provider_id: &str,
         acp_session_id: SessionId,
         client: Arc<AcpClient>,
-        callbacks: Callbacks,
-        update_sink: Option<UpdateSink>,
+        events: Option<Arc<dyn SessionEvents>>,
     ) -> Self {
+        let meta = RawAcpLogMeta {
+            conversation_id: conversation_id.clone(),
+            provider_id: provider_id.to_string(),
+            acp_session_id: acp_session_id.0.to_string(),
+            created_at: iso_now(),
+        };
+        let parser = TranscriptParser::new(conversation_id.clone());
         Self {
+            raw_log: Mutex::new(RawAcpLog::new(meta)),
             conversation_id,
             acp_session_id,
             client,
-            callbacks,
-            update_sink,
+            events,
             inner: Mutex::new(Inner {
                 lifecycle: Lifecycle::Starting,
                 active_turn_id: None,
                 queued: VecDeque::new(),
                 pending: Vec::new(),
                 slots: HashMap::new(),
-                committed: Vec::new(),
-                active: None,
-                replay: Vec::new(),
                 replaying: false,
                 last_stop_reason: None,
                 next_turn_index: 0,
                 draft: None,
                 draft_rev: 0,
+                parser,
             }),
         }
     }
@@ -249,7 +240,7 @@ impl SessionCell {
             }
             inner.lifecycle = Lifecycle::Ready;
         }
-        self.fire_state_changed();
+        self.fire_transcript_changed();
     }
 
     /// Loaded-session path: accept replayed history until `end_replay`.
@@ -265,20 +256,24 @@ impl SessionCell {
                 return;
             }
             inner.replaying = true;
+            inner.parser.begin_replay();
         }
-        self.fire_state_changed();
+        self.fire_transcript_changed();
     }
 
-    /// Ends the replay window and moves to [`Lifecycle::Ready`].
+    /// Ends the replay window and moves to [`Lifecycle::Ready`]. The
+    /// replayed history settles as committed turns (no stop reason exists
+    /// during replay — reference `endReplay`).
     pub fn end_replay(&self) {
         {
             let mut inner = self.inner.lock();
             inner.replaying = false;
+            inner.parser.end_replay(now_ms());
             if inner.lifecycle == Lifecycle::Starting {
                 inner.lifecycle = Lifecycle::Ready;
             }
         }
-        self.fire_state_changed();
+        self.fire_transcript_changed();
     }
 
     /// Process-death path: settle every pending permission as cancelled and
@@ -292,7 +287,7 @@ impl SessionCell {
         for (slot, _) in drained {
             let _ = slot.tx.send(PermissionDecision::Cancelled);
         }
-        self.fire_state_changed();
+        self.fire_transcript_changed();
     }
 
     // -- prompts -----------------------------------------------------------
@@ -309,7 +304,7 @@ impl SessionCell {
             can_begin_turn(&inner).then(|| begin_turn(&mut inner, text))
         };
         match started {
-            Some(_turn) => {
+            Some(_turn_id) => {
                 self.run_turns(text.to_string(), hidden_context.map(str::to_string))
                     .await?;
                 Ok(false)
@@ -340,7 +335,7 @@ impl SessionCell {
             }
             inner.queued.push_back(prompt.clone());
         }
-        self.fire_state_changed();
+        self.fire_transcript_changed();
         Ok(prompt)
     }
 
@@ -396,7 +391,7 @@ impl SessionCell {
                 }
             }
         }
-        self.fire_state_changed();
+        self.fire_transcript_changed();
         Ok(())
     }
 
@@ -409,7 +404,7 @@ impl SessionCell {
             }
             inner.queued.retain(|p| p.id != id);
         }
-        self.fire_state_changed();
+        self.fire_transcript_changed();
         Ok(())
     }
 
@@ -438,7 +433,7 @@ impl SessionCell {
                 }
             }
         }
-        self.fire_state_changed();
+        self.fire_transcript_changed();
         Ok(())
     }
 
@@ -456,7 +451,7 @@ impl SessionCell {
                 let _ = slot.tx.send(PermissionDecision::Cancelled);
             }
         }
-        self.fire_state_changed();
+        self.fire_transcript_changed();
         self.client.cancel(&self.acp_session_id).await
     }
 
@@ -465,22 +460,29 @@ impl SessionCell {
     /// Answers a surfaced permission request. Errors when `request_id` is
     /// not pending (reference `resolvePermission`).
     pub fn resolve_permission(&self, request_id: &str, option_id: &str) -> Result<(), Error> {
-        let slot = {
+        let (slot, session_id) = {
             let mut inner = self.inner.lock();
-            if !inner.pending.iter().any(|p| p.request_id == request_id) {
+            let Some(pending) = inner.pending.iter().find(|p| p.request_id == request_id) else {
                 return Err(Error::InvalidState(format!(
                     "no pending permission request with id '{request_id}'"
                 )));
-            }
+            };
+            let session_id = pending.session_id.clone();
             inner.pending.retain(|p| p.request_id != request_id);
-            inner.slots.remove(request_id).ok_or_else(|| {
+            let slot = inner.slots.remove(request_id).ok_or_else(|| {
                 Error::InvalidState(format!("no resolver for request id '{request_id}'"))
-            })?
+            })?;
+            (slot, session_id)
         };
+        self.raw_log.lock().record(RawAcpEvent::PermissionResolved {
+            session_id: session_id.0.to_string(),
+            request_id: request_id.to_string(),
+            option_id: option_id.to_string(),
+        });
         let _ = slot
             .tx
             .send(PermissionDecision::Selected(option_id.to_string()));
-        self.fire_state_changed();
+        self.fire_transcript_changed();
         Ok(())
     }
 
@@ -495,17 +497,33 @@ impl SessionCell {
     ) {
         let request_id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = oneshot::channel();
+        let pending = PendingPermission {
+            request_id: request_id.clone(),
+            session_id: request.request.session_id.clone(),
+            tool_call: request.request.tool_call.clone(),
+            options: request.request.options.clone(),
+        };
         {
             let mut inner = self.inner.lock();
-            inner.pending.push(PendingPermission {
-                request_id: request_id.clone(),
-                session_id: request.request.session_id.clone(),
-                tool_call: request.request.tool_call.clone(),
-                options: request.request.options.clone(),
-            });
-            inner.slots.insert(request_id, PermissionSlot { tx });
+            inner.pending.push(pending.clone());
+            inner
+                .slots
+                .insert(request_id.clone(), PermissionSlot { tx });
         }
-        self.fire_state_changed();
+        self.raw_log.lock().record(RawAcpEvent::PermissionRequest {
+            session_id: pending.session_id.0.to_string(),
+            request: serde_json::to_value(&request.request).unwrap_or_default(),
+        });
+        if let Some(events) = &self.events {
+            events.permission_requested(
+                &self.conversation_id,
+                &PermissionRequestedEvent {
+                    request_id: request_id.clone(),
+                    pending: pending.clone(),
+                },
+            );
+        }
+        self.fire_transcript_changed();
         tokio::spawn(async move {
             // An abandoned receiver means the cell was dropped without
             // draining — the spec requires the cancelled outcome then.
@@ -516,8 +534,8 @@ impl SessionCell {
 
     // -- modes / config ----------------------------------------------------
 
-    /// Switches the session mode. The adapter validates the id (mode/config
-    /// live-model tracking arrives with E2-11-4).
+    /// Switches the session mode. The adapter validates the id (the mode
+    /// live model tracks `current_mode_update` through the parser).
     pub async fn set_mode(&self, mode_id: &str) -> Result<(), Error> {
         self.client.set_mode(&self.acp_session_id, mode_id).await?;
         Ok(())
@@ -552,7 +570,7 @@ impl SessionCell {
                 rev,
             });
         }
-        self.fire_state_changed();
+        self.fire_transcript_changed();
         Ok(())
     }
 
@@ -563,30 +581,39 @@ impl SessionCell {
     // -- observation -------------------------------------------------------
 
     pub fn session_state(&self) -> SessionState {
-        let inner = self.inner.lock();
-        let working = matches!(inner.lifecycle, Lifecycle::Working | Lifecycle::Cancelling);
-        SessionState {
-            lifecycle: inner.lifecycle,
-            active_turn_id: inner.active_turn_id.clone(),
-            pending_permissions: inner.pending.clone(),
-            last_stop_reason: inner.last_stop_reason.clone(),
-            queued_prompts: inner.queued.iter().cloned().collect(),
-            is_generating: working,
-            can_submit: inner.lifecycle == Lifecycle::Ready && inner.active.is_none(),
-            can_cancel: working,
-        }
+        session_state_of(&self.inner.lock())
     }
 
     pub fn lifecycle(&self) -> Lifecycle {
         self.inner.lock().lifecycle
     }
 
+    /// Full live-model snapshot for `acp:transcript` emission (the UI
+    /// rehydrates from this; reference live-model pull).
+    pub fn live_models(&self) -> LiveModels {
+        let inner = self.inner.lock();
+        LiveModels {
+            session_state: session_state_of(&inner),
+            committed: inner.parser.history().to_vec(),
+            active_turn: inner.parser.active_turn().cloned(),
+            config: inner.parser.config().clone(),
+            usage: inner.parser.usage().cloned(),
+            title: inner.parser.title().map(str::to_string),
+            agents: inner.parser.agents().to_vec(),
+            plan: inner.parser.plan().cloned(),
+            draft: inner.draft.clone(),
+            queued_prompts: inner.queued.iter().cloned().collect(),
+            // Agent-managed terminals arrive with the Phase-4 terminal
+            // capability (client advertises none until then).
+            terminals: Vec::new(),
+        }
+    }
+
     pub fn history(&self) -> ChatHistory {
         let inner = self.inner.lock();
         ChatHistory {
-            committed: inner.committed.clone(),
-            active: inner.active.clone(),
-            replay: inner.replay.clone(),
+            committed: inner.parser.history().to_vec(),
+            active: inner.parser.active_turn().cloned(),
         }
     }
 
@@ -594,13 +621,14 @@ impl SessionCell {
     /// defaults to 50 at the call site).
     pub fn history_page(&self, before: Option<u64>, limit: usize) -> HistoryPage {
         let inner = self.inner.lock();
-        let turns: Vec<&Turn> = inner
-            .committed
+        let turns: Vec<&TranscriptTurn> = inner
+            .parser
+            .history()
             .iter()
             .filter(|t| before.is_none_or(|b| t.seq < b))
             .collect();
         let start = turns.len().saturating_sub(limit);
-        let page: Vec<Turn> = turns[start..].iter().map(|t| (*t).clone()).collect();
+        let page: Vec<TranscriptTurn> = turns[start..].iter().map(|t| (*t).clone()).collect();
         let next_cursor = if page.len() == limit {
             page.first().map(|t| t.seq)
         } else {
@@ -612,33 +640,29 @@ impl SessionCell {
         }
     }
 
+    /// Raw ACP traffic log for debugging (reference `exportRawLog`).
+    pub fn export_raw_log(&self) -> String {
+        self.raw_log.lock().export_json()
+    }
+
     // -- transport plumbing ------------------------------------------------
 
     /// Records one `session/update` (routed by the manager or collected by
-    /// the in-flight prompt). Replay-window events land in the replay
-    /// history; in-turn events on the active turn; anything else is dropped
-    /// with a warning (reference "dropping transcript update outside active
-    /// turn").
+    /// the in-flight prompt): folds it into the transcript parser, appends
+    /// it to the raw log, and fires `acp:update` + `acp:transcript`.
     pub fn record_update(&self, event: SessionUpdateEvent) {
         {
             let mut inner = self.inner.lock();
-            if inner.replaying {
-                inner.replay.push(event.clone());
-            } else if let Some(turn) = inner.active.as_mut() {
-                turn.updates.push(event.clone());
-            } else {
-                tracing::warn!(
-                    conversation = %self.conversation_id,
-                    phase = inner.lifecycle.as_str(),
-                    "SessionCell: dropping update outside active turn"
-                );
-                return;
-            }
+            inner.parser.push(&event.update, now_ms());
         }
-        if let Some(sink) = &self.update_sink {
-            sink(&event);
+        self.raw_log.lock().record(RawAcpEvent::SessionUpdate {
+            session_id: event.session_id.0.to_string(),
+            update: serde_json::to_value(&event.update).unwrap_or_default(),
+        });
+        if let Some(events) = &self.events {
+            events.update(&self.conversation_id, &event);
         }
-        self.fire_state_changed();
+        self.fire_transcript_changed();
     }
 
     // -- internals ---------------------------------------------------------
@@ -659,6 +683,10 @@ impl SessionCell {
             if let Some(hidden) = &hidden_context {
                 blocks.push(text_block(hidden)?);
             }
+            self.raw_log.lock().record(RawAcpEvent::Prompt {
+                session_id: self.acp_session_id.0.to_string(),
+                content: serde_json::to_value(&blocks).unwrap_or_default(),
+            });
             let result = self.client.prompt(&self.acp_session_id, blocks).await;
             match result {
                 Ok(turn_result) => {
@@ -667,6 +695,10 @@ impl SessionCell {
                     }
                     let cancelling = self.inner.lock().lifecycle == Lifecycle::Cancelling;
                     let reason = stop_reason_str(&turn_result.response.stop_reason);
+                    self.raw_log.lock().record(RawAcpEvent::PromptResult {
+                        session_id: self.acp_session_id.0.to_string(),
+                        stop_reason: Some(reason.to_string()),
+                    });
                     let outcome = if cancelling && reason == "cancelled" {
                         TurnOutcome::Cancelled
                     } else {
@@ -677,6 +709,10 @@ impl SessionCell {
                     self.settle_turn(outcome);
                 }
                 Err(error) => {
+                    self.raw_log.lock().record(RawAcpEvent::PromptResult {
+                        session_id: self.acp_session_id.0.to_string(),
+                        stop_reason: None,
+                    });
                     self.settle_turn(TurnOutcome::Errored);
                     return Err(error);
                 }
@@ -718,48 +754,57 @@ impl SessionCell {
                 TurnOutcome::Cancelled => Some("cancelled".into()),
                 TurnOutcome::Errored => None,
             };
-            if let Some(mut turn) = inner.active.take() {
-                turn.outcome = Some(outcome);
-                inner.committed.push(turn);
-            }
+            inner
+                .parser
+                .settle_turn(transcript_outcome(&outcome), now_ms());
             inner.active_turn_id = None;
             if matches!(inner.lifecycle, Lifecycle::Working | Lifecycle::Cancelling) {
                 inner.lifecycle = Lifecycle::Ready;
             }
         }
-        self.fire_state_changed();
+        self.fire_transcript_changed();
     }
 
-    fn fire_state_changed(&self) {
-        if let Some(cb) = &self.callbacks.on_state_changed {
-            cb();
-        }
+    fn fire_transcript_changed(&self) {
+        let Some(events) = &self.events else {
+            return;
+        };
+        let models = self.live_models();
+        events.transcript_changed(&self.conversation_id, &models);
     }
 }
 
 /// Turn slots open when the cell is idle and not replaying (caller holds the
 /// inner lock).
 fn can_begin_turn(inner: &Inner) -> bool {
-    inner.lifecycle == Lifecycle::Ready && inner.active.is_none() && !inner.replaying
+    inner.lifecycle == Lifecycle::Ready && inner.active_turn_id.is_none() && !inner.replaying
 }
 
 /// Creates the turn bookkeeping for a prompt about to send (caller holds the
 /// inner lock — this is the atomicity point: exactly one caller wins a turn
-/// slot).
-fn begin_turn(inner: &mut Inner, prompt_text: &str) -> Turn {
+/// slot). Injects the synthetic user message into the transcript first
+/// (reference `cell.ts` pushEvent of the user message at prompt time).
+fn begin_turn(inner: &mut Inner, prompt_text: &str) -> String {
     let seq = inner.next_turn_index;
     inner.next_turn_index += 1;
-    let turn = Turn {
-        seq,
-        id: format!("turn-{seq}"),
-        prompt_text: prompt_text.to_string(),
-        outcome: None,
-        updates: Vec::new(),
-    };
-    inner.active_turn_id = Some(turn.id.clone());
-    inner.active = Some(turn.clone());
+    if !prompt_text.is_empty() {
+        inner.parser.push_event(
+            NormalizedEvent::Message {
+                role: MessageRole::User,
+                message_id: Some(format!("{}-{seq}-user", inner.parser.conversation_id())),
+                text: prompt_text.to_string(),
+            },
+            now_ms(),
+        );
+    }
+    let turn_id = inner
+        .parser
+        .active_turn()
+        .map(|t| t.id.clone())
+        .unwrap_or_default();
+    inner.active_turn_id = Some(turn_id.clone());
     inner.lifecycle = Lifecycle::Working;
-    turn
+    turn_id
 }
 
 /// Removes every pending permission and returns their resolver slots.
@@ -774,6 +819,47 @@ fn drain_pending(inner: &mut Inner) -> Vec<(PermissionSlot, String)> {
                 .map(|slot| (slot, p.request_id))
         })
         .collect()
+}
+
+fn session_state_of(inner: &Inner) -> SessionState {
+    let working = matches!(inner.lifecycle, Lifecycle::Working | Lifecycle::Cancelling);
+    SessionState {
+        lifecycle: inner.lifecycle,
+        active_turn_id: inner.active_turn_id.clone(),
+        pending_permissions: inner.pending.clone(),
+        last_stop_reason: inner.last_stop_reason.clone(),
+        queued_prompts: inner.queued.iter().cloned().collect(),
+        is_generating: working,
+        can_submit: inner.lifecycle == Lifecycle::Ready
+            && inner.active_turn_id.is_none()
+            && !inner.replaying,
+        can_cancel: working,
+    }
+}
+
+/// Control-plane outcome → transcript outcome (reference
+/// `outcomeFromStopReason` + the settleTurn mapping).
+fn transcript_outcome(outcome: &TurnOutcome) -> TranscriptTurnOutcome {
+    match outcome {
+        TurnOutcome::Stopped { reason } => TranscriptTurnOutcome::Done {
+            reason: parse_stop_reason(reason),
+        },
+        TurnOutcome::Cancelled => TranscriptTurnOutcome::Cancelled { reason: None },
+        TurnOutcome::Errored => TranscriptTurnOutcome::Error {
+            reason: Some(ErrorTurnReason::PromptFailed),
+        },
+    }
+}
+
+fn parse_stop_reason(reason: &str) -> Option<DoneTurnReason> {
+    match reason {
+        "end_turn" => Some(DoneTurnReason::EndTurn),
+        "max_tokens" => Some(DoneTurnReason::MaxTokens),
+        "max_turn_requests" => Some(DoneTurnReason::MaxTurnRequests),
+        "refusal" => Some(DoneTurnReason::Refusal),
+        "cancelled" => Some(DoneTurnReason::Cancelled),
+        _ => None,
+    }
 }
 
 fn text_block(text: &str) -> Result<ContentBlock, Error> {

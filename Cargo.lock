@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "agent-client-protocol-schema",
  "parking_lot",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.19",
@@ -20,10 +21,12 @@ dependencies = [
 name = "ade-app"
 version = "0.1.0"
 dependencies = [
+ "ade-acp",
  "ade-core",
  "ade-git",
  "ade-providers",
  "ade-terminal",
+ "agent-client-protocol-schema",
  "base64 0.22.1",
  "parking_lot",
  "rusqlite",

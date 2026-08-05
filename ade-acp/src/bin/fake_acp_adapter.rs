@@ -112,6 +112,94 @@ fn handle_prompt(
         return;
     }
 
+    if text.contains("rich") {
+        // E2-11-4 acceptance: one interleaved sequence exercising every
+        // reducer slice — thought, message, tool_call lifecycle, plan,
+        // config options, usage, title.
+        session_update(
+            out,
+            session_id,
+            json!({
+                "sessionUpdate": "agent_thought_chunk",
+                "content": { "type": "text", "text": "Let me think. " },
+            }),
+        );
+        agent_chunk(out, session_id, "Starting the work. ");
+        session_update(
+            out,
+            session_id,
+            json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "call_rich_1",
+                "title": "cargo test",
+                "kind": "execute",
+                "status": "in_progress",
+            }),
+        );
+        session_update(
+            out,
+            session_id,
+            json!({
+                "sessionUpdate": "plan",
+                "entries": [
+                    { "content": "write code", "priority": "high", "status": "completed" },
+                    { "content": "run tests", "priority": "high", "status": "in_progress" },
+                ],
+            }),
+        );
+        session_update(
+            out,
+            session_id,
+            json!({
+                "sessionUpdate": "config_option_update",
+                "configOptions": [{
+                    "id": "model",
+                    "name": "Model",
+                    "category": "model",
+                    "type": "select",
+                    "currentValue": "fake-1",
+                    "options": [
+                        { "value": "fake-1", "name": "Fake 1" },
+                        { "value": "fake-2", "name": "Fake 2" },
+                    ],
+                }],
+            }),
+        );
+        session_update(
+            out,
+            session_id,
+            json!({
+                "sessionUpdate": "usage_update",
+                "used": 1234,
+                "size": 200000,
+            }),
+        );
+        session_update(
+            out,
+            session_id,
+            json!({
+                "sessionUpdate": "session_info_update",
+                "title": "Rich turn",
+            }),
+        );
+        session_update(
+            out,
+            session_id,
+            json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call_rich_1",
+                "status": "completed",
+                "content": [{
+                    "type": "content",
+                    "content": { "type": "text", "text": "all tests passed" },
+                }],
+            }),
+        );
+        agent_chunk(out, session_id, "All done.");
+        reply(out, request, json!({ "stopReason": "end_turn" }));
+        return;
+    }
+
     if text.contains("emitgarbage") {
         let mut stdout = out.lock();
         stdout.write_all(b"this is not json\n").unwrap();
