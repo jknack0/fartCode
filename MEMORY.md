@@ -6,6 +6,17 @@ one exists).
 
 ## Current state (2026-08-05, selection → agent)
 
+- **ACP adapter resolution (7a0b16e):** `default_adapter_resolver`'s
+  `<id>-acp` format names binaries that don't exist in the wild —
+  claude's real adapter is `claude-agent-acp` from
+  `@agentclientprotocol/claude-agent-acp` (installed globally on drfart's
+  machine, v0.65.0). Resolver now has a per-provider table with npm
+  install hints in the error; the table's long-term home is the provider
+  descriptor's adapter metadata (Phase 2 plugin machinery). Claude spawn
+  sets CLAUDE_CODE_EXECUTABLE to the host binary (reference behavior,
+  avoids the SDK's ~50MB auto-download). Codex's ACP is a SUBCOMMAND
+  (`codex acp`, not a binary) — the path resolver can't express
+  command+args yet; known limitation when codex ACP gets exercised.
 - **Diff selection → agent prompt (de6c9eb, user-directed reshape of #50's
   popover):** select text in ANY diff editor (split a/b, unified, single-
   doc) → floating "Ask agent" button at selection end → popover textarea
