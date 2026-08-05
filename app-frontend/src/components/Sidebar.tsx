@@ -25,6 +25,7 @@ export default function Sidebar() {
   useUi((s) => s.bindingsVersion);
   const setProjectSettingsOpen = useUi((s) => s.setProjectSettingsOpen);
   const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
+  const setPaletteOpen = useUi((s) => s.setPaletteOpen);
   const setDeleteProjectTarget = useUi((s) => s.setDeleteProjectTarget);
   const setDeleteTaskTarget = useUi((s) => s.setDeleteTaskTarget);
 
@@ -39,8 +40,17 @@ export default function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
-        <span className="brand">ade</span>
+        <span className="brand">
+          a<span className="brand-mark" aria-hidden="true" />de
+        </span>
         <div className="header-actions">
+          <button
+            className="palette-chip"
+            title="Command palette"
+            onClick={() => setPaletteOpen(true)}
+          >
+            {hint("open-command-palette") || "⌘K"}
+          </button>
           <button
             title="Project settings"
             onClick={() => setProjectSettingsOpen(true)}
@@ -179,7 +189,7 @@ function TaskRow({
     >
       <span className={`status-dot status-${task.status}`} />
       <span className="task-name">{task.name}</span>
-      {task.isPinned && <span className="pin">📌</span>}
+      {task.isPinned && <span className="pin">◆</span>}
       <button
         className="delete-task-btn"
         title={`Delete task (${hint("delete-task") || "⌘⌫"})`}

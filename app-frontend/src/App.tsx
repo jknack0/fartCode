@@ -9,7 +9,7 @@ import Onboarding from "./components/Onboarding";
 import ResourceMonitor from "./components/ResourceMonitor";
 import Sidebar from "./components/Sidebar";
 import TaskView from "./components/TaskView";
-import { useCommands } from "./lib/useCommands";
+import { useCommands, hint } from "./lib/useCommands";
 import { useSidebar, wireSidebarEvents } from "./store/sidebar";
 import { wireTabsEvents } from "./store/tabs";
 
@@ -49,9 +49,13 @@ function App() {
           </div>
         ) : (
           <div className="placeholder">
-            <h1>ade</h1>
+            <h1>
+              a<span className="brand-mark" aria-hidden="true" />de
+            </h1>
             <p className="muted">
-              Add a project with the + button to get started.
+              Add a project to get started — press{" "}
+              <span className="kbd-hint">{hint("new-project") || "⌘⇧N"}</span>{" "}
+              or the + button.
             </p>
           </div>
         )}

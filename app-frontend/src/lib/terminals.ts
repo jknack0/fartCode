@@ -38,15 +38,15 @@ export function getTerminalSession(terminalId: string): TermSession {
   const term = new Terminal({
     cursorBlink: true,
     // Nerd Fonts first so Powerline/nerd glyphs (, , icons) render;
-    // machines without them fall back to the system mono stack.
+    // then the bundled JetBrains Mono; last resort the system mono stack.
     fontFamily:
-      '"JetBrainsMono Nerd Font Mono", "MesloLGS Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
+      '"JetBrainsMono Nerd Font Mono", "MesloLGS Nerd Font Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
     fontSize: 12,
     theme: {
-      background: "#0d1424",
-      foreground: "#e5e7eb",
-      cursor: "#d97706",
-      selectionBackground: "rgba(217, 119, 6, 0.3)",
+      background: "#0b0d10",
+      foreground: "#e6e9ee",
+      cursor: "#f0a02c",
+      selectionBackground: "rgba(240, 160, 44, 0.28)",
     },
   });
   const fit = new FitAddon();

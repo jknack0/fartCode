@@ -30,16 +30,20 @@ export interface TabRenderProps {
 
 export interface TabKindDef {
   label: string;
+  /** Short glyph shown in the tab before the title (mono voice). */
+  glyph: string;
   render: (props: TabRenderProps) => ReactNode;
 }
 
 export const TAB_KINDS: Record<TabKind, TabKindDef> = {
   conversation: {
     label: "Conversation",
+    glyph: "◈",
     render: ({ taskId }) => <ConversationView taskId={taskId} />,
   },
   terminal: {
     label: "Terminal",
+    glyph: "$",
     // The tab id IS the PTY id (minted by terminal_open); on restart the
     // tabs store respawns the PTY and rewrites the tab id.
     render: ({ tab }) => <TerminalView terminalId={tab.id} />,

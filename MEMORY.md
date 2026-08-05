@@ -6,6 +6,15 @@ one exists).
 
 ## Current state (2026-08-04)
 
+- **"Signal" UI design system (2026-08-04):** full restyle of `app-frontend`. Tokens live in `styles.css` `:root`
+  (`--bg0..3`, `--line`, `--text/--muted/--faint`, `--amber` reserved for the
+  ONE active signal: selected task row bar, focused pane's active tab,
+  primary actions). Type: Space Grotesk = UI voice, JetBrains Mono = data
+  voice (tasks, chords, terminals, meters) — bundled via `@fontsource/*`
+  (imported in `main.tsx`; no CDN, Tauri stays offline-safe). Tab kinds carry
+  a `glyph` in `lib/tab-registry.tsx`. xterm theme re-tinted in
+  `lib/terminals.ts` (bg `#0b0d10`, cursor amber). Old `--navy*` tokens are
+  gone — don't reintroduce.
 - **Work tracking is GitHub issues only** (`jknack0/ade`) — `tickets-phase0.md`
   was retired 2026-08-04; its Appendix is preserved as `phase0-checklists.md`.
   New work = new issue (`phase:0`/`phase:2` + `size:*` labels, milestone "Phase 0").

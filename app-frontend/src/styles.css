@@ -1,23 +1,41 @@
-:root {
-  --navy: #101828;
-  --navy-2: #182236;
-  --amber: #d97706;
-  --amber-dim: #b45309;
-  --text: #e5e7eb;
-  --muted: #9ca3af;
-  --line: #26324a;
-  --danger: #dc2626;
+/* ade — "Signal" design system.
+ *
+ * Idea: a dark control room where ONE element at a time carries the amber
+ * signal (active tab, running task, focused pane's affordances). Everything
+ * else is quiet neutral slate. Two voices: Space Grotesk for UI, JetBrains
+ * Mono for anything the machine says (paths, tasks, chords, terminals).
+ */
 
-  /* conversation / task-layout */
-  --border: #26324a;
-  --bg-sidebar: #182236;
-  --fg-muted: #9ca3af;
-  --fg: #e5e7eb;
-  --bg-hover: #1e2d4a;
-  --bg-active: #243454;
-  --accent: #d97706;
-  --bg-badge: #26324a;
-  --bg-input: #101828;
+:root {
+  /* surfaces, darkest → most raised */
+  --bg0: #0b0d10; /* app base: terminal, editor, content */
+  --bg1: #10141a; /* chrome: sidebar, tab bar, composer */
+  --bg2: #161b22; /* raised: tabs, cards, selected rows */
+  --bg3: #1c232c; /* hover */
+  --line: #212a35;
+  --line-soft: #1a212b;
+
+  --text: #e6e9ee;
+  --muted: #8b95a3;
+  --faint: #5b6572;
+
+  --amber: #f0a02c;
+  --amber-hot: #f5b254;
+  --amber-ink: #1a1206;
+  --amber-soft: rgba(240, 160, 44, 0.12);
+  --amber-glow: rgba(240, 160, 44, 0.55);
+
+  --green: #3fb96b;
+  --red: #e5484d;
+  --blue: #7cc7ff;
+
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  --r1: 4px;  /* chips, chords */
+  --r2: 6px;  /* inputs, small buttons */
+  --r3: 8px;  /* buttons, composer, pills */
+  --r4: 10px; /* modals, panels */
 }
 
 * {
@@ -32,10 +50,45 @@ body,
 }
 
 body {
-  background: var(--navy);
+  background: var(--bg0);
   color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--sans);
   font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(240, 160, 44, 0.28);
+}
+
+/* Keyboard focus: one visible amber ring, everywhere except xterm's hidden
+ * key sink (its focus ring would float over the terminal). */
+:focus-visible {
+  outline: 2px solid rgba(240, 160, 44, 0.65);
+  outline-offset: 1px;
+}
+.xterm-helper-textarea:focus-visible {
+  outline: none;
+}
+
+/* Thin scrollbars that stay out of the way. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--bg3);
+  border: 3px solid transparent;
+  border-radius: 6px;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--faint);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .shell {
@@ -46,9 +99,9 @@ body {
 /* Sidebar ----------------------------------------------------------------- */
 
 .sidebar {
-  width: 240px;
-  min-width: 240px;
-  background: var(--navy-2);
+  width: 256px;
+  min-width: 256px;
+  background: var(--bg1);
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -59,33 +112,82 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--line);
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--amber);
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+/* the signature: a terminal block cursor living inside the wordmark */
+.brand-mark {
+  display: inline-block;
+  width: 7px;
+  height: 12px;
+  margin: 0 1.5px;
+  border-radius: 1px;
+  background: var(--amber);
+  animation: brand-blink 1.2s steps(1) infinite;
+}
+@keyframes brand-blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .brand-mark {
+    animation: none;
+  }
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .sidebar-header button {
   background: none;
   border: 1px solid var(--line);
-  color: var(--text);
-  border-radius: 4px;
-  width: 22px;
-  height: 22px;
+  color: var(--muted);
+  border-radius: var(--r2);
+  min-width: 24px;
+  height: 24px;
   cursor: pointer;
   line-height: 1;
+  font-size: 13px;
+}
+.sidebar-header button:hover:not(:disabled) {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+.sidebar-header button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.sidebar-header .palette-chip {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  padding: 0 6px;
 }
 
 .sidebar-section h3 {
-  margin: 10px 12px 4px;
+  margin: 18px 16px 6px;
+  font-family: var(--mono);
   font-size: 10px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
+  letter-spacing: 0.14em;
+  color: var(--faint);
 }
 
 .sidebar ul {
@@ -94,15 +196,17 @@ body {
   padding: 0;
 }
 
-.sidebar li { position: relative; }
+.sidebar li {
+  position: relative;
+}
 
 /* ---- project row ---- */
 
 .project-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 12px 5px 8px;
+  gap: 7px;
+  padding: 7px 16px 7px 12px;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -110,27 +214,39 @@ body {
   font-size: 13px;
 }
 
-.project-row:hover { background: rgba(217, 119, 6, 0.08); }
-.project-row.selected { background: rgba(217, 119, 6, 0.14); }
+.project-row:hover {
+  background: var(--bg3);
+}
+.project-row.selected {
+  background: var(--bg2);
+}
 
 .project-row .chevron {
   background: none;
   border: none;
-  color: var(--muted);
+  color: var(--faint);
   cursor: pointer;
-  font-size: 10px;
-  width: 16px;
+  font-size: 9px;
+  width: 14px;
   padding: 0;
   flex-shrink: 0;
+  text-align: center;
+}
+.project-row .chevron:hover {
+  color: var(--text);
 }
 
-.project-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.project-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .add-task-btn {
   background: none;
   border: 1px solid var(--line);
   color: var(--muted);
-  border-radius: 4px;
+  border-radius: var(--r1);
   width: 20px;
   height: 20px;
   cursor: pointer;
@@ -140,29 +256,54 @@ body {
   opacity: 0;
   flex-shrink: 0;
 }
-.project-row:hover .add-task-btn { opacity: 1; }
+.add-task-btn:hover {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+.project-row:hover .add-task-btn {
+  opacity: 1;
+}
 
 /* ---- task rows (indented children) ---- */
 
 .project-row + ul {
   /* left-border tree line */
-  margin-left: 10px;
-  border-left: 1px solid var(--line);
+  margin-left: 18px;
+  border-left: 1px solid var(--line-soft);
+  padding: 2px 0;
 }
 
 .task-row {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 12px 3px 16px;
+  gap: 7px;
+  padding: 6px 14px 6px 16px;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
+  font-family: var(--mono);
   font-size: 12px;
+  color: var(--muted);
 }
 
-.task-row:hover { background: rgba(217, 119, 6, 0.06); }
-.task-row.selected { background: rgba(217, 119, 6, 0.12); }
+.task-row:hover {
+  background: var(--bg3);
+  color: var(--text);
+}
+.task-row.selected {
+  background: var(--bg2);
+  color: var(--text);
+}
+/* the amber signal: exactly one active row, bar sits on the tree line */
+.task-row.selected::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--amber);
+}
 
 .task-row .task-name {
   flex: 1;
@@ -171,30 +312,31 @@ body {
 }
 
 .status-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: var(--muted);
+  background: var(--faint);
   flex-shrink: 0;
 }
 
 .status-dot.status-in_progress {
   background: var(--amber);
+  box-shadow: 0 0 6px var(--amber-glow);
 }
 .status-dot.status-todo {
-  background: #6b7280;
+  background: var(--faint);
 }
 .status-dot.status-done,
 .status-dot.status-review {
-  background: #16a34a;
+  background: var(--green);
 }
 .status-dot.status-cancelled {
-  background: var(--danger);
+  background: var(--red);
 }
 
 .pin {
-  font-size: 10px;
-  opacity: 0.8;
+  font-size: 9px;
+  color: var(--amber);
 }
 
 .delete-task-btn {
@@ -208,12 +350,16 @@ body {
   opacity: 0;
   flex-shrink: 0;
 }
-.task-row:hover .delete-task-btn { opacity: 1; }
-.delete-task-btn:hover { color: var(--danger); }
+.task-row:hover .delete-task-btn {
+  opacity: 1;
+}
+.delete-task-btn:hover {
+  color: var(--red);
+}
 
 .empty {
-  padding: 4px 12px;
-  color: var(--muted);
+  padding: 6px 16px;
+  color: var(--faint);
   font-style: italic;
   font-size: 11px;
 }
@@ -245,8 +391,29 @@ body {
 }
 
 .placeholder h1 {
-  color: var(--amber);
-  margin-bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  margin: 0 0 10px;
+}
+
+.placeholder p {
+  line-height: 1.6;
+}
+
+.kbd-hint {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: var(--r1);
+  padding: 2px 5px;
+  margin: 0 2px;
+  vertical-align: 1px;
 }
 
 .muted {
@@ -254,7 +421,43 @@ body {
 }
 
 .error {
-  color: #fca5a5;
+  color: #f08880;
+  padding: 4px 12px;
+  margin: 0;
+  font-size: 12px;
+}
+
+/* Buttons ------------------------------------------------------------------ */
+
+button.primary {
+  background: var(--amber);
+  border: none;
+  color: var(--amber-ink);
+  font-weight: 700;
+  font-family: var(--sans);
+  border-radius: var(--r2);
+  padding: 7px 14px;
+  cursor: pointer;
+}
+button.primary:hover:not(:disabled) {
+  background: var(--amber-hot);
+}
+button.primary:disabled {
+  background: var(--bg3);
+  color: var(--faint);
+  cursor: default;
+}
+
+button.danger {
+  background: var(--red);
+  border: none;
+  color: white;
+  border-radius: var(--r2);
+  padding: 7px 14px;
+  cursor: pointer;
+}
+button.danger:hover {
+  filter: brightness(1.1);
 }
 
 /* Modals ------------------------------------------------------------------ */
@@ -262,7 +465,8 @@ body {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(4, 6, 9, 0.62);
+  backdrop-filter: blur(3px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -270,63 +474,82 @@ body {
 }
 
 .modal {
-  background: var(--navy-2);
+  background: var(--bg1);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 18px;
-  width: 380px;
+  border-radius: var(--r4);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  padding: 22px;
+  width: 400px;
+}
+
+.modal.onboarding {
+  width: 460px;
 }
 
 .modal h2 {
   margin: 0 0 6px;
   font-size: 15px;
-  color: var(--amber);
+  font-weight: 600;
+  color: var(--text);
 }
 
 .modal input {
   width: 100%;
   margin: 10px 0;
-  padding: 7px 9px;
-  background: var(--navy);
+  padding: 8px 10px;
+  background: var(--bg0);
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: var(--r2);
   color: var(--text);
+  font: inherit;
+}
+.modal input:focus {
+  outline: none;
+  border-color: var(--amber);
+}
+
+.path-picker {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.path-picker input {
+  flex: 1;
+}
+.path-picker button {
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: var(--r2);
+  padding: 8px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.path-picker button:hover {
+  border-color: var(--amber);
+  color: var(--amber);
 }
 
 .modal-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 12px;
-}
-
-button.primary {
-  background: var(--amber);
-  border: none;
-  color: #1a1206;
-  font-weight: 600;
-  border-radius: 4px;
-  padding: 6px 12px;
-  cursor: pointer;
-}
-
-button.danger {
-  background: var(--danger);
-  border: none;
-  color: white;
-  border-radius: 4px;
-  padding: 6px 12px;
-  cursor: pointer;
+  margin-top: 14px;
 }
 
 .modal-actions button:not(.primary):not(.danger) {
   background: none;
   border: 1px solid var(--line);
   color: var(--text);
-  border-radius: 4px;
-  padding: 6px 12px;
+  border-radius: var(--r2);
+  padding: 7px 14px;
   cursor: pointer;
 }
+.modal-actions button:not(.primary):not(.danger):hover {
+  border-color: var(--faint);
+}
+
+/* Settings ------------------------------------------------------------------ */
 
 .settings-modal {
   width: 520px;
@@ -335,13 +558,15 @@ button.danger {
 }
 
 .settings-modal h3 {
-  margin: 16px 0 6px;
-  font-size: 11px;
+  margin: 18px 0 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 4px;
+  letter-spacing: 0.14em;
+  color: var(--faint);
+  border-bottom: 1px solid var(--line-soft);
+  padding-bottom: 5px;
 }
 
 .settings-modal label {
@@ -363,17 +588,24 @@ button.danger {
 .settings-modal textarea {
   width: 100%;
   margin-top: 4px;
-  padding: 6px 8px;
-  background: var(--navy);
+  padding: 7px 9px;
+  background: var(--bg0);
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: var(--r2);
   color: var(--text);
   font: inherit;
+}
+.settings-modal input:focus,
+.settings-modal select:focus,
+.settings-modal textarea:focus {
+  outline: none;
+  border-color: var(--amber);
 }
 
 .settings-modal label.check input {
   width: auto;
   margin: 0;
+  accent-color: var(--amber);
 }
 
 .settings-modal .row {
@@ -387,46 +619,58 @@ button.danger {
 
 .hint {
   font-size: 11px;
-  color: var(--muted);
+  color: var(--faint);
   margin: -4px 0 8px;
 }
 
 .notice {
-  color: #86efac;
+  color: var(--green);
   font-size: 12px;
 }
 
-.header-actions {
-  display: flex;
-  gap: 6px;
-}
+/* Command palette ----------------------------------------------------------- */
 
 .palette {
-  background: var(--navy-2);
+  background: var(--bg1);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  width: 480px;
+  border-radius: var(--r4);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+  width: 520px;
   max-height: 60vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
+.palette-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--faint);
+  padding: 10px 14px 0;
+}
+
 .palette input {
   width: 100%;
-  padding: 10px 12px;
-  background: var(--navy);
+  padding: 12px 16px;
+  background: transparent;
   border: none;
   border-bottom: 1px solid var(--line);
   color: var(--text);
+  font-family: var(--sans);
   font-size: 14px;
   outline: none;
+}
+.palette input::placeholder {
+  color: var(--faint);
 }
 
 .palette-results {
   list-style: none;
   margin: 0;
-  padding: 4px 0;
+  padding: 8px;
   overflow-y: auto;
 }
 
@@ -434,29 +678,36 @@ button.danger {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  padding: 7px 12px;
+  padding: 8px 12px;
   cursor: pointer;
+  border-radius: var(--r2);
 }
 
 .palette-results li.selected {
-  background: rgba(217, 119, 6, 0.18);
+  background: var(--bg2);
+  box-shadow: inset 2px 0 0 var(--amber);
 }
 
 .palette-hint {
-  color: var(--muted);
-  font-size: 11px;
-  padding: 8px 12px;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line-soft);
 }
+
+/* Resource monitor ------------------------------------------------------------ */
 
 .resource-panel {
   position: fixed;
-  bottom: 12px;
-  right: 12px;
-  width: 260px;
-  background: var(--navy-2);
+  bottom: 14px;
+  right: 14px;
+  width: 264px;
+  background: var(--bg1);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px 12px;
+  border-radius: var(--r4);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  padding: 12px 14px;
   z-index: 20;
 }
 
@@ -464,10 +715,12 @@ button.danger {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 11px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--amber);
+  letter-spacing: 0.14em;
+  color: var(--faint);
   margin-bottom: 8px;
 }
 
@@ -476,6 +729,13 @@ button.danger {
   border: none;
   color: var(--muted);
   cursor: pointer;
+}
+.resource-header button:hover {
+  color: var(--amber);
+}
+
+.resource-body {
+  font-family: var(--mono);
 }
 
 .meter {
@@ -487,31 +747,34 @@ button.danger {
 
 .meter-label {
   width: 32px;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--faint);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .meter-bar {
   flex: 1;
-  height: 8px;
-  background: var(--navy);
-  border-radius: 4px;
+  height: 6px;
+  background: var(--bg0);
+  border-radius: 3px;
   overflow: hidden;
 }
 
 .meter-fill {
   height: 100%;
   background: var(--amber);
+  border-radius: 3px;
 }
 
 .meter-value {
   width: 110px;
   text-align: right;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--muted);
 }
 
-/* -- E2-08 conversation layout ------------------------------------------- */
+/* -- conversation layout ----------------------------------------------------- */
 
 .task-layout {
   display: flex;
@@ -519,10 +782,10 @@ button.danger {
   gap: 0;
 }
 
-/* terminal pane placeholder */
+/* agent output pane inside a conversation */
 .terminal-pane {
   flex: 1;
-  background: #111;
+  background: var(--bg0);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -530,8 +793,9 @@ button.danger {
 }
 
 .terminal-placeholder {
-  color: #555;
-  font-size: 14px;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 12px;
 }
 
 /* context pills */
@@ -539,19 +803,22 @@ button.danger {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 6px 12px;
-  border-top: 1px solid var(--border);
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--bg1);
 }
 
 .context-pill {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: var(--bg-badge);
-  color: var(--fg-muted);
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: var(--r1);
+  border: 1px solid var(--line-soft);
+  background: var(--bg2);
+  color: var(--muted);
 }
 
 .context-pill button {
@@ -559,40 +826,53 @@ button.danger {
   border: none;
   font-size: 12px;
   cursor: pointer;
-  color: var(--fg-muted);
+  color: var(--faint);
+  padding: 0;
+}
+.context-pill button:hover {
+  color: var(--red);
 }
 
 /* message input */
 .message-input-bar {
   display: flex;
-  gap: 8px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--border);
+  gap: 10px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--bg1);
 }
 
 .message-input-bar textarea {
   flex: 1;
   resize: none;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r3);
   font: inherit;
   font-size: 13px;
-  background: var(--bg-input);
-  color: var(--fg);
+  background: var(--bg0);
+  color: var(--text);
+}
+.message-input-bar textarea:focus {
+  outline: none;
+  border-color: var(--amber);
+}
+.message-input-bar textarea::placeholder {
+  color: var(--faint);
 }
 
 .message-input-bar button {
   align-self: flex-end;
 }
 
-/* -- E2-10 task tabs + panes ---------------------------------------------- */
+/* -- task tabs + panes -------------------------------------------------------- */
 
 .conversation-view {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  background: var(--bg0);
 }
 
 .task-view {
@@ -621,39 +901,65 @@ button.danger {
 
 .tab-bar {
   display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 4px 6px;
-  background: var(--navy-2);
+  align-items: flex-end;
+  gap: 3px;
+  padding: 8px 10px 0;
+  background: var(--bg1);
   border-bottom: 1px solid var(--line);
-  min-height: 30px;
-}
-
-.tab-bar.active {
-  border-bottom-color: var(--amber-dim);
+  min-height: 37px;
 }
 
 .tab {
   display: flex;
   align-items: center;
-  gap: 6px;
-  max-width: 200px;
-  padding: 3px 6px 3px 10px;
-  border-radius: 4px;
+  gap: 8px;
+  max-width: 220px;
+  padding: 8px 10px 8px 12px;
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-bottom: none;
+  border-radius: 7px 7px 0 0;
   font-size: 12px;
   color: var(--muted);
   cursor: pointer;
   user-select: none;
+  position: relative;
+  top: 1px;
 }
 
 .tab:hover {
-  background: var(--bg-hover);
-  color: var(--fg);
+  color: var(--text);
 }
 
+/* active tab merges with the pane below and carries the amber signal bar */
 .tab.active {
-  background: var(--bg-active);
-  color: var(--fg);
+  background: var(--bg0);
+  color: var(--text);
+  border-bottom: 1px solid var(--bg0);
+}
+.tab.active::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--faint);
+}
+/* the signal fires only in the pane that owns keyboard focus */
+.tab-bar.active .tab.active::before {
+  background: var(--amber);
+}
+
+.tab-kind {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  flex-shrink: 0;
+}
+.tab-bar.active .tab.active .tab-kind {
+  color: var(--amber);
 }
 
 .tab-title {
@@ -665,7 +971,7 @@ button.danger {
 .tab-close {
   background: none;
   border: none;
-  color: var(--muted);
+  color: var(--faint);
   font-size: 13px;
   line-height: 1;
   padding: 0 3px;
@@ -674,16 +980,17 @@ button.danger {
 }
 
 .tab-close:hover {
-  color: var(--danger);
-  background: rgba(220, 38, 38, 0.15);
+  color: var(--red);
+  background: rgba(229, 72, 77, 0.14);
 }
 
 .tab-add {
   margin-left: 4px;
+  align-self: center;
   background: none;
   border: 1px solid var(--line);
   color: var(--muted);
-  border-radius: 4px;
+  border-radius: var(--r1);
   width: 20px;
   height: 20px;
   line-height: 1;
@@ -692,7 +999,7 @@ button.danger {
 
 .tab-add:hover {
   color: var(--amber);
-  border-color: var(--amber-dim);
+  border-color: var(--amber);
 }
 
 .pane-content {
@@ -700,9 +1007,10 @@ button.danger {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  background: var(--bg0);
 }
 
-/* -- E14-01 shortcuts settings ------------------------------------------- */
+/* -- shortcuts settings --------------------------------------------------------- */
 
 .shortcuts-settings {
   width: 620px;
@@ -717,17 +1025,19 @@ button.danger {
 
 .shortcut-table th {
   text-align: left;
-  color: var(--muted);
-  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.14em;
   padding: 6px 8px;
   border-bottom: 1px solid var(--line);
 }
 
 .shortcut-table td {
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--line);
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--line-soft);
 }
 
 .shortcut-label {
@@ -741,48 +1051,52 @@ button.danger {
   height: 6px;
   border-radius: 50%;
   background: var(--amber);
+  box-shadow: 0 0 5px var(--amber-glow);
   display: inline-block;
 }
 
 .shortcut-scope {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 10px;
   white-space: nowrap;
 }
 
 .shortcut-chord {
-  background: var(--navy);
+  background: var(--bg0);
   border: 1px solid var(--line);
   color: var(--text);
-  border-radius: 4px;
+  border-radius: var(--r1);
   padding: 2px 8px;
-  font: inherit;
-  font-size: 12px;
+  font-family: var(--mono);
+  font-size: 11px;
   cursor: pointer;
 }
 
 .shortcut-chord.customized {
-  border-color: var(--amber-dim);
+  border-color: var(--amber);
   color: var(--amber);
 }
 
 .shortcut-chord:hover {
-  border-color: var(--amber-dim);
+  border-color: var(--amber);
 }
 
 .shortcut-editing {
   display: inline-block;
   padding: 2px 8px;
   border: 1px dashed var(--amber);
-  border-radius: 4px;
+  border-radius: var(--r1);
   color: var(--amber);
+  font-family: var(--mono);
+  font-size: 11px;
   outline: none;
 }
 
 .shortcut-reset {
   background: none;
   border: none;
-  color: var(--muted);
+  color: var(--faint);
   cursor: pointer;
   margin-left: 4px;
   font-size: 13px;
@@ -792,7 +1106,7 @@ button.danger {
   color: var(--amber);
 }
 
-/* -- E3-07 provider accounts ---------------------------------------------- */
+/* -- provider accounts ----------------------------------------------------------- */
 
 .provider-accounts {
   margin-top: 16px;
@@ -808,8 +1122,8 @@ button.danger {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 0;
-  border-bottom: 1px solid var(--line);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-soft);
   font-size: 12px;
 }
 
@@ -827,13 +1141,16 @@ button.danger {
 }
 
 .account-secret {
-  font-family: ui-monospace, monospace;
-  color: var(--muted);
+  font-family: var(--mono);
+  color: var(--faint);
 }
 
 .account-default {
   color: var(--amber);
-  font-size: 11px;
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .account-remove {
@@ -845,7 +1162,7 @@ button.danger {
 }
 
 .account-remove:hover {
-  color: var(--danger);
+  color: var(--red);
 }
 
 .account-add {
@@ -865,22 +1182,27 @@ button.danger {
 
 .account-add input,
 .account-add select {
-  padding: 5px 7px;
-  background: var(--navy);
+  padding: 6px 8px;
+  background: var(--bg0);
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: var(--r2);
   color: var(--text);
   font: inherit;
   font-size: 12px;
 }
+.account-add input:focus,
+.account-add select:focus {
+  outline: none;
+  border-color: var(--amber);
+}
 
-/* -- E2-12 task terminals -------------------------------------------------- */
+/* -- task terminals -------------------------------------------------------------- */
 
 .terminal-container {
   flex: 1;
   min-height: 0;
-  padding: 4px 6px;
-  background: #0d1424;
+  padding: 12px 14px 14px;
+  background: var(--bg0);
   overflow: hidden;
 }
 

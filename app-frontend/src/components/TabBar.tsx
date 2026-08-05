@@ -3,6 +3,7 @@
 // a new conversation (⌘T).
 import { useTabs, type PaneId } from "../store/tabs";
 import { useConversations } from "../store/conversations";
+import { TAB_KINDS } from "../lib/tab-registry";
 
 export default function TabBar({
   taskId,
@@ -30,6 +31,7 @@ export default function TabBar({
           onClick={() => activate(tab.id)}
           title={`${tab.title} — ${tab.id === paneState.activeId ? "⌘W to close" : "click to activate"}`}
         >
+          <span className="tab-kind">{TAB_KINDS[tab.kind].glyph}</span>
           <span className="tab-title">{tab.title}</span>
           <button
             className="tab-close"
