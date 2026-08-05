@@ -36,3 +36,8 @@ Thumbs.db
 # ── Tauri-generated schemas ────────────────────────────────
 ade-app/gen/
 .omp/extensions/emdash-hook.ts
+
+# ── Agent hook footprints (machine-local) ──────────────────
+.codex/
+.impeccable/
+.github/hooks/
