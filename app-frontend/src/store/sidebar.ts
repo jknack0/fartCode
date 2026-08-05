@@ -39,7 +39,7 @@ interface SidebarState {
 
 const SIDEBAR_VIEW_STATE_KEY = "view-state:app:sidebar";
 
-export const useSidebar = create<SidebarState>((set) => ({
+export const useSidebar = create<SidebarState>((set, get) => ({
   projects: [],
   tasksByProject: {},
   collapsed: {},
@@ -98,7 +98,13 @@ export const useSidebar = create<SidebarState>((set) => ({
     persistSidebarView();
   },
   selectTask: (id) => {
-    set({ selectedTaskId: id });
+    // A task is always selected under its own project — keeps TaskView's
+    // projectId in sync when the click crosses projects.
+    const { projects, tasksByProject } = get();
+    const projectId = projects.find((p) =>
+      (tasksByProject[p.id] ?? []).some((t) => t.id === id),
+    )?.id;
+    set({ selectedTaskId: id, ...(projectId ? { selectedProjectId: projectId } : {}) });
     persistSidebarView();
   },
   switchToTask: (task) => {

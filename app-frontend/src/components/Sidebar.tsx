@@ -99,7 +99,7 @@ export default function Sidebar() {
           {projects.map((p) => (
             <li key={p.id}>
               <div
-                className={`project-row${selectedProjectId === p.id ? " selected" : ""}`}
+                className={`project-row${selectedProjectId === p.id && !selectedTaskId ? " selected" : ""}`}
                 role="button"
                 tabIndex={0}
                 onClick={() => selectProject(p.id)}
