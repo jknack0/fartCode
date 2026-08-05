@@ -16,6 +16,7 @@ import {
   getViewState,
   onAdeEvent,
   setViewState,
+  terminalListForTask,
   terminalOpen,
   terminalSurviving,
 } from "../lib/tauri";
@@ -98,18 +99,26 @@ export const useTabs = create<TabsState>((set, get) => ({
         `view-state:task:${taskId}:tabs`,
       )) as SavedTabs | null;
 
-      // Reconcile persisted tabs: respawn every terminal's PTY. With tmux
-      // durability each respawn reattaches one surviving session
-      // (ADR-0028 slot reuse); without it the old shells died with the
-      // previous process and the respawn is a fresh shell. Conversation
-      // tabs restore as-is — their id IS the conversation id (a DB row),
-      // and the view rehydrates the transcript from acp_history (#33).
+      // Live backend terminals (non-empty only when the backend outlived
+      // the webview — a frontend reload/HMR). Persisted tabs pointing at a
+      // live id REATTACH as-is; anything else respawns (app restart: plain
+      // PTYs died with the process; with tmux the respawn reattaches a
+      // surviving session via ADR-0028 slot reuse).
+      const liveIds = new Set(
+        await terminalListForTask(taskId)
+          .then((terms) => terms.map((t) => t.id))
+          .catch(() => [] as string[]),
+      );
+
+      // Reconcile persisted tabs. Conversation tabs restore as-is — their
+      // id IS the conversation id (a DB row), and the view rehydrates the
+      // transcript from acp_history (#33).
       const reconcile = async (pane: Pane | undefined): Promise<Pane> => {
         const clean = sanitizePane(pane);
         if (!clean) return { tabs: [], activeId: null };
         const kept: Tab[] = [];
         for (const t of clean.tabs) {
-          if (t.kind !== "terminal") {
+          if (t.kind !== "terminal" || liveIds.has(t.id)) {
             kept.push(t);
             continue;
           }

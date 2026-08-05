@@ -58,7 +58,14 @@ struct Entry {
     /// the PTY runs a durable session (ADR-0025); `None` for plain shells.
     tmux_session_id: Option<String>,
     handle: Mutex<Box<dyn PtyHandle>>,
+    /// Rolling output tail (replayed on frontend reattach after a webview
+    /// reload — plain PTYs have no scrollback server, and a tmux session
+    /// only redraws on a fresh attach).
+    tail: Mutex<Vec<u8>>,
 }
+
+/// Cap for the scrollback tail replayed on reattach.
+const TAIL_CAP: usize = 64 * 1024;
 
 /// Everything needed to open one interactive terminal (ADR-0025 merged with
 /// the agent-terminal spawn: program + args for plain PTYs, project id +
@@ -193,6 +200,7 @@ impl TerminalManager {
             agent: agent.map(str::to_string),
             tmux_session_id,
             handle: Mutex::new(handle),
+            tail: Mutex::new(Vec::new()),
         });
         self.terminals.lock().insert(id.clone(), Arc::clone(&entry));
 
@@ -217,6 +225,14 @@ impl TerminalManager {
                     } else {
                         std::mem::take(&mut buf)
                     };
+                    {
+                        let mut tail = entry.tail.lock();
+                        tail.extend_from_slice(&chunk);
+                        if tail.len() > TAIL_CAP {
+                            let excess = tail.len() - TAIL_CAP;
+                            tail.drain(..excess);
+                        }
+                    }
                     use base64::Engine as _;
                     let data = base64::engine::general_purpose::STANDARD.encode(&chunk);
                     use tauri::Emitter as _;
@@ -304,6 +320,18 @@ impl TerminalManager {
                 agent: e.agent.clone(),
             })
             .collect()
+    }
+
+    /// Base64 scrollback tail for reattach replay (frontend reload), or
+    /// `None` for an unknown terminal.
+    pub fn tail(&self, id: &str) -> Option<String> {
+        let entry = self.terminals.lock().get(id).cloned()?;
+        let tail = entry.tail.lock();
+        if tail.is_empty() {
+            return None;
+        }
+        use base64::Engine as _;
+        Some(base64::engine::general_purpose::STANDARD.encode(tail.as_slice()))
     }
 
     /// Types into the terminal.

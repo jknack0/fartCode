@@ -264,6 +264,12 @@ export function terminalListForTask(taskId: string): Promise<TaskTerminalDto[]> 
   return invoke("terminal_list_for_task", { taskId });
 }
 
+/** Base64 scrollback tail replayed when reattaching to a live terminal
+ * after a frontend reload; `null` for unknown/empty. */
+export function terminalTail(terminalId: string): Promise<string | null> {
+  return invoke("terminal_tail", { terminalId });
+}
+
 /** Subscribe to terminal output chunks (base64); returns an unsubscribe fn. */
 export function onTerminalOutput(
   cb: (payload: { terminalId: string; data: string }) => void,

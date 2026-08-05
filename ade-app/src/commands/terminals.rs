@@ -141,6 +141,15 @@ pub fn terminal_list_for_task(
     terminals.list_for_task(&task_id)
 }
 
+/// Base64 scrollback tail replayed on frontend reattach (webview reload).
+#[tauri::command]
+pub fn terminal_tail(
+    terminals: State<'_, Arc<TerminalManager>>,
+    terminal_id: String,
+) -> Option<String> {
+    terminals.tail(&terminal_id)
+}
+
 /// Resizes the terminal PTY.
 #[tauri::command]
 pub fn terminal_resize(

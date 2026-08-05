@@ -9,6 +9,7 @@ import {
   onTerminalExited,
   onTerminalOutput,
   terminalClose,
+  terminalTail,
   terminalWrite,
 } from "./tauri";
 
@@ -60,12 +61,26 @@ export function getTerminalSession(terminalId: string): TermSession {
 
   let disposed = false;
   let exited = false;
+  let ready = false;
+  const pending: Uint8Array[] = [];
   const unsubs: Array<() => void> = [];
-  void onTerminalOutput(({ terminalId: id, data }) => {
-    if (id === terminalId && !disposed && !exited) {
-      term.write(base64ToBytes(data));
-    }
-  }).then((un) => unsubs.push(un));
+  // Subscribe BEFORE fetching the scrollback tail so output arriving in
+  // between is buffered, not lost; the tail then replays first (reattach
+  // after a frontend reload — plain PTYs have no scrollback server).
+  void (async () => {
+    const un = await onTerminalOutput(({ terminalId: id, data }) => {
+      if (id !== terminalId || disposed || exited) return;
+      const bytes = base64ToBytes(data);
+      if (ready) term.write(bytes);
+      else pending.push(bytes);
+    });
+    unsubs.push(un);
+    const tail = await terminalTail(terminalId).catch(() => null);
+    if (tail && !disposed) term.write(base64ToBytes(tail));
+    ready = true;
+    for (const bytes of pending) term.write(bytes);
+    pending.length = 0;
+  })();
   void onTerminalExited(({ terminalId: id, exitCode }) => {
     if (id === terminalId && !disposed) {
       exited = true;
