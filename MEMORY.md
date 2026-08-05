@@ -4,6 +4,28 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## Current state (2026-08-05, dogfood fix)
+
+- **create_task never provisioned (pre-existing gap, 393abee):** the
+  command used bare `DbTaskStore::create` — E2-04's `create_with_provision`
+  was dead code with zero callers, so tasks got config-less `worktree` rows
+  with `path=NULL` and terminals silently fell back to the project path
+  (terminals.rs COALESCE). E4-03's `git_status` exposed it as "workspace
+  has no local path". Fix: `create_task` routes through
+  `TaskCreationService` (now in App); branch = `ade/<slug>-<suffix>` from
+  the typed `registry::PROJECT` group (**settings group key is "project"
+  SINGULAR** — `get_json("projects")` throws InvalidSettingKey; typed
+  `.get()` is a DbSettingsStore inherent method, the trait only has
+  get_json). `provision_task` command heals legacy rows; provision's
+  config-less worktree fallback mints + persists a default intent
+  (regression test `provision_heals_legacy_configless_worktree_row`).
+  Changes panel: not-ready state + Provision button (error match needs
+  `.includes()` — frontend errors are "Error: <msg>" prefixed). Changes
+  toggle moved to TabBar trailing slot (upper right; right pane's bar
+  when split). Flaky: `ade-runtime worker_integration
+  renderer_env_discarded_and_server_env_reaches_adapter` failed once,
+  passed on rerun — timing-sensitive, watch it.
+
 ## Current state (2026-08-05, latest+++++)
 
 - **#43 E4-03 + #44 E4-04 Changes sidebar + diff renderer (one commit):**
