@@ -641,3 +641,12 @@ export function gitUnstage(workspaceId: string, paths: string[]): Promise<void> 
 export function gitDiscard(workspaceId: string, paths: string[]): Promise<void> {
   return invoke("git_discard", { workspaceId, paths });
 }
+
+/** Writes the worktree side of a diff back to disk (E4-05 ⌘S). */
+export function writeWorkspaceFile(
+  workspaceId: string,
+  path: string,
+  content: string,
+): Promise<void> {
+  return invoke("write_workspace_file", { workspaceId, path, content });
+}

@@ -1,7 +1,9 @@
 // Tab bar (E2-10): one per task pane. Tabs are terminals; click to
 // activate, × to close (⌘W), ⌘T adds another. `trailing` renders at the
-// bar's right edge (the changes toggle lives there — E4-03).
+// bar's right edge (the changes toggle lives there — E4-03). Diff tabs show
+// a dirty dot while their editor holds unsaved changes (E4-05).
 import type { ReactNode } from "react";
+import { useDiffs } from "../store/diffs";
 import { useTabs, type PaneId } from "../store/tabs";
 import { TAB_KINDS } from "../lib/tab-registry";
 import { IconClose } from "./icons";
@@ -17,6 +19,7 @@ export default function TabBar({
 }) {
   const panes = useTabs((s) => s.panesByTask[taskId]);
   const activePane = useTabs((s) => s.activePaneByTask[taskId] ?? "left");
+  const dirtyByTab = useDiffs((s) => s.dirtyByTab);
   const paneState = panes?.[pane];
   if (!paneState) return null;
 
@@ -35,6 +38,11 @@ export default function TabBar({
         >
           <span className="tab-kind">{TAB_KINDS[tab.kind].glyph}</span>
           <span className="tab-title">{tab.title}</span>
+          {dirtyByTab[tab.id] && (
+            <span className="tab-dirty" title="Unsaved changes — ⌘S in the diff to save">
+              ●
+            </span>
+          )}
           <button
             className="tab-close"
             title="Close tab (⌘W)"

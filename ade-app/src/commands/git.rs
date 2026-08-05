@@ -13,8 +13,9 @@ use tauri::State;
 
 use crate::app::App;
 
-/// Resolves a workspace's materialized worktree path.
-fn workspace_path(app: &App, workspace_id: &str) -> Result<PathBuf, String> {
+/// Resolves a workspace's materialized worktree path. Shared by the git
+/// commands and the workspace-file commands (E4-05).
+pub(crate) fn workspace_path(app: &App, workspace_id: &str) -> Result<PathBuf, String> {
     let conn = app
         .db
         .conn()

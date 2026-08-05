@@ -128,6 +128,10 @@ pub enum Error {
     #[error("file watch error: {0}")]
     Watch(String),
 
+    // -- Workspace files (E4-05) --
+    #[error("path escapes the workspace: {0}")]
+    PathEscape(String),
+
     // -- Catch-all --
     #[error("{0}")]
     Internal(String),

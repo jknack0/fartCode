@@ -3,6 +3,7 @@
 //! thin).
 
 pub mod conversations;
+pub mod files;
 pub mod git;
 pub mod projects;
 pub mod provider_accounts;

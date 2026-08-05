@@ -9,9 +9,11 @@ import {
   gitFileDiff,
   onAdeEvent,
   setViewState,
+  writeWorkspaceFile,
   type DiffSide,
   type FileDiffDto,
 } from "../lib/tauri";
+import { diffViewWorktreeDoc, getDiffView } from "../lib/diff-views";
 
 export interface DiffParams {
   workspaceId: string;
@@ -34,6 +36,10 @@ interface DiffsState {
   paramsByTab: Record<string, DiffParams>;
   previewTabs: Record<string, true>;
   byTab: Record<string, DiffEntry>;
+  /** Tabs with unsaved editor changes (E4-05 — the dirty dot). */
+  dirtyByTab: Record<string, true>;
+  /** Last save failure per tab (rendered as a header chip). */
+  saveErrorByTab: Record<string, string>;
   mode: DiffMode;
   modeLoaded: boolean;
 
@@ -42,6 +48,11 @@ interface DiffsState {
   dropTab: (tabId: string) => void;
   ensure: (tabId: string, params: DiffParams) => Promise<void>;
   refresh: (tabId: string) => Promise<void>;
+  markDirty: (tabId: string) => void;
+  clearDirty: (tabId: string) => void;
+  /** ⌘S: write the editor's worktree-side document to disk. The refresh
+   * after the write arrives via the watcher's files:changed event. */
+  save: (tabId: string) => Promise<void>;
   ensureMode: () => Promise<void>;
   setMode: (mode: DiffMode) => void;
 }
@@ -78,6 +89,8 @@ export const useDiffs = create<DiffsState>((set, get) => {
     paramsByTab: {},
     previewTabs: {},
     byTab: {},
+    dirtyByTab: {},
+    saveErrorByTab: {},
     mode: "split",
     modeLoaded: false,
 
@@ -97,10 +110,14 @@ export const useDiffs = create<DiffsState>((set, get) => {
         const paramsByTab = { ...s.paramsByTab };
         const previewTabs = { ...s.previewTabs };
         const byTab = { ...s.byTab };
+        const dirtyByTab = { ...s.dirtyByTab };
+        const saveErrorByTab = { ...s.saveErrorByTab };
         delete paramsByTab[tabId];
         delete previewTabs[tabId];
         delete byTab[tabId];
-        return { paramsByTab, previewTabs, byTab };
+        delete dirtyByTab[tabId];
+        delete saveErrorByTab[tabId];
+        return { paramsByTab, previewTabs, byTab, dirtyByTab, saveErrorByTab };
       }),
 
     ensure: async (tabId, params) => {
@@ -114,6 +131,46 @@ export const useDiffs = create<DiffsState>((set, get) => {
       const params = get().paramsByTab[tabId];
       if (!params) return;
       await fetchPayload(tabId, params);
+    },
+
+    markDirty: (tabId) =>
+      set((s) =>
+        s.dirtyByTab[tabId] ? s : { dirtyByTab: { ...s.dirtyByTab, [tabId]: true } },
+      ),
+
+    clearDirty: (tabId) =>
+      set((s) => {
+        if (!s.dirtyByTab[tabId]) return s;
+        const dirtyByTab = { ...s.dirtyByTab };
+        delete dirtyByTab[tabId];
+        return { dirtyByTab };
+      }),
+
+    save: async (tabId) => {
+      const params = get().paramsByTab[tabId];
+      const view = getDiffView(tabId);
+      if (!params || !view) return;
+      try {
+        await writeWorkspaceFile(
+          params.workspaceId,
+          params.path,
+          diffViewWorktreeDoc(view),
+        );
+        get().clearDirty(tabId);
+        set((s) => {
+          if (!s.saveErrorByTab[tabId]) return s;
+          const saveErrorByTab = { ...s.saveErrorByTab };
+          delete saveErrorByTab[tabId];
+          return { saveErrorByTab };
+        });
+        // The watcher's files:changed event drives the payload refresh —
+        // the editor already shows the saved document, so the refresh is
+        // a no-op visually (DiffView skips content-identical rebuilds).
+      } catch (e) {
+        set((s) => ({
+          saveErrorByTab: { ...s.saveErrorByTab, [tabId]: String(e) },
+        }));
+      }
     },
 
     ensureMode: async () => {

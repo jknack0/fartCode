@@ -1149,6 +1149,31 @@ button.danger:hover {
   padding: 0 8px;
 }
 
+.tab-dirty {
+  color: var(--status-in-progress);
+  font-size: 9px;
+  line-height: 1;
+}
+
+.diff-badge.dirty {
+  color: var(--status-in-progress);
+  background: transparent;
+  padding: 0 2px;
+  font-size: 10px;
+}
+
+.diff-save-error {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--destructive-background);
+  border: 1px solid var(--destructive-border);
+  color: var(--destructive);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: help;
+}
+
 .changes-toggle {
   display: flex;
   align-items: center;

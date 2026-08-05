@@ -127,6 +127,7 @@ pub fn run() {
             commands::git::git_stage_all,
             commands::git::git_unstage,
             commands::git::git_discard,
+            commands::files::write_workspace_file,
             commands::conversations::create_conversation,
             commands::conversations::list_conversations,
             commands::conversations::acp_start,

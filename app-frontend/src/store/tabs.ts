@@ -378,6 +378,14 @@ export const useTabs = create<TabsState>((set, get) => ({
   },
 }));
 
+/** Test seam (browser smoke), mirrors `window.__conversationsStore`. */
+declare global {
+  interface Window {
+    __tabsStore?: typeof useTabs;
+  }
+}
+if (typeof window !== "undefined") window.__tabsStore = useTabs;
+
 /** Drop local tab state when the backend deletes a task (mirrors the
  * backend's `task:<id>:tabs` view-state cleanup). */
 export function wireTabsEvents(): () => void {
