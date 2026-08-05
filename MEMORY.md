@@ -6,6 +6,20 @@ one exists).
 
 ## Current state (2026-08-05, selection → agent)
 
+- **Selection prompt routes to the LIVE AGENT TERMINAL first (68939da,
+  user-directed):** opening a parallel ACP chat "while the work happens
+  elsewhere" was wrong. TerminalSpec/Entry now carry `agent: Option<provider>`
+  (set by terminal_open_agent; shells are None) and
+  `terminal_list_for_task(taskId)` exposes it. Popover submit: agent
+  terminal → `terminal_write(id, ESC[200~ + prompt + ESC[201~ + \r)`
+  (bracketed paste so multi-line lands as one block) + focus that tab;
+  ACP conversation is the FALLBACK (no agent terminal). The popover shows
+  the destination on open ("→ omp terminal" / "→ Agent chat"). Smoke:
+  both routes verified (write to term-omp with paste markers + no ACP
+  call; shells-only → acp prompt + Agent tab). Provider AGENCY for the
+  ACP path is still "first ACP-capable registry entry" (claude); the
+  `defaultAgent` setting exists but is still unread — if provider choice
+  becomes a thing, wire that + a popover picker.
 - **Selection → agent WORKS end-to-end with the real adapter (verified
   live):** the "I don't see anything" report was a SLOW, SILENT turn, not
   a hang — tools-first edits (Bash/Read of a 560-line file before any
