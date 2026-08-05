@@ -6,6 +6,20 @@ one exists).
 
 ## Current state (2026-08-05, selection → agent)
 
+- **Selection → agent WORKS end-to-end with the real adapter (verified
+  live):** the "I don't see anything" report was a SLOW, SILENT turn, not
+  a hang — tools-first edits (Bash/Read of a 560-line file before any
+  text) leave the UI showing just the user card with no strong working
+  signal for 20-60s. UX gap to close in the conversation view: an
+  unmistakable working indicator (elapsed time + latest tool activity)
+  during silent stretches. Postmortem artifacts: `ade-app/tests/
+  acp_real_adapter_probe.rs` (ignored live probe — start → edit prompt →
+  turn settle → file edited; run with --ignored) and a standalone stdio
+  driver pattern (/tmp/acp-probe.mjs style: initialize/session/new/
+  session/prompt over newline-delimited JSON-RPC). The claude adapter
+  auto-approves fs edits without session/request_permission when the
+  client declares fs read+write caps; zero CPU on the adapter does NOT
+  distinguish hung-vs-fast-completed turns (node is sub-second per turn).
 - **ACP adapter resolution (7a0b16e):** `default_adapter_resolver`'s
   `<id>-acp` format names binaries that don't exist in the wild —
   claude's real adapter is `claude-agent-acp` from
