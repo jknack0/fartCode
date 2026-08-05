@@ -11,6 +11,7 @@ import Sidebar from "./components/Sidebar";
 import TaskView from "./components/TaskView";
 import { useCommands, hint } from "./lib/useCommands";
 import { useSidebar, wireSidebarEvents } from "./store/sidebar";
+import { useConversations, wireConversationEvents } from "./store/conversations";
 import { wireTabsEvents } from "./store/tabs";
 
 function App() {
@@ -23,11 +24,17 @@ function App() {
     load().catch(() => {});
     const unlisten = wireSidebarEvents();
     const unlistenTabs = wireTabsEvents();
+    const unlistenConversations = wireConversationEvents();
     return () => {
       unlisten();
       unlistenTabs();
+      unlistenConversations();
     };
   }, [load]);
+  const ensureConversations = useConversations((s) => s.ensure);
+  useEffect(() => {
+    if (selectedTaskId) void ensureConversations(selectedTaskId).catch(() => {});
+  }, [selectedTaskId, ensureConversations]);
 
   useCommands();
 

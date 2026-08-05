@@ -16,6 +16,7 @@ uuid = { version = "1", features = ["v4"] }
 tauri = { workspace = true }
 ade-core = { path = "../ade-core" }
 ade-acp = { path = "../ade-acp" }
+agent-client-protocol-schema = { workspace = true }
 ade-providers = { path = "../ade-providers" }
 ade-git = { path = "../ade-git" }
 ade-terminal = { path = "../ade-terminal" }
@@ -30,7 +31,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-agent-client-protocol-schema = { workspace = true }
+tempfile = "3"
 
 [lib]
 name = "ade_app_lib"

@@ -4,6 +4,29 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## Current state (2026-08-05, latest+)
+
+- **#32 E2-11-5 Commands + conversation-store wiring + provider decision:**
+  ACP conversations actually chat. `ade-app::acp_runtime::AcpRuntime`
+  owns the SessionManager and spawns the adapter binary as a direct child
+  per conversation (env server-resolved via keyring `resolve_env` with
+  launcher process-env fallback; renderer never supplies env — ADR-0030:
+  the E2-11-2 `ade-acp-runtime` worker stays DORMANT; the in-app runtime
+  won, keeping all E2-11-4 wiring live). Commands: `create_conversation`
+  (runtime type decided SERVER-SIDE from capabilities.acp — renderer never
+  picks it), `list_conversations` (DTO carries derived `runtime` field,
+  no DB column), `acp_start` / `acp_send_prompt` / `acp_cancel` /
+  `acp_resolve_permission` / `acp_stop` / `acp_history`. Provider decision
+  gate = `resolve_session_path` in exactly 2 places (create + start).
+  Teardown: `delete_task` calls `AcpRuntime::stop_task` BEFORE the FK
+  cascade. Frontend: `store/conversations.ts` (runtime field + `acp:*`
+  subscription + `window.__conversationsStore` browser-test seam), ⌘Enter
+  `send-context` command routes only when runtime==='acp' (TUI untouched).
+  Boot ACP rehydration NOT wired (PTY stays byte-identical; follow-up with
+  #33 chat UI). Tests: 3 E2E (fake adapter e2e, gate non-regression,
+  teardown) + browser smoke. Test seam: `ADE_ACP_ADAPTER` env override.
+  Next: **#33 E2-11-6** (transcript renderer + permission prompts).
+
 ## Current state (2026-08-05, latest)
 
 - **#31 E2-11-4 Transcript reducer + live models:** `ade-acp::transcript`

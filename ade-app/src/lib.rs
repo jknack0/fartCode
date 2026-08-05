@@ -4,6 +4,7 @@
 //! modules, and forwards internal events to the frontend.
 
 mod acp_events;
+pub mod acp_runtime;
 mod app;
 mod commands;
 mod indexer;
@@ -75,10 +76,31 @@ pub fn run() {
             // event emission; created here rather than in App::init).
             let terminal_manager = Arc::new(terminals::TerminalManager::new(app.handle().clone()));
             app.manage(terminal_manager);
-            // E2-11-4: ACP live-model event emitter (`acp:update` /
-            // `acp:transcript` / `acp:permission_request`); #32 hands it
-            // to the SessionManager via `StartInput::events`.
-            app.manage(acp_events::TauriAcpEvents::new(app.handle().clone()));
+            // E2-11-4/5: ACP runtime — owns the SessionManager, spawns the
+            // adapter per conversation, and emits `acp:update` /
+            // `acp:transcript` / `acp:permission_request` via the events
+            // emitter. `ADE_ACP_ADAPTER` overrides the adapter binary for
+            // tests (dev/test fixture only; production resolves per
+            // provider).
+            let acp_events = acp_events::TauriAcpEvents::new(app.handle().clone());
+            let acp_runtime = crate::acp_runtime::AcpRuntime::new(
+                app_state.conversations.clone(),
+                app_state.tasks.clone(),
+                app_state.db.clone(),
+                app_state.provider_accounts.clone(),
+                acp_events.clone(),
+                match std::env::var("ADE_ACP_ADAPTER").ok() {
+                    Some(path) => {
+                        let bin = std::path::PathBuf::from(path);
+                        Arc::new(move |_provider_id: &str| Ok(bin.clone()))
+                    }
+                    None => Arc::new(|provider_id: &str| {
+                        crate::acp_runtime::default_adapter_resolver(provider_id)
+                    }),
+                },
+            );
+            app.manage(acp_events);
+            app.manage(acp_runtime);
             app.manage(app_state);
             Ok(())
         })
@@ -90,6 +112,14 @@ pub fn run() {
             commands::tasks::list_tasks,
             commands::tasks::toggle_pin,
             commands::tasks::delete_task,
+            commands::conversations::create_conversation,
+            commands::conversations::list_conversations,
+            commands::conversations::acp_start,
+            commands::conversations::acp_send_prompt,
+            commands::conversations::acp_cancel,
+            commands::conversations::acp_resolve_permission,
+            commands::conversations::acp_stop,
+            commands::conversations::acp_history,
             commands::provider_accounts::add_provider_account,
             commands::provider_accounts::list_provider_accounts,
             commands::provider_accounts::remove_provider_account,

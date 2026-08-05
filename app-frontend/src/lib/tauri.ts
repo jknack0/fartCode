@@ -273,3 +273,183 @@ export function terminalOpenAgent(
 ): Promise<string> {
   return invoke("terminal_open_agent", { taskId, agent, rows, cols });
 }
+
+// -- E2-11-5 conversations + ACP ---------------------------------------------
+
+/** One conversation row for the frontend. `runtime` is the provider
+ * decision's output: "acp" runs structured chat, "tui" keeps the terminal
+ * path — the frontend routes ⌘Enter on this field. */
+export interface ConversationDto {
+  id: string;
+  projectId: string;
+  taskId: string | null;
+  title: string;
+  provider: string | null;
+  type: "pty" | "acp";
+  sessionId: string | null;
+  runtime: "tui" | "acp";
+}
+
+/** The reduced transcript + live models (`acp_history` / `acp:transcript`
+ * payload). Serialized camelCase from `ade_acp::LiveModels`. */
+export interface LiveModels {
+  sessionState: {
+    lifecycle: "starting" | "ready" | "working" | "cancelling" | "closed";
+    activeTurnId: string | null;
+    pendingPermissions: PendingPermission[];
+    lastStopReason: string | null;
+    queuedPrompts: QueuedPromptDto[];
+    isGenerating: boolean;
+    canSubmit: boolean;
+    canCancel: boolean;
+  };
+  committed: TranscriptTurn[];
+  activeTurn: TranscriptTurn | null;
+  config: SessionConfigState;
+  usage: { contextSize: number; contextUsed: number; cost: unknown } | null;
+  title: string | null;
+  agents: unknown[];
+  plan: unknown | null;
+  draft: { text: string; rev: number } | null;
+  queuedPrompts: QueuedPromptDto[];
+  terminals: unknown[];
+}
+
+export interface QueuedPromptDto {
+  id: string;
+  text: string;
+  hiddenContext: string | null;
+}
+
+export interface PendingPermission {
+  requestId: string;
+  sessionId: string;
+  toolCall: unknown;
+  options: { optionId: string; name: string; kind: string }[];
+}
+
+/** One reduced turn. Item shapes are the serializer's untagged union —
+ * `kind` discriminates ("message" | "thinking" | a tool-call kind |
+ * "tool-group"). #33's renderer narrows these. */
+export interface TranscriptTurn {
+  id: string;
+  seq: number;
+  initiator: "user" | "agent";
+  items: TranscriptItem[];
+  outcome?:
+    | { kind: "done"; reason?: string }
+    | { kind: "cancelled"; reason?: string }
+    | { kind: "error"; reason?: string }
+    | { kind: "interrupted"; reason?: string };
+}
+
+export interface TranscriptItem {
+  kind: string;
+  id: string;
+  seq: number;
+  [key: string]: unknown;
+}
+
+export interface SessionConfigState {
+  modelOptions: SelectGroup | null;
+  efforts: SelectGroup | null;
+  modeOptions: SelectGroup | null;
+  availableCommands: {
+    name: string;
+    description: string;
+    source: string;
+    inputHint?: string;
+  }[];
+}
+
+export interface SelectGroup {
+  configId: string;
+  selected: string | null;
+  available: { id: string; name: string; description?: string }[];
+}
+
+export function createConversation(
+  projectId: string,
+  taskId: string,
+  provider: string | null,
+  title?: string,
+): Promise<ConversationDto> {
+  return invoke("create_conversation", { projectId, taskId, provider, title });
+}
+
+export function listConversations(taskId: string): Promise<ConversationDto[]> {
+  return invoke("list_conversations", { taskId });
+}
+
+export function acpStart(
+  conversationId: string,
+): Promise<{ sessionId: string; resumed: boolean }> {
+  return invoke("acp_start", { conversationId });
+}
+
+export function acpSendPrompt(
+  conversationId: string,
+  text: string,
+  hiddenContext?: string,
+): Promise<{ queued: boolean }> {
+  return invoke("acp_send_prompt", { conversationId, text, hiddenContext });
+}
+
+export function acpCancel(conversationId: string): Promise<void> {
+  return invoke("acp_cancel", { conversationId });
+}
+
+export function acpResolvePermission(
+  conversationId: string,
+  requestId: string,
+  optionId: string,
+): Promise<void> {
+  return invoke("acp_resolve_permission", { conversationId, requestId, optionId });
+}
+
+export function acpStop(conversationId: string): Promise<void> {
+  return invoke("acp_stop", { conversationId });
+}
+
+export function acpHistory(conversationId: string): Promise<LiveModels | null> {
+  return invoke("acp_history", { conversationId });
+}
+
+/** One routed raw `session/update` (debug/streaming channel). */
+export interface AcpUpdatePayload {
+  conversationId: string;
+  sessionId: string;
+  update: { sessionUpdate: string; [key: string]: unknown };
+}
+
+/** Subscribe to raw ACP updates; returns an unsubscribe fn. */
+export function onAcpUpdate(
+  cb: (payload: AcpUpdatePayload) => void,
+): Promise<() => void> {
+  return listen<AcpUpdatePayload>("acp:update", (e) => cb(e.payload));
+}
+
+/** Subscribe to transcript/live-model snapshots; returns an unsubscribe fn. */
+export function onAcpTranscript(
+  cb: (payload: { conversationId: string; models: LiveModels }) => void,
+): Promise<() => void> {
+  return listen<{ conversationId: string; models: LiveModels }>(
+    "acp:transcript",
+    (e) => cb(e.payload),
+  );
+}
+
+/** Subscribe to permission requests; returns an unsubscribe fn. */
+export function onAcpPermissionRequest(
+  cb: (payload: {
+    conversationId: string;
+    requestId: string;
+    pending: PendingPermission;
+  }) => void,
+): Promise<() => void> {
+  return listen<{
+    conversationId: string;
+    requestId: string;
+    pending: PendingPermission;
+  }>("acp:permission_request", (e) => cb(e.payload));
+}

@@ -43,6 +43,7 @@ export type CommandId =
   | "new-project"
   | "add-task"
   | "delete-task"
+  | "send-context"
   | "new-terminal"
   | "new-terminal-right-split"
   | "open-omp"

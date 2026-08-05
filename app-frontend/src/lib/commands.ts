@@ -7,6 +7,7 @@
 import { CommandId, createRegistry, registerCommand } from "./registry";
 import { useSidebar, visibleTaskOrder } from "../store/sidebar";
 import { terminalOpen, terminalOpenAgent } from "./tauri";
+import { useConversations } from "../store/conversations";
 import { useTabs, type PaneId } from "../store/tabs";
 import { useUi } from "../store/ui";
 
@@ -163,6 +164,28 @@ export function registerAllCommands(): void {
       const pane = useTabs.getState().activePaneByTask[taskId] ?? "left";
       void openOmpTab(taskId, pane).catch((e) =>
         console.error("omp open failed", e),
+      );
+    },
+  });
+  registerCommand(registry, {
+    id: "send-context",
+    label: "Send prompt to agent",
+    defaultKeys: ["⌘Enter"],
+    scope: "task-view",
+    // Fires even while an editor/input is focused — ⌘Enter from the
+    // composer submits. TUI conversations keep the terminal path
+    // byte-identical: the command routes ONLY when the task's conversation
+    // resolved to the ACP runtime (E2-11-5 provider decision).
+    run: () => {
+      const sb = useSidebar.getState();
+      if (!sb.selectedTaskId) return;
+      const conversations = useConversations.getState();
+      const acp = conversations.activeAcp(sb.selectedTaskId);
+      if (!acp) return; // TUI path — untouched by design.
+      const text = (conversations.drafts[acp.id] ?? "").trim();
+      if (!text) return;
+      void conversations.sendPrompt(acp.id, text).catch((e) =>
+        console.error("acp send failed", e),
       );
     },
   });

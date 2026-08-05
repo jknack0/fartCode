@@ -55,11 +55,16 @@ pub fn toggle_pin(app: State<'_, Arc<App>>, id: String) -> Result<TaskDto, Strin
 pub fn delete_task(
     app: State<'_, Arc<App>>,
     terminals: State<'_, Arc<crate::terminals::TerminalManager>>,
+    acp: State<'_, Arc<crate::acp_runtime::AcpRuntime>>,
     project_id: String,
     task_id: String,
     delete_worktree: Option<bool>,
     delete_branch: Option<bool>,
 ) -> Result<(), String> {
+    // E2-11-5 acceptance 3: stop the task's ACP sessions BEFORE the task
+    // row deletion cascades the conversation rows away (best-effort, like
+    // the PTY reap).
+    acp.stop_task(&task_id);
     let options = DeleteTaskOptions {
         delete_worktree: delete_worktree.unwrap_or(true),
         delete_branch: delete_branch.unwrap_or(false),
