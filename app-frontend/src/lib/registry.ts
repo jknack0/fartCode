@@ -50,6 +50,7 @@ export type CommandId =
   | "open-omp"
   | "toggle-sidebar"
   | "toggle-right-panel"
+  | "toggle-changes"
   | "previous-task"
   | "next-task"
   | "close-tab"

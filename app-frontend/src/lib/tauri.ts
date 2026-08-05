@@ -33,7 +33,9 @@ export type AdeEvent =
   | { type: "project:deleted"; id: string }
   | { type: "task:created"; id: string; projectId: string; name: string }
   | { type: "task:deleted"; taskId: string }
-  | { type: "task:status_changed"; taskId: string; status: string };
+  | { type: "task:status_changed"; taskId: string; status: string }
+  | { type: "git:changed"; projectId: string; workspaceId: string }
+  | { type: "files:changed"; workspaceId: string; paths: string[] };
 
 export function listProjects(): Promise<ProjectDto[]> {
   return invoke("list_projects");
@@ -569,4 +571,68 @@ export function onAcpPermissionRequest(
     requestId: string;
     pending: PendingPermission;
   }>("acp:permission_request", (e) => cb(e.payload));
+}
+
+// -- E4 Git & diff (shapes mirror ade-git status.rs / diff.rs exactly) --------
+
+export interface GitChangeDto {
+  path: string;
+  origPath: string | null;
+  status: "added" | "modified" | "deleted" | "renamed" | "conflicted";
+  additions: number;
+  deletions: number;
+}
+
+export interface GitStatusSnapshot {
+  staged: GitChangeDto[];
+  unstaged: GitChangeDto[];
+  stagedAdditions: number;
+  stagedDeletions: number;
+  truncated: boolean;
+}
+
+export type DiffSide = "staged" | "unstaged";
+
+export interface FileDiffDto {
+  path: string;
+  origPath: string | null;
+  oldContent: string | null;
+  newContent: string | null;
+  oldSize: number;
+  newSize: number;
+  oldExists: boolean;
+  newExists: boolean;
+  binary: boolean;
+  tooLarge: boolean;
+}
+
+export function gitStatus(workspaceId: string): Promise<GitStatusSnapshot> {
+  return invoke("git_status", { workspaceId });
+}
+
+export function gitFileDiff(
+  workspaceId: string,
+  path: string,
+  side: DiffSide,
+  origPath?: string | null,
+): Promise<FileDiffDto> {
+  return invoke("git_file_diff", {
+    workspaceId,
+    path,
+    side,
+    origPath: origPath ?? null,
+  });
+}
+
+export function gitStage(workspaceId: string, paths: string[]): Promise<void> {
+  return invoke("git_stage", { workspaceId, paths });
+}
+export function gitStageAll(workspaceId: string): Promise<void> {
+  return invoke("git_stage_all", { workspaceId });
+}
+export function gitUnstage(workspaceId: string, paths: string[]): Promise<void> {
+  return invoke("git_unstage", { workspaceId, paths });
+}
+export function gitDiscard(workspaceId: string, paths: string[]): Promise<void> {
+  return invoke("git_discard", { workspaceId, paths });
 }

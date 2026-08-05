@@ -132,7 +132,7 @@ pub fn file_diff(
 /// Rejects absolute paths and any `..`/root component — command inputs must
 /// stay inside the worktree (AGENTS.md realpath-containment rule; lexical
 /// here because deleted files cannot be canonicalized).
-fn validate_rel_path(rel_path: &str) -> Result<(), Error> {
+pub(crate) fn validate_rel_path(rel_path: &str) -> Result<(), Error> {
     let path = Path::new(rel_path);
     let ok = !rel_path.is_empty()
         && path

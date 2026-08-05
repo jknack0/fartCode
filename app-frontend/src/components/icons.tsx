@@ -60,3 +60,33 @@ export function IconPin({ size }: IconProps) {
     </svg>
   );
 }
+
+export function IconBranch({ size }: IconProps) {
+  // git-branch: two nodes on a main line, one forked.
+  return (
+    <svg {...base(size)}>
+      <circle cx="3.5" cy="2.5" r="1.4" />
+      <circle cx="3.5" cy="9.5" r="1.4" />
+      <circle cx="8.5" cy="4" r="1.4" />
+      <path d="M3.5 3.9v4.2M8.5 5.4c0 1.6-2 2.1-3.4 2.4" />
+    </svg>
+  );
+}
+
+export function IconMinus({ size }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M2 6h8" />
+    </svg>
+  );
+}
+
+export function IconDiscard({ size }: IconProps) {
+  // Undo arrow: reverting to the last recorded state.
+  return (
+    <svg {...base(size)}>
+      <path d="M2.5 4.5h4a3 3 0 0 1 0 6H5" />
+      <path d="M4.5 2.5L2.5 4.5l2 2" />
+    </svg>
+  );
+}

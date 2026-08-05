@@ -62,3 +62,44 @@ pub fn git_file_diff(
     let worktree = workspace_path(&app, &workspace_id)?;
     ade_git::diff::file_diff(&worktree, &path, side, orig_path.as_deref()).map_err(String::from)
 }
+
+/// Stages the given worktree-relative paths (`git add --`).
+#[tauri::command]
+pub fn git_stage(
+    app: State<'_, Arc<App>>,
+    workspace_id: String,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let worktree = workspace_path(&app, &workspace_id)?;
+    ade_git::stage::stage(&worktree, &paths).map_err(String::from)
+}
+
+/// Stages every change in the worktree (`git add -A`).
+#[tauri::command]
+pub fn git_stage_all(app: State<'_, Arc<App>>, workspace_id: String) -> Result<(), String> {
+    let worktree = workspace_path(&app, &workspace_id)?;
+    ade_git::stage::stage_all(&worktree).map_err(String::from)
+}
+
+/// Unstages the given paths (`git restore --staged --`; unborn-HEAD safe).
+#[tauri::command]
+pub fn git_unstage(
+    app: State<'_, Arc<App>>,
+    workspace_id: String,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let worktree = workspace_path(&app, &workspace_id)?;
+    ade_git::stage::unstage(&worktree, &paths).map_err(String::from)
+}
+
+/// Discards the given paths: tracked paths revert to the index, untracked
+/// paths are deleted. The UI confirms before calling.
+#[tauri::command]
+pub fn git_discard(
+    app: State<'_, Arc<App>>,
+    workspace_id: String,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let worktree = workspace_path(&app, &workspace_id)?;
+    ade_git::stage::discard(&worktree, &paths).map_err(String::from)
+}

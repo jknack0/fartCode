@@ -11,6 +11,7 @@
 // the tab id IS the conversation id, a DB row that survives restarts).
 import type { ReactNode } from "react";
 import ConversationView from "../components/ConversationView";
+import DiffView from "../components/DiffView";
 import TerminalView from "../components/TerminalView";
 import type { PaneId } from "../store/tabs";
 
@@ -21,7 +22,7 @@ export interface Tab {
   title: string;
 }
 
-export type TabKind = "terminal" | "conversation";
+export type TabKind = "terminal" | "conversation" | "diff";
 
 export interface TabRenderProps {
   taskId: string;
@@ -59,6 +60,14 @@ export const TAB_KINDS: Record<TabKind, TabKindDef> = {
     render: ({ taskId, tab, active }) => (
       <ConversationView conversationId={tab.id} taskId={taskId} active={active} />
     ),
+  },
+
+  diff: {
+    label: "Diff",
+    glyph: "DIFF",
+    // The tab id encodes the diff params (`diff:<side>:<workspaceId>:<path>`);
+    // the diffs store holds the payload (#44, E4-04).
+    render: ({ tab, active }) => <DiffView tabId={tab.id} title={tab.title} active={active} />,
   },
 };
 

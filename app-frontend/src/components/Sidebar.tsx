@@ -5,7 +5,7 @@
 import { useUi } from "../store/ui";
 import { useSidebar } from "../store/sidebar";
 import { hint } from "../lib/useCommands";
-import { IconChevron, IconClose, IconGear, IconPin, IconPlus } from "./icons";
+import { IconBranch, IconChevron, IconClose, IconGear, IconPin, IconPlus } from "./icons";
 
 export default function Sidebar() {
   const {
@@ -27,6 +27,8 @@ export default function Sidebar() {
   const setProjectSettingsOpen = useUi((s) => s.setProjectSettingsOpen);
   const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
   const setPaletteOpen = useUi((s) => s.setPaletteOpen);
+  const changesOpen = useUi((s) => s.changesOpen);
+  const setChangesOpen = useUi((s) => s.setChangesOpen);
   const setDeleteProjectTarget = useUi((s) => s.setDeleteProjectTarget);
   const setDeleteTaskTarget = useUi((s) => s.setDeleteTaskTarget);
 
@@ -51,6 +53,14 @@ export default function Sidebar() {
             onClick={() => setPaletteOpen(true)}
           >
             {hint("open-command-palette") || "⌘K"}
+          </button>
+          <button
+            title={`Changes (${hint("toggle-changes") || "⌘⇧1"})`}
+            className={changesOpen ? "active" : undefined}
+            disabled={!selectedTaskId}
+            onClick={() => setChangesOpen(!changesOpen)}
+          >
+            <IconBranch />
           </button>
           <button
             title="Project settings"

@@ -130,6 +130,17 @@ export function registerAllCommands(): void {
       ui.setResourceOpen(!ui.resourceOpen);
     },
   });
+  // E4-03: the Changes sidebar (right-side panel in the task view).
+  registerCommand(registry, {
+    id: "toggle-changes",
+    label: "Toggle changes panel",
+    defaultKeys: ["⌘⇧1"],
+    scope: "global",
+    run: () => {
+      const ui = useUi.getState();
+      ui.setChangesOpen(!ui.changesOpen);
+    },
+  });
 
   // -- project view -----------------------------------------------------------
   registerCommand(registry, {

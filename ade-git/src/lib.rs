@@ -10,6 +10,7 @@
 
 pub mod diff;
 pub mod git2ops;
+pub mod stage;
 pub mod status;
 
 use std::io::Read;

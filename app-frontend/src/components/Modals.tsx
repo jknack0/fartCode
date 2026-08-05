@@ -5,6 +5,7 @@ import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import ProjectSettings from "./ProjectSettings";
 import SettingsModal from "./SettingsModal";
+import { useChanges } from "../store/changes";
 import { useSidebar } from "../store/sidebar";
 import { useUi } from "../store/ui";
 
@@ -112,6 +113,8 @@ export default function Modals() {
   const setDeleteProjectTarget = useUi((s) => s.setDeleteProjectTarget);
   const deleteTaskTarget = useUi((s) => s.deleteTaskTarget);
   const setDeleteTaskTarget = useUi((s) => s.setDeleteTaskTarget);
+  const discardTarget = useUi((s) => s.discardTarget);
+  const setDiscardTarget = useUi((s) => s.setDiscardTarget);
 
   const { projects, tasksByProject, selectedProjectId, deleteProject, deleteTask } =
     useSidebar();
@@ -160,6 +163,41 @@ export default function Modals() {
             );
           }}
         />
+      )}
+      {discardTarget && (
+        <div className="modal-backdrop" onClick={() => setDiscardTarget(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Discard changes</h2>
+            <p>
+              Discard{" "}
+              <strong>
+                {discardTarget.paths.length === 1
+                  ? discardTarget.paths[0]
+                  : `${discardTarget.paths.length} files`}
+              </strong>
+              ?{" "}
+              {discardTarget.hasUntracked
+                ? "Untracked files are deleted from disk; tracked files revert to the staged state. This cannot be undone."
+                : "The files revert to the staged state. This cannot be undone."}
+            </p>
+            <div className="modal-actions">
+              <button onClick={() => setDiscardTarget(null)}>Cancel</button>
+              <button
+                className="danger"
+                onClick={() => {
+                  const target = discardTarget;
+                  setDiscardTarget(null);
+                  useChanges
+                    .getState()
+                    .discard(target.workspaceId, target.paths)
+                    .catch((e) => console.error("discard failed", e));
+                }}
+              >
+                Discard
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

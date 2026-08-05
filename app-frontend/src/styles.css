@@ -137,9 +137,196 @@ body {
 
 .shell {
   display: grid;
-  grid-template-columns: 264px 1fr;
+  grid-template-columns: 264px 1fr auto;
   height: 100%;
 }
+
+/* Changes panel (E4-03) — the right-hand review column -------------------- */
+
+.changes-panel {
+  grid-column: 3;
+  display: flex;
+  flex-direction: column;
+  width: 320px;
+  min-height: 0;
+  background: var(--background-tertiary);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.changes-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 12px 0 16px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--foreground-muted);
+}
+
+.changes-header .changes-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.changes-count {
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--background-tertiary-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--foreground-muted);
+}
+
+.changes-header .header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.changes-stage-all {
+  font-size: 11px;
+}
+
+.changes-body {
+  padding: 8px 8px 16px;
+}
+
+.changes-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 8px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--foreground-passive);
+}
+
+.changes-section ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.change-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--foreground-body);
+}
+
+.change-row:hover {
+  background: var(--surface-elevated-hover);
+}
+
+.change-glyph {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.change-row.status-added .change-glyph {
+  color: var(--status-in-review);
+}
+
+.change-row.status-modified .change-glyph {
+  color: var(--status-in-progress);
+}
+
+.change-row.status-deleted .change-glyph {
+  color: var(--destructive);
+}
+
+.change-row.status-renamed .change-glyph {
+  color: var(--info);
+}
+
+.change-row.status-conflicted .change-glyph {
+  color: var(--destructive);
+}
+
+.change-row.status-conflicted {
+  background: var(--destructive-background);
+}
+
+.change-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.change-orig {
+  color: var(--foreground-passive);
+}
+
+.change-arrow {
+  margin: 0 4px;
+  color: var(--foreground-passive);
+}
+
+.change-stats {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.change-stats em {
+  font-style: normal;
+}
+
+.change-stats .add {
+  color: var(--status-in-review);
+}
+
+.change-stats .del {
+  color: var(--destructive);
+}
+
+.change-actions {
+  flex: none;
+  display: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.change-row:hover .change-actions,
+.change-row:focus-within .change-actions {
+  display: flex;
+}
+
+.change-actions button.danger:hover {
+  color: var(--destructive);
+}
+
+.changes-empty {
+  padding: 16px;
+  font-size: 13px;
+  color: var(--foreground-passive);
+}
+
+.changes-error {
+  padding: 8px;
+}
+
+/* Main -------------------------------------------------------------------- */
 
 /* Sidebar — the tertiary chassis column ------------------------------------ */
 
@@ -1728,4 +1915,130 @@ button.danger:hover {
 .chat-stop {
   font-size: 12px;
   padding: 4px 12px;
+}
+
+/* Diff view (E4-04) — CodeMirror merge surface ------------------------------ */
+
+.diff-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--background);
+}
+
+.diff-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.diff-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--foreground-body);
+}
+
+.diff-orig {
+  color: var(--foreground-passive);
+}
+
+.diff-arrow {
+  margin: 0 4px;
+  color: var(--foreground-passive);
+}
+
+.diff-side-badge,
+.diff-badge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.diff-side-badge.side-staged {
+  background: var(--info-background);
+  color: var(--info);
+}
+
+.diff-side-badge.side-unstaged {
+  background: var(--background-tertiary-2);
+  color: var(--foreground-muted);
+}
+
+.diff-badge.added {
+  background: var(--info-background);
+  color: var(--status-in-review);
+}
+
+.diff-badge.deleted {
+  background: var(--destructive-background);
+  color: var(--destructive);
+}
+
+.diff-mode-toggle {
+  flex: none;
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.diff-mode-toggle button {
+  border-radius: 0;
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--foreground-muted);
+}
+
+.diff-mode-toggle button.active {
+  background: var(--background-tertiary-2);
+  color: var(--foreground);
+}
+
+.diff-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.diff-body .cm-editor {
+  height: 100%;
+}
+
+.diff-body .cm-mergeView,
+.diff-body .cm-mergeViewEditors {
+  height: 100%;
+}
+
+.diff-body .cm-scroller {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.diff-notice {
+  margin: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--background-1);
+  font-size: 13px;
+  color: var(--foreground-muted);
+}
+
+.diff-notice.error {
+  border-color: var(--destructive-border);
+  background: var(--destructive-background);
+  color: var(--destructive);
 }

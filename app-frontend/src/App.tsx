@@ -3,6 +3,7 @@
 // dispatch listener is installed by useCommands().
 
 import { useEffect } from "react";
+import ChangesSidebar from "./components/ChangesSidebar";
 import CommandPalette from "./components/CommandPalette";
 import Modals from "./components/Modals";
 import Onboarding from "./components/Onboarding";
@@ -10,6 +11,8 @@ import ResourceMonitor from "./components/ResourceMonitor";
 import Sidebar from "./components/Sidebar";
 import TaskView from "./components/TaskView";
 import { useCommands, hint } from "./lib/useCommands";
+import { wireChangesEvents } from "./store/changes";
+import { wireDiffsEvents } from "./store/diffs";
 import { useSidebar, wireSidebarEvents } from "./store/sidebar";
 import { useConversations, wireConversationEvents } from "./store/conversations";
 import { wireTabsEvents } from "./store/tabs";
@@ -25,10 +28,14 @@ function App() {
     const unlisten = wireSidebarEvents();
     const unlistenTabs = wireTabsEvents();
     const unlistenConversations = wireConversationEvents();
+    const unlistenChanges = wireChangesEvents();
+    const unlistenDiffs = wireDiffsEvents();
     return () => {
       unlisten();
       unlistenTabs();
       unlistenConversations();
+      unlistenChanges();
+      unlistenDiffs();
     };
   }, [load]);
   const ensureConversations = useConversations((s) => s.ensure);
@@ -67,6 +74,7 @@ function App() {
           </div>
         )}
       </section>
+      <ChangesSidebar />
     </main>
   );
 }

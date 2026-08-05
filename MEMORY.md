@@ -4,6 +4,43 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## Current state (2026-08-05, latest+++++)
+
+- **#43 E4-03 + #44 E4-04 Changes sidebar + diff renderer (one commit):**
+  Right-side Changes panel (`.changes-panel`, `.shell` grid now
+  `264px 1fr auto` with explicit `grid-column: 3`) toggled by sidebar-header
+  branch icon or ⌘⇧1 (`toggle-changes` command; ui store `changesOpen` —
+  NOT persisted, matches resourceOpen). `store/changes.ts`: snapshot per
+  workspace, actions refetch immediately post-invoke, `wireChangesEvents`
+  = 150 ms coalesced refetch on git:changed/files:changed for TRACKED
+  workspaces only — no polling (smoke-verified flat call count). Discard
+  confirm modal via ui `discardTarget` (untracked warns "deletes from
+  disk"). `ade-git::stage` — stage/stage_all/unstage (unborn-HEAD →
+  `git rm --cached -r` fallback)/discard (tracked→restore, untracked→fs
+  delete, missing→error); commands git_stage/git_stage_all/git_unstage/
+  git_discard. Row click → `openDiffTab` (lib/diff-tabs.ts): single =
+  preview (one preview per pane, next preview REPLACES it), double =
+  persistent; same file re-open activates (no dupe); opening preview's
+  file with preview:false flips it persistent. Tab id =
+  `diff:<side>:<workspaceId>:<path>` — restored tabs re-parse params from
+  the id (no sidecar state); preview-ness lives in store/diffs.ts,
+  restored tabs are persistent. `components/DiffView.tsx`:
+  @codemirror/merge — MergeView (split) / EditorView+unifiedMergeView
+  (unified), oneDark, language-data grammars, read-only; ONLY builds while
+  `active` (display:none zero-measure trap), guards: binary / tooLarge /
+  Added / Deleted single-doc states with badges. Mode toggle persists
+  `view-state:app:diff-mode`. Browser smoke proved: panel rows/glyphs/
+  rename orig→new, stage/stage-all/unstage/discard flows, event refresh,
+  preview replace + persistence, unified↔split + mode persistence across
+  reload, notices, diff content refresh on git:changed, restart restore
+  from seeded view-state. Mock lessons: multiple `ade:event` listeners
+  need handler ARRAYS; viewState must be seeded IN THE MOCK for reload
+  tests (mock re-init wipes persisted state); scope assertions to the
+  active `.tab-content` (hidden tabs stay mounted). Deps added:
+  codemirror, @codemirror/{merge,language,language-data,state,view,
+  theme-one-dark}. Next: **#45 E4-05** (inline-edit unstaged diffs ⌘S) or
+  **#48 E4-08** (footer git actions) — both unblocked.
+
 ## Current state (2026-08-05, latest++++)
 
 - **#42 E4-02 Git status/diff engine (worktree-scoped):** `ade-git` grew
