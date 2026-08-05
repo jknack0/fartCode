@@ -147,6 +147,7 @@ pub fn run() {
             commands::terminals::terminal_resize,
             commands::terminals::terminal_close,
             commands::terminals::terminal_surviving,
+            commands::terminals::terminal_list_for_task,
             commands::settings::get_project_settings,
             commands::settings::update_project_settings,
             commands::settings::share_with_team,

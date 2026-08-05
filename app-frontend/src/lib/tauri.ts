@@ -253,6 +253,17 @@ export function terminalSurviving(taskId: string): Promise<number> {
   return invoke("terminal_surviving", { taskId });
 }
 
+/** A live terminal with its agent tag (`null` = plain shell). */
+export interface TaskTerminalDto {
+  id: string;
+  agent: string | null;
+}
+
+/** Lists the task's live terminals (diff selection routing). */
+export function terminalListForTask(taskId: string): Promise<TaskTerminalDto[]> {
+  return invoke("terminal_list_for_task", { taskId });
+}
+
 /** Subscribe to terminal output chunks (base64); returns an unsubscribe fn. */
 export function onTerminalOutput(
   cb: (payload: { terminalId: string; data: string }) => void,

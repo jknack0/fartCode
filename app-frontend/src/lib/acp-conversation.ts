@@ -33,6 +33,26 @@ export async function ensureAcpConversation(
   return conv;
 }
 
+/** Focuses a tab wherever it lives, opening it in `pane` when it has no
+ * tab yet. */
+export function focusOrOpenTab(
+  taskId: string,
+  tabId: string,
+  kind: "terminal" | "conversation",
+  title: string,
+  pane: PaneId,
+): void {
+  const tabs = useTabs.getState();
+  const panes = tabs.panesByTask[taskId];
+  for (const p of ["left", "right"] as const) {
+    if (panes?.[p]?.tabs.some((t) => t.id === tabId)) {
+      tabs.setActiveTab(taskId, p, tabId);
+      return;
+    }
+  }
+  tabs.addTab(taskId, pane, { id: tabId, kind, title });
+}
+
 /** Focuses the conversation's tab wherever it lives, opening it in `pane`
  * when it has no tab yet. */
 export function focusConversationTab(
@@ -40,17 +60,5 @@ export function focusConversationTab(
   conversationId: string,
   pane: PaneId,
 ): void {
-  const tabs = useTabs.getState();
-  const panes = tabs.panesByTask[taskId];
-  for (const p of ["left", "right"] as const) {
-    if (panes?.[p]?.tabs.some((t) => t.id === conversationId)) {
-      tabs.setActiveTab(taskId, p, conversationId);
-      return;
-    }
-  }
-  tabs.addTab(taskId, pane, {
-    id: conversationId,
-    kind: "conversation",
-    title: "Agent",
-  });
+  focusOrOpenTab(taskId, conversationId, "conversation", "Agent", pane);
 }

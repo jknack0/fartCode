@@ -2173,3 +2173,9 @@ button.danger:hover {
   font-size: 11px;
   color: var(--destructive);
 }
+
+.diff-sel-dest {
+  margin-right: auto;
+  font-size: 11px;
+  color: var(--foreground-passive);
+}

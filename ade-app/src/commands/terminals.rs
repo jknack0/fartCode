@@ -73,6 +73,7 @@ pub fn terminal_open(
         .open(TerminalSpec {
             task_id: &task_id,
             project_id: &ctx.project_id,
+            agent: None,
             tmux,
             program: &shell,
             args: &[],
@@ -107,6 +108,7 @@ pub fn terminal_open_agent(
         .open(TerminalSpec {
             task_id: &task_id,
             project_id: &ctx.project_id,
+            agent: Some(&agent),
             tmux: false,
             program: &binary.to_string_lossy(),
             args: &[],
@@ -127,6 +129,16 @@ pub fn terminal_write(
     terminals
         .write(&terminal_id, &data)
         .map_err(|e| e.to_string())
+}
+
+/// Lists the task's live terminals with agent tags (diff selection prompt
+/// routing: agent terminal first, ACP chat fallback).
+#[tauri::command]
+pub fn terminal_list_for_task(
+    terminals: State<'_, Arc<TerminalManager>>,
+    task_id: String,
+) -> Vec<crate::terminals::TerminalInfo> {
+    terminals.list_for_task(&task_id)
 }
 
 /// Resizes the terminal PTY.

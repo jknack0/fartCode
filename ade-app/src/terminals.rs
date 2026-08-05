@@ -51,6 +51,9 @@ pub struct TerminalExited {
 
 struct Entry {
     task_id: String,
+    /// Provider id when this terminal runs an agent CLI (`terminal_open_agent`);
+    /// `None` for plain shells — the diff selection prompt routes to agents.
+    agent: Option<String>,
     /// Decoded tmux session id (`{project}:{task}:terminal:{slot}`) when
     /// the PTY runs a durable session (ADR-0025); `None` for plain shells.
     tmux_session_id: Option<String>,
@@ -63,6 +66,9 @@ struct Entry {
 pub struct TerminalSpec<'a> {
     pub task_id: &'a str,
     pub project_id: &'a str,
+    /// Provider id for agent terminals (`terminal_open_agent`); shells pass
+    /// `None`.
+    pub agent: Option<&'a str>,
     /// Run under tmux slot durability when the binary resolves.
     pub tmux: bool,
     pub program: &'a str,
@@ -81,6 +87,15 @@ pub struct TerminalManager {
     /// starts empty; the first open then prefers REUSING a live detached
     /// session over creating a fresh slot (ADR-0028).
     task_slots: Mutex<HashMap<String, HashSet<u32>>>,
+}
+
+/// One live terminal for `list_for_task`.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalInfo {
+    pub id: String,
+    /// Provider id for agent terminals; `None` for shells.
+    pub agent: Option<String>,
 }
 
 impl TerminalManager {
@@ -106,6 +121,7 @@ impl TerminalManager {
         let TerminalSpec {
             task_id,
             project_id,
+            agent,
             tmux,
             program,
             args,
@@ -174,6 +190,7 @@ impl TerminalManager {
         let id = uuid::Uuid::new_v4().to_string();
         let entry = Arc::new(Entry {
             task_id: task_id.to_string(),
+            agent: agent.map(str::to_string),
             tmux_session_id,
             handle: Mutex::new(handle),
         });
@@ -275,12 +292,25 @@ impl TerminalManager {
             .count()
     }
 
+    /// Live terminals of a task with their agent tags (the diff selection
+    /// prompt routes to the agent terminal when one exists).
+    pub fn list_for_task(&self, task_id: &str) -> Vec<TerminalInfo> {
+        self.terminals
+            .lock()
+            .iter()
+            .filter(|(_, e)| e.task_id == task_id)
+            .map(|(id, e)| TerminalInfo {
+                id: id.clone(),
+                agent: e.agent.clone(),
+            })
+            .collect()
+    }
+
     /// Types into the terminal.
     pub fn write(&self, id: &str, data: &str) -> Result<(), ade_core::Error> {
         let entry = self
             .terminals
-            .lock()
-            .get(id)
+            .lock()            .get(id)
             .cloned()
             .ok_or_else(|| ade_core::Error::Internal(format!("terminal not found: {id}")))?;
         let result = entry.handle.lock().write(data);

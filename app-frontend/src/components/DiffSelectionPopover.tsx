@@ -6,8 +6,9 @@
 // so the result is visible. Escape closes without sending.
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { MergeView } from "@codemirror/merge";
-import { ensureAcpConversation, focusConversationTab } from "../lib/acp-conversation";
+import { ensureAcpConversation, focusConversationTab, focusOrOpenTab } from "../lib/acp-conversation";
 import { getDiffView } from "../lib/diff-views";
+import { terminalListForTask, terminalWrite } from "../lib/tauri";
 import { useConversations } from "../store/conversations";
 import { useDiffs, type DiffParams, type DiffSelection } from "../store/diffs";
 import { useSidebar } from "../store/sidebar";
@@ -30,6 +31,7 @@ export default function DiffSelectionPopover({
   const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [destination, setDestination] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // A collapsed/changed selection resets the popover around the new one.
@@ -44,6 +46,23 @@ export default function DiffSelectionPopover({
   useEffect(() => {
     if (open) textareaRef.current?.focus();
   }, [open]);
+
+  // Where will the prompt go? Resolved when the popover opens so the user
+  // sees the routing (agent terminal vs ACP chat) before sending.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    terminalListForTask(taskId)
+      .then((terms) => {
+        if (cancelled) return;
+        const agent = terms.find((t) => t.agent !== null);
+        setDestination(agent ? `${agent.agent} terminal` : "Agent chat");
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, taskId]);
 
   if (!selection || !projectId) return null;
 
@@ -63,8 +82,6 @@ export default function DiffSelectionPopover({
     setSending(true);
     setError(null);
     try {
-      const conv = await ensureAcpConversation(projectId, taskId);
-      if (!conv) throw new Error("no ACP-capable provider available for this task");
       const side = selection.side === "a" ? " (baseline)" : "";
       const full =
         `${params.path} lines ${selection.fromLine}–${selection.toLine}${side}:\n` +
@@ -72,13 +89,31 @@ export default function DiffSelectionPopover({
         selection.text +
         "\n```\n\n" +
         text;
-      await useConversations.getState().sendPrompt(conv.id, full);
-      useDiffs.getState().setSelection(tabId, null);
+
+      // Route: the task's live agent terminal first — the work context
+      // lives there, and the prompt lands where the user is already
+      // watching. ACP chat is the fallback when no agent terminal exists.
+      const terminals = await terminalListForTask(taskId);
+      const agentTerm = terminals.find((t) => t.agent !== null);
       const tabs = useTabs.getState();
       const pane: PaneId =
         tabs.panesByTask[taskId]?.right && tabs.activePaneByTask[taskId] === "right"
           ? "right"
           : "left";
+
+      if (agentTerm) {
+        // Bracketed paste so multi-line content lands as one block, then
+        // Enter to submit.
+        await terminalWrite(agentTerm.id, `[200~${full}[201~\r`);
+        useDiffs.getState().setSelection(tabId, null);
+        focusOrOpenTab(taskId, agentTerm.id, "terminal", agentTerm.agent ?? "Agent", pane);
+        return;
+      }
+
+      const conv = await ensureAcpConversation(projectId, taskId);
+      if (!conv) throw new Error("no agent available for this task (no terminal, no ACP provider)");
+      await useConversations.getState().sendPrompt(conv.id, full);
+      useDiffs.getState().setSelection(tabId, null);
       focusConversationTab(taskId, conv.id, pane);
     } catch (e) {
       setError(String(e));
@@ -129,6 +164,7 @@ export default function DiffSelectionPopover({
       />
       {error && <p className="diff-sel-error">{error}</p>}
       <div className="diff-sel-actions">
+        {destination && <span className="diff-sel-dest">→ {destination}</span>}
         <button onClick={close} disabled={sending}>
           Cancel
         </button>
