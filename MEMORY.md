@@ -6,6 +6,16 @@ one exists).
 
 ## Current state (2026-08-05)
 
+- **Terminal lifecycle fix (ADR-0028):** reopen now shows every surviving
+  tmux terminal automatically, and closing a tab KILLS the session (no more
+  detach-survivors accumulating — a real task had grown to slots 0–10).
+  Mechanics: `close` runs `kill-session` + frees the slot; `pick_slot` →
+  `choose_terminal_slot` reuses the smallest live DETACHED session (never
+  double-attaches); window close = `detach_all` (PTYs die, sessions live);
+  restore calls new `terminal_surviving` and opens extra tabs for survivors
+  beyond the persisted tabs. Real-tmux integration test
+  `list_by_prefix_reports_survivors_with_attach_state` pins the listing.
+
 - **#30 E2-11-3 SessionManager + SessionCell:** `ade-acp::session` owns the
   runtime (cell = state machine starting→ready→working/cancelling→closed,
   prompt queue with drain-on-settle, permission broker, rev-guarded draft,

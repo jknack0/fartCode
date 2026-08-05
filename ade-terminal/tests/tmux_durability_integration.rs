@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use ade_core::pty::tmux::{
     build_terminal_session_command, build_tmux_shell_line, kill_tmux_sessions_by_prefix,
-    make_tmux_session_name, resolve_tmux_binary,
+    list_tmux_sessions_by_prefix, make_tmux_session_name, resolve_tmux_binary,
 };
 use ade_core::terminals::pty::{EnvPolicy, PtyHandle, PtyManager, PtySize};
 use ade_terminal::PortablePtyManager;
@@ -214,4 +214,67 @@ fn sweep_never_touches_foreign_sessions() {
     let _ = std::process::Command::new(tmux_command())
         .args(["kill-session", "-t", &foreign])
         .status();
+}
+
+#[test]
+fn list_by_prefix_reports_survivors_with_attach_state() {
+    // ADR-0028 depends on `list_tmux_sessions_by_prefix` reporting BOTH the
+    // decoded ids and their attach state (slot reuse must skip attached
+    // sessions). Needs a real tmux server — skip when absent.
+    if resolve_tmux_binary().is_none() {
+        eprintln!("tmux not installed — skipping list test");
+        return;
+    }
+    let pid = std::process::id();
+    let prefix = format!("listproj:{pid}:terminal:");
+    let _guard = SweepGuard {
+        prefix: prefix.clone(),
+    };
+
+    // Slot 0: detached survivor. Slot 1: gets attached via a live PTY client.
+    let dir = tempfile::tempdir().expect("tempdir");
+    for slot in [0u32, 1] {
+        let name = make_tmux_session_name(&format!("{prefix}{slot}"));
+        let status = std::process::Command::new(tmux_command())
+            .args(["new-session", "-d", "-s", &name, "sleep", "30"])
+            .status()
+            .expect("test session created");
+        assert!(status.success(), "failed creating session for slot {slot}");
+    }
+
+    // Both decode under our prefix; foreign prefixes never match.
+    let live = list_tmux_sessions_by_prefix(&prefix);
+    assert_eq!(live.len(), 2, "expected both slots listed, got {live:?}");
+    assert!(
+        live.iter().all(|s| !s.attached),
+        "fresh sessions are detached: {live:?}"
+    );
+    let foreign = list_tmux_sessions_by_prefix(&format!("listproj:{pid}:OTHER:"));
+    assert!(foreign.is_empty(), "{foreign:?}");
+
+    // Attach slot 1 through the same PTY path the app uses; its attach
+    // state must flip so slot reuse can skip it. Poll — client
+    // registration is asynchronous.
+    let attached_name = make_tmux_session_name(&format!("{prefix}1"));
+    let line = format!("tmux -u attach-session -t \"{attached_name}\"");
+    let mgr = PortablePtyManager;
+    let _client = spawn_attach(&mgr, &line, dir.path());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut slot1_attached = false;
+    while Instant::now() < deadline {
+        slot1_attached = list_tmux_sessions_by_prefix(&prefix)
+            .iter()
+            .find(|s| s.session_id == format!("{prefix}1"))
+            .is_some_and(|s| s.attached);
+        if slot1_attached {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(slot1_attached, "attached slot never reported attached");
+    let slot0 = list_tmux_sessions_by_prefix(&prefix)
+        .into_iter()
+        .find(|s| s.session_id == format!("{prefix}0"))
+        .expect("slot 0 still listed");
+    assert!(!slot0.attached, "untouched slot flipped to attached");
 }

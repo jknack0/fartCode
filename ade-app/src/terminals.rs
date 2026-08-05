@@ -51,6 +51,9 @@ pub struct TerminalExited {
 
 struct Entry {
     task_id: String,
+    /// Decoded tmux session id (`{project}:{task}:terminal:{slot}`) when
+    /// the PTY runs a durable session (ADR-0025); `None` for plain shells.
+    tmux_session_id: Option<String>,
     handle: Mutex<Box<dyn PtyHandle>>,
 }
 
@@ -74,10 +77,9 @@ pub struct TerminalManager {
     pty: PortablePtyManager,
     app: tauri::AppHandle,
     terminals: Arc<Mutex<HashMap<String, Arc<Entry>>>>,
-    /// Tmux slots allocated per task BY THIS PROCESS (ADR-0025). A closed
-    /// tab keeps its slot allocated (detach semantics) so the next open gets
-    /// a NEW session; a restart starts empty, so the task's first open
-    /// reattaches slot 0 — the surviving default terminal.
+    /// Tmux slots allocated per task BY THIS PROCESS (ADR-0025). A restart
+    /// starts empty; the first open then prefers REUSING a live detached
+    /// session over creating a fresh slot (ADR-0028).
     task_slots: Mutex<HashMap<String, HashSet<u32>>>,
 }
 
@@ -114,10 +116,11 @@ impl TerminalManager {
         let tmux_binary = tmux
             .then(ade_core::pty::tmux::resolve_tmux_binary)
             .flatten();
+        let mut tmux_session_id: Option<String> = None;
         let (spawn_cmd, spawn_args, spawn_env): (String, Vec<String>, Vec<(String, String)>) =
             match tmux_binary {
                 Some(binary) => {
-                    let slot = self.allocate_slot(task_id);
+                    let slot = self.pick_slot(project_id, task_id);
                     let session_id = format!("{project_id}:{task_id}:terminal:{slot}");
                     let name = ade_core::pty::tmux::make_tmux_session_name(&session_id);
                     let inner = ade_core::pty::tmux::build_terminal_session_command(cwd, program);
@@ -129,6 +132,7 @@ impl TerminalManager {
                     if let Some(path) = &binary.path_overlay {
                         env.push(("PATH".into(), path.clone()));
                     }
+                    tmux_session_id = Some(session_id);
                     ("/bin/sh".into(), vec!["-c".into(), line], env)
                 }
                 None => {
@@ -138,7 +142,7 @@ impl TerminalManager {
                     (program.to_string(), args.to_vec(), Vec::new())
                 }
             };
-        let handle = self.pty.spawn(
+        let spawn_result = self.pty.spawn(
             &spawn_cmd,
             &spawn_args,
             cwd,
@@ -148,10 +152,29 @@ impl TerminalManager {
                 cols: cols.max(2),
             },
             EnvPolicy::Inherit,
-        )?;
+        );
+        let handle = match spawn_result {
+            Ok(handle) => handle,
+            Err(e) => {
+                // A failed spawn must not keep the slot reserved (ADR-0028):
+                // the session was neither created nor attached.
+                if let Some(session_id) = &tmux_session_id {
+                    if let Some(rest) = session_id.rsplit_once(':') {
+                        if let Ok(slot) = rest.1.parse::<u32>() {
+                            self.task_slots
+                                .lock()
+                                .get_mut(task_id)
+                                .map(|used| used.remove(&slot));
+                        }
+                    }
+                }
+                return Err(e);
+            }
+        };
         let id = uuid::Uuid::new_v4().to_string();
         let entry = Arc::new(Entry {
             task_id: task_id.to_string(),
+            tmux_session_id,
             handle: Mutex::new(handle),
         });
         self.terminals.lock().insert(id.clone(), Arc::clone(&entry));
@@ -212,17 +235,44 @@ impl TerminalManager {
         Ok(id)
     }
 
-    /// Smallest unused tmux slot for the task IN THIS PROCESS (ADR-0025).
-    /// Slots stay allocated after tab close (detach semantics — a new open
-    /// gets a fresh session, never accidentally reattaches a detached one);
-    /// a restarted process starts empty, so its first open for the task
-    /// claims slot 0 and reattaches the surviving default terminal.
-    fn allocate_slot(&self, task_id: &str) -> u32 {
-        let mut slots = self.task_slots.lock();
-        let used = slots.entry(task_id.to_string()).or_default();
-        let slot = (0..).find(|n| !used.contains(n)).expect("u32 slot space");
-        used.insert(slot);
+    /// Slot for the task's next open (ADR-0028): reuse the smallest live
+    /// DETACHED session this process does not already own; else the first
+    /// free slot. See `choose_terminal_slot` for the policy.
+    fn pick_slot(&self, project_id: &str, task_id: &str) -> u32 {
+        let prefix = format!("{project_id}:{task_id}:terminal:");
+        let live = ade_core::pty::tmux::list_tmux_sessions_by_prefix(&prefix);
+        let owned = self
+            .task_slots
+            .lock()
+            .get(task_id)
+            .cloned()
+            .unwrap_or_default();
+        let slot = ade_core::pty::tmux::choose_terminal_slot(&prefix, &owned, &live);
+        self.task_slots
+            .lock()
+            .entry(task_id.to_string())
+            .or_default()
+            .insert(slot);
         slot
+    }
+
+    /// Live tmux sessions of the task this process does NOT currently show
+    /// (what a fresh restore would surface — ADR-0028). 0 when tmux is
+    /// absent or no server runs.
+    pub fn surviving_session_count(&self, project_id: &str, task_id: &str) -> usize {
+        let prefix = format!("{project_id}:{task_id}:terminal:");
+        let owned: HashSet<String> = {
+            let terminals = self.terminals.lock();
+            terminals
+                .values()
+                .filter(|e| e.task_id == task_id)
+                .filter_map(|e| e.tmux_session_id.clone())
+                .collect()
+        };
+        ade_core::pty::tmux::list_tmux_sessions_by_prefix(&prefix)
+            .iter()
+            .filter(|s| !owned.contains(&s.session_id))
+            .count()
     }
 
     /// Types into the terminal.
@@ -249,11 +299,30 @@ impl TerminalManager {
         result
     }
 
-    /// Kills the shell and drops the entry. Idempotent.
+    /// Kills the shell and drops the entry. Idempotent. With tmux
+    /// durability, closing ALSO kills the session (ADR-0028): a closed tab
+    /// is an intentional teardown, not a detach — the session must not
+    /// linger detached for a later open to trip over.
     pub fn close(&self, id: &str) {
         let entry = self.terminals.lock().remove(id);
         if let Some(entry) = entry {
             let _ = entry.handle.lock().kill();
+            if let Some(session_id) = &entry.tmux_session_id {
+                let name = ade_core::pty::tmux::make_tmux_session_name(session_id);
+                if let Err(e) = ade_core::pty::tmux::kill_tmux_session(&name) {
+                    tracing::warn!(session = %name, error = %e, "tmux kill-session on close failed");
+                }
+                // The session is gone — free its slot so the next open can
+                // recreate a low-numbered session instead of climbing forever.
+                if let Some((_, slot_str)) = session_id.rsplit_once(':') {
+                    if let Ok(slot) = slot_str.parse::<u32>() {
+                        self.task_slots
+                            .lock()
+                            .get_mut(&entry.task_id)
+                            .map(|used| used.remove(&slot));
+                    }
+                }
+            }
         }
     }
 
@@ -282,5 +351,18 @@ impl TerminalManager {
             );
         }
         self.task_slots.lock().remove(task_id);
+    }
+
+    /// Detach every live terminal (ADR-0028 window-close semantics): kill
+    /// the ATTACH clients (PTYs) but keep tmux sessions alive — reopening
+    /// the UI reattaches the same shells. Plain-PTY shells die with their
+    /// PTY (they have nothing to survive into; reference parity). Entries
+    /// and slots are dropped so a reload starts clean.
+    pub fn detach_all(&self) {
+        let entries: Vec<Arc<Entry>> = self.terminals.lock().drain().map(|(_, e)| e).collect();
+        for entry in entries {
+            let _ = entry.handle.lock().kill();
+        }
+        self.task_slots.lock().clear();
     }
 }

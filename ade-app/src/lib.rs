@@ -37,6 +37,16 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
+        // Window close = detach, not teardown (ADR-0028): the tmux sessions
+        // must survive so reopening the UI reattaches the same shells.
+        // (Task/tab close is the teardown path — it kills the sessions.)
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                if let Some(terminals) = window.try_state::<Arc<terminals::TerminalManager>>() {
+                    terminals.detach_all();
+                }
+            }
+        })
         .setup(|app| {
             let app_state = App::init(std::env::var("ADE_DB_FILE").ok().as_deref())?;
             prune_view_state_on_boot(&app_state);
@@ -85,6 +95,7 @@ pub fn run() {
             commands::terminals::terminal_write,
             commands::terminals::terminal_resize,
             commands::terminals::terminal_close,
+            commands::terminals::terminal_surviving,
             commands::settings::get_project_settings,
             commands::settings::update_project_settings,
             commands::settings::share_with_team,
