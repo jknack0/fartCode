@@ -454,7 +454,27 @@ impl TaskCreationService {
             }
             _ => {
                 // worktree-kind rows: the config carries the git setup.
-                let (git, target) = self.workspace_intent(&workspace_id)?;
+                let (git, target) = match self.workspace_intent(&workspace_id) {
+                    Ok(intent) => intent,
+                    Err(_) => {
+                        // Legacy row (created before the command provisioned
+                        // at create time): no config to read, so mint the
+                        // default intent — fresh branch off the project's
+                        // base ref — and persist it so re-provision and
+                        // deletion see a stable setup.
+                        let git = self.default_git_setup(&project, &task)?;
+                        let target = WorkspaceTarget::NewWorktree;
+                        let config = build_workspace_config(&git, &target);
+                        self.with_conn(|conn| {
+                            conn.execute(
+                                "UPDATE workspaces SET config = ?1, updated_at = datetime('now') WHERE id = ?2",
+                                rusqlite::params![config.to_string(), workspace_id],
+                            )?;
+                            Ok(())
+                        })?;
+                        (git, target)
+                    }
+                };
                 match target {
                     WorkspaceTarget::RepositoryInstance { .. } | WorkspaceTarget::Byoi { .. } => {
                         (None, None)
@@ -509,6 +529,41 @@ impl TaskCreationService {
             workspace_id,
             path,
             warning,
+        })
+    }
+
+    /// The default git setup for legacy workspace rows healed by provision:
+    /// `ade/<task-slug>-<suffix>` off the project's base ref, never pushed
+    /// (create-time `push_on_create` applies to the create flow only — a
+    /// heal must not surprise-push).
+    fn default_git_setup(
+        &self,
+        project: &crate::projects::model::Project,
+        task: &Task,
+    ) -> Result<GitSetup, Error> {
+        let group: crate::settings::ProjectGroup =
+            serde_json::from_value(self.settings.get_json("project")?)?;
+        let raw_branch = crate::tasks::naming::generate_task_name(Some(&task.name), None, true);
+        let suffix = crate::tasks::naming::random_suffix();
+        let branch_name = crate::tasks::naming::resolve_task_branch_name(
+            &crate::tasks::naming::BranchNameOptions {
+                raw_branch: &raw_branch,
+                branch_prefix: Some(&group.branch_prefix),
+                suffix: &suffix,
+                append_random_suffix: group.append_random_branch_suffix,
+                linked_issue: None,
+                disable_random_suffix: false,
+            },
+        );
+        let base_ref = project.base_ref();
+        let from_branch = match base_ref.split_once('/') {
+            Some((remote, branch)) => SourceBranchRef::remote(branch, remote),
+            None => SourceBranchRef::local(base_ref),
+        };
+        Ok(GitSetup::CreateBranch {
+            branch_name,
+            from_branch,
+            push_branch: false,
         })
     }
 

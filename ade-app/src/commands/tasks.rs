@@ -1,32 +1,87 @@
-//! Task commands (E1-04 sidebar: list, pin toggle; E2-09 delete).
+//! Task commands (E1-04 sidebar: list, pin toggle; E2-09 delete; E2-04
+//! create+provision).
 
+use ade_core::projects::ProjectStore;
 use ade_core::tasks::deletion::DeleteTaskOptions;
-use ade_core::tasks::{CreateTaskOptions, TaskDto, TaskStore};
+use ade_core::tasks::naming::{
+    generate_task_name, random_suffix, resolve_task_branch_name, BranchNameOptions,
+};
+use ade_core::tasks::operations::{CreateTaskParams, GitSetup, SourceBranchRef, TaskConfigParams};
+use ade_core::tasks::{TaskDto, TaskStore, WorkspaceTarget};
 use std::sync::Arc;
 
 use tauri::State;
 
 use crate::app::App;
 
+/// Creates a task AND provisions its workspace (worktree + branch) in one
+/// shot — the E2-04 create_with_provision flow. The branch name follows the
+/// project group settings (prefix `ade` + random suffix by default); the
+/// source ref is the project's base ref.
 #[tauri::command]
 pub fn create_task(
     app: State<'_, Arc<App>>,
     project_id: String,
     name: String,
 ) -> Result<TaskDto, String> {
-    app.tasks
-        .create(CreateTaskOptions {
-            project_id,
-            name,
+    let project = app
+        .projects
+        .get(&project_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("project not found: {project_id}"))?;
+
+    let group = app
+        .settings
+        .get(&ade_core::settings::registry::PROJECT)
+        .map_err(|e| e.to_string())?;
+
+    let raw_branch = generate_task_name(Some(&name), None, true);
+    let branch_name = resolve_task_branch_name(&BranchNameOptions {
+        raw_branch: &raw_branch,
+        branch_prefix: Some(&group.branch_prefix),
+        suffix: &random_suffix(),
+        append_random_suffix: group.append_random_branch_suffix,
+        linked_issue: None,
+        disable_random_suffix: false,
+    });
+
+    // Base ref: "origin/main" (remote) or "main" (local).
+    let base_ref = project.base_ref();
+    let from_branch = match base_ref.split_once('/') {
+        Some((remote, branch)) => SourceBranchRef::remote(branch, remote),
+        None => SourceBranchRef::local(base_ref),
+    };
+
+    app.task_creation
+        .create_with_provision(CreateTaskParams {
             id: None,
-            initial_status: None,
-            linked_issue: None,
-            initial_conversation: None,
+            project_id,
+            task_config: TaskConfigParams {
+                name,
+                initial_status: None,
+                linked_issue: None,
+                initial_conversation: None,
+            },
+            git: GitSetup::CreateBranch {
+                branch_name,
+                from_branch,
+                push_branch: group.push_on_create,
+            },
+            workspace: WorkspaceTarget::NewWorktree,
             automation_run_id: None,
-            workspace_target: None,
-            workspace_config: None,
         })
-        .map(|t| TaskDto::from(&t))
+        .map(|r| TaskDto::from(&r.task))
+        .map_err(|e| e.to_string())
+}
+
+/// Idempotent re-provision (E2-04 provision): materializes the task's
+/// worktree when it's missing — heals tasks created before the command
+/// provisioned at create time.
+#[tauri::command]
+pub fn provision_task(app: State<'_, Arc<App>>, task_id: String) -> Result<(), String> {
+    app.task_creation
+        .provision(&task_id)
+        .map(|_| ())
         .map_err(|e| e.to_string())
 }
 

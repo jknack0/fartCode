@@ -19,6 +19,7 @@ use ade_core::pty::launcher::{NoopRemoteRehydrate, Rehydrator};
 use ade_core::pty::sessions::SessionRegistry;
 use ade_core::settings::DbSettingsStore;
 use ade_core::tasks::deletion::TaskDeletionService;
+use ade_core::tasks::operations::TaskCreationService;
 use ade_core::tasks::DbTaskStore;
 
 pub struct App {
@@ -38,6 +39,9 @@ pub struct App {
     pub rehydrator: Rehydrator,
     /// E2-09 task deletion/teardown.
     pub deletion: TaskDeletionService,
+    /// E2-04 create+provision (worktree materialization). `create_task`
+    /// routes through this so every task gets its worktree at creation.
+    pub task_creation: TaskCreationService,
     /// E3-07 provider credentials (keyring-backed).
     pub provider_accounts: Arc<ProviderAccountStore>,
     /// E4-01 workspace file+git watcher (registered via `watchers.rs`).
@@ -98,6 +102,17 @@ impl App {
             sessions,
         );
 
+        // E2-04 create+provision: the `create_task` command's real flow —
+        // store-only create never materializes a worktree (regression the
+        // E4-03 Changes panel exposed as "workspace has no local path").
+        let task_creation = TaskCreationService::new(
+            db.clone(),
+            settings.clone(),
+            Arc::new(ade_git::CliGit),
+            WorktreeManager::new(db.clone(), settings.clone(), Arc::new(ade_git::CliGit)),
+            event_bus.clone(),
+        );
+
         // E4-01: file+git event watcher → live refresh pipeline. Lifecycle
         // (boot backfill, provision/delete hooks) is wired in watchers.rs.
         let fs_watch = Arc::new(
@@ -114,6 +129,7 @@ impl App {
             event_bus,
             rehydrator,
             deletion,
+            task_creation,
             provider_accounts,
             fs_watch,
         }))

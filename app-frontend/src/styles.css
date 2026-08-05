@@ -1141,6 +1141,33 @@ button.danger:hover {
   color: var(--foreground-muted);
 }
 
+.tab-bar-trailing {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+}
+
+.changes-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  color: var(--foreground-passive);
+}
+
+.changes-toggle:hover {
+  background: var(--surface-elevated-hover);
+  color: var(--foreground);
+}
+
+.changes-toggle.active {
+  background: var(--background-tertiary-2);
+  color: var(--info);
+}
+
 /* the pane holding keyboard focus tints its active tab's kind glyph */
 .tab-bar.active .tab.active::before {
   content: "";

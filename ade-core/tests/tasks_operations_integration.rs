@@ -510,3 +510,61 @@ fn list_branches_returns_repo_refs_for_picker() {
         "branches: {branches:?}"
     );
 }
+
+#[test]
+fn provision_heals_legacy_configless_worktree_row() {
+    let fx = Fixture::new();
+    // Simulate the pre-fix create_task command: bare store create — the
+    // workspace row is inserted with kind 'worktree' and NO config, and no
+    // worktree ever materializes.
+    let store = ade_core::tasks::DbTaskStore::new(fx.db.clone(), fx.bus.clone());
+    let task = ade_core::tasks::TaskStore::create(
+        &store,
+        ade_core::tasks::CreateTaskOptions {
+            project_id: fx.project.id.clone(),
+            name: "legacy task".into(),
+            id: None,
+            initial_status: None,
+            linked_issue: None,
+            initial_conversation: None,
+            automation_run_id: None,
+            workspace_target: None,
+            workspace_config: None,
+        },
+    )
+    .unwrap();
+    let workspace_id = task.workspace_id.clone().unwrap();
+    let (_, kind, _, config) = fx.workspace_row(&workspace_id);
+    assert_eq!(kind, "worktree");
+    assert!(config.is_none(), "legacy row starts config-less");
+
+    // Heal: provision mints + persists a default intent and materializes
+    // the worktree.
+    let result = fx.service.provision(&task.id).unwrap();
+    let path = result.path.expect("worktree materialized");
+    assert!(path.exists(), "worktree on disk at {path:?}");
+
+    let (_, _, _, config) = fx.workspace_row(&workspace_id);
+    let config = config.expect("heal persists the minted config");
+    assert!(
+        config.contains("ade/legacy-task"),
+        "config carries the default branch: {config}"
+    );
+
+    // The branch exists (name carries the random suffix — match by prefix).
+    let branches = fx.git.branches(&fx.project.path).unwrap();
+    assert!(
+        branches
+            .iter()
+            .any(|b| b.name.starts_with("ade/legacy-task-")),
+        "branch created: {branches:?}"
+    );
+
+    // Re-provision is stable (idempotent, uses the persisted config).
+    // Compare canonicalized — macOS tempdirs resolve /var → /private/var.
+    let again = fx.service.provision(&task.id).unwrap();
+    assert_eq!(
+        again.path.as_deref().map(|p| p.canonicalize().unwrap()),
+        Some(path.canonicalize().unwrap())
+    );
+}

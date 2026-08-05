@@ -3,13 +3,13 @@
 // discard actions (discard confirms via the ui store modal), and
 // click-to-open diff tabs (single = preview, double = persistent).
 // Refresh is event-driven through the changes store; nothing here polls.
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { openDiffTab } from "../lib/diff-tabs";
 import { useChanges } from "../store/changes";
 import { useSidebar } from "../store/sidebar";
 import { useUi } from "../store/ui";
 import { hint } from "../lib/useCommands";
-import type { DiffSide, GitChangeDto } from "../lib/tauri";
+import { provisionTask, type DiffSide, type GitChangeDto } from "../lib/tauri";
 import { IconBranch, IconClose, IconDiscard, IconMinus, IconPlus } from "./icons";
 
 const GLYPH: Record<GitChangeDto["status"], string> = {
@@ -30,6 +30,7 @@ export default function ChangesSidebar() {
   const taskId = task?.id ?? null;
   const workspaceId = task?.workspaceId ?? null;
   const entry = useChanges((s) => (workspaceId ? s.byWorkspace[workspaceId] : undefined));
+  const [provisioning, setProvisioning] = useState(false);
 
   useEffect(() => {
     if (open && workspaceId) void useChanges.getState().ensure(workspaceId);
@@ -71,6 +72,39 @@ export default function ChangesSidebar() {
         <p className="changes-empty muted">
           This task has no workspace yet — changes appear once it's provisioned.
         </p>
+      ) : entry?.error && entry.error.includes("workspace has no local path") ? (
+        <div className="changes-empty">
+          <p className="muted">This task's workspace isn't on disk yet.</p>
+          <button
+            className="primary"
+            disabled={provisioning}
+            onClick={async () => {
+              setProvisioning(true);
+              try {
+                await provisionTask(taskId);
+                await useChanges.getState().refetch(workspaceId);
+              } catch (e) {
+                useChanges.setState((s) => ({
+                  byWorkspace: {
+                    ...s.byWorkspace,
+                    [workspaceId]: {
+                      ...(s.byWorkspace[workspaceId] ?? {
+                        snapshot: null,
+                        loading: false,
+                        error: null,
+                      }),
+                      error: String(e),
+                    },
+                  },
+                }));
+              } finally {
+                setProvisioning(false);
+              }
+            }}
+          >
+            {provisioning ? "Provisioning…" : "Provision workspace"}
+          </button>
+        </div>
       ) : entry?.loading && !snapshot ? (
         <p className="changes-empty muted">Reading worktree…</p>
       ) : entry?.error && !snapshot ? (

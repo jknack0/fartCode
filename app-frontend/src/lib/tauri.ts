@@ -53,6 +53,11 @@ export function createTask(projectId: string, name: string): Promise<TaskDto> {
 export function listTasks(projectId: string): Promise<TaskDto[]> {
   return invoke("list_tasks", { projectId });
 }
+
+/** Idempotently materializes the task's workspace (worktree + branch). */
+export function provisionTask(taskId: string): Promise<void> {
+  return invoke("provision_task", { taskId });
+}
 export function togglePin(id: string): Promise<TaskDto> {
   return invoke("toggle_pin", { id });
 }
