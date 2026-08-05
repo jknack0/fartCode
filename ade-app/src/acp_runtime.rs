@@ -41,12 +41,34 @@ use serde::Serialize;
 /// point at the fake adapter and E3 can plug in real descriptors later.
 pub type AdapterResolver = Arc<dyn Fn(&str) -> Result<PathBuf, Error> + Send + Sync>;
 
-/// Default resolver: `<provider-id>-acp` on PATH (E3 ships the real
-/// adapter descriptors).
+/// Real-world adapter binary + install package per provider (the npm
+/// binary names do NOT follow a `<id>-acp` pattern — claude's adapter is
+/// `claude-agent-acp` from `@agentclientprotocol/claude-agent-acp`).
+/// Long-term home is the provider descriptor's adapter metadata (E3 plugin
+/// machinery, Phase 2); until then this table is the single source. The
+/// `<id>-acp` fallback is kept for providers whose adapters do follow it.
+fn adapter_binary(provider_id: &str) -> (String, Option<&'static str>) {
+    match provider_id {
+        "claude" => (
+            "claude-agent-acp".to_string(),
+            Some("@agentclientprotocol/claude-agent-acp"),
+        ),
+        _ => (format!("{provider_id}-acp"), None),
+    }
+}
+
+/// Default resolver: real adapter binary name on PATH, with an actionable
+/// install hint when the package is known.
 pub fn default_adapter_resolver(provider_id: &str) -> Result<PathBuf, Error> {
-    let name = format!("{provider_id}-acp");
-    find_on_path(&name)
-        .ok_or_else(|| Error::InvalidState(format!("ACP adapter binary not found on PATH: {name}")))
+    let (name, package) = adapter_binary(provider_id);
+    find_on_path(&name).ok_or_else(|| {
+        let hint = package
+            .map(|p| format!(" — install with: npm i -g {p}"))
+            .unwrap_or_default();
+        Error::InvalidState(format!(
+            "ACP adapter binary not found on PATH: {name}{hint}"
+        ))
+    })
 }
 
 /// ade-core error → ade-acp error (the runtime's native error type).
@@ -168,6 +190,18 @@ impl AcpRuntime {
         let cwd = self.resolve_cwd(conversation_id)?;
         let adapter = (self.adapter_resolver)(&provider_id)?;
         let env = self.provider_env(&provider_id);
+        // Reference behavior (plugins claude/index.ts): point the adapter's
+        // Claude Agent SDK at the host-installed claude binary instead of
+        // the SDK's auto-downloaded native binary.
+        let mut env = env;
+        if provider_id == "claude" && !env.iter().any(|(k, _)| k == "CLAUDE_CODE_EXECUTABLE") {
+            if let Some(cli) = find_on_path("claude") {
+                env.push((
+                    "CLAUDE_CODE_EXECUTABLE".into(),
+                    cli.to_string_lossy().into_owned(),
+                ));
+            }
+        }
 
         let manager = Arc::clone(&self.manager);
         let resolver = SessionManager::permission_resolver(
