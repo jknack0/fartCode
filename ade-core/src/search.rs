@@ -1,6 +1,6 @@
 //! FTS search (E1-09): the `search_index` FTS5 virtual table (created by
 //! E1-01's `ensure_fts_tables`, trigram tokenizer) backs ⌘K lookups over
-//! projects, tasks, and conversations. This module owns the write path
+//! projects and tasks. This module owns the write path
 //! (upsert/delete/backfill) and the query path.
 
 use std::sync::Arc;
@@ -130,7 +130,6 @@ pub fn backfill(
     db: &Arc<dyn Db>,
     projects: &[(String, String)],
     tasks: &[(String, String, String)],
-    conversations: &[(String, String, String)],
 ) -> Result<(), Error> {
     let conn = db
         .conn()
@@ -142,17 +141,6 @@ pub fn backfill(
     }
     for (id, project_id, name) in tasks {
         upsert_row(&conn, "task", id, Some(project_id), None, name, &[name])?;
-    }
-    for (id, task_id, title) in conversations {
-        upsert_row(
-            &conn,
-            "conversation",
-            id,
-            None,
-            Some(task_id),
-            title,
-            &[title],
-        )?;
     }
     Ok(())
 }
@@ -253,15 +241,9 @@ mod tests {
             &db,
             &[("p1".into(), "acme-web".into())],
             &[("t1".into(), "p1".into(), "fix navbar".into())],
-            &[("c1".into(), "t1".into(), "how do we fix it".into())],
         )
         .unwrap();
         assert_eq!(query(&db, "acme", 10).unwrap().len(), 1);
-        assert_eq!(
-            query(&db, "fix", 10).unwrap().len(),
-            2,
-            "task + conversation"
-        );
-        assert_eq!(query(&db, "how", 10).unwrap().len(), 1);
+        assert_eq!(query(&db, "fix", 10).unwrap().len(), 1, "task title");
     }
 }

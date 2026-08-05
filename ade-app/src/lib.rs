@@ -45,7 +45,6 @@ pub fn run() {
                 app_state.db.clone(),
                 app_state.projects.clone(),
                 app_state.tasks.clone(),
-                app_state.conversations.clone(),
                 app_state.event_bus.clone(),
             );
             // E2-07: rehydrate previously-spawned agent sessions AFTER DB
@@ -82,6 +81,7 @@ pub fn run() {
             commands::provider_accounts::set_default_provider_account,
             commands::provider_accounts::list_providers,
             commands::terminals::terminal_open,
+            commands::terminals::terminal_open_agent,
             commands::terminals::terminal_write,
             commands::terminals::terminal_resize,
             commands::terminals::terminal_close,
@@ -94,9 +94,6 @@ pub fn run() {
             commands::search::resource_sample,
             commands::search::get_resource_monitor_enabled,
             commands::search::set_resource_monitor_enabled,
-            commands::conversations::list_conversations,
-            commands::conversations::create_conversation,
-            commands::conversations::delete_conversation,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

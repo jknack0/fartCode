@@ -42,11 +42,13 @@ export function getTerminalSession(terminalId: string): TermSession {
     fontFamily:
       '"JetBrainsMono Nerd Font Mono", "MesloLGS Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
     fontSize: 12,
+    // Matches the app surface tokens in styles.css (diagram board, signal
+    // aspects) — keep in sync with --inset / --ivory / --aspect-proceed.
     theme: {
-      background: "#0d1424",
-      foreground: "#e5e7eb",
-      cursor: "#d97706",
-      selectionBackground: "rgba(217, 119, 6, 0.3)",
+      background: "#0d110e",
+      foreground: "#e4dfd0",
+      cursor: "#45b25c",
+      selectionBackground: "rgba(69, 178, 92, 0.28)",
     },
   });
   const fit = new FitAddon();

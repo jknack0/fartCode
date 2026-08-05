@@ -33,7 +33,6 @@ function scopeContext(e: KeyboardEvent): ScopeContext {
   return {
     projectView: sb.selectedProjectId !== null,
     taskView: sb.selectedTaskId !== null,
-    conversationView: sb.selectedTaskId !== null,
     editorFocused: isEditableTarget(e.target),
     modalOpen: ui.modalOpen(),
   };

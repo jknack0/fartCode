@@ -1,8 +1,6 @@
-// Tab bar (E2-10): one per task pane. Tabs are the task's conversations
-// (the registered tab kind); click to activate, × to close (⌘W), + to start
-// a new conversation (⌘T).
+// Tab bar (E2-10): one per task pane. Tabs are terminals; click to
+// activate, × to close (⌘W), ⌘T adds another.
 import { useTabs, type PaneId } from "../store/tabs";
-import { useConversations } from "../store/conversations";
 
 export default function TabBar({
   taskId,
@@ -18,7 +16,6 @@ export default function TabBar({
 
   const activate = (tabId: string) => {
     useTabs.getState().setActiveTab(taskId, pane, tabId);
-    useConversations.getState().setActive(tabId);
   };
 
   return (

@@ -4,39 +4,41 @@ import { useEffect } from "react";
 import TabBar from "./TabBar";
 import { TAB_KINDS } from "../lib/tab-registry";
 import { useTabs, type PaneId, type Pane } from "../store/tabs";
-import { useSidebar } from "../store/sidebar";
 
 export default function TaskView({
   taskId,
-  projectId,
 }: {
   taskId: string;
   projectId: string;
 }) {
-  const taskName = useSidebar(
-    (s) =>
-      (s.tasksByProject[projectId] ?? []).find((t) => t.id === taskId)?.name ??
-      "Task",
-  );
   const panes = useTabs((s) => s.panesByTask[taskId]);
 
   useEffect(() => {
-    void useTabs.getState().ensureTabs(taskId, taskName);
-  }, [taskId, taskName]);
+    void useTabs.getState().ensureTabs(taskId);
+  }, [taskId]);
 
   if (!panes) return null;
 
-  const renderPane = (pane: PaneId, state: Pane) => {
-    const tab =
-      state.tabs.find((t) => t.id === state.activeId) ?? state.tabs[0];
-    if (!tab) return null;
-    const def = TAB_KINDS[tab.kind];
-    return (
-      <div className="pane-content">
-        {def.render({ taskId, tab, pane })}
-      </div>
-    );
-  };
+  // Every tab stays mounted — switching tabs only hides the view. Terminal
+  // sessions survive unmounts anyway (session registry), but keeping them
+  // mounted also preserves focus/scroll position cheaply.
+  const renderPane = (pane: PaneId, state: Pane) => (
+    <div className="pane-content">
+      {state.tabs.map((tab) => {
+        const def = TAB_KINDS[tab.kind];
+        const isActive = tab.id === state.activeId;
+        return (
+          <div
+            key={tab.id}
+            className="tab-content"
+            style={isActive ? undefined : { display: "none" }}
+          >
+            {def.render({ taskId, tab, pane, active: isActive })}
+          </div>
+        );
+      })}
+    </div>
+  );
 
   return (
     <div className="task-view">

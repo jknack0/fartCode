@@ -60,19 +60,20 @@ impl TerminalManager {
         }
     }
 
-    /// Spawns a shell in `cwd` and starts the output pump. Returns the
-    /// terminal id.
+    /// Spawns `program` (with `args`) in `cwd` and starts the output pump.
+    /// Returns the terminal id.
     pub fn open(
         &self,
         task_id: &str,
+        program: &str,
+        args: &[String],
         cwd: &Path,
         rows: u16,
         cols: u16,
     ) -> Result<String, ade_core::Error> {
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         let handle = self.pty.spawn(
-            &shell,
-            &[],
+            program,
+            args,
             cwd,
             &[],
             PtySize {

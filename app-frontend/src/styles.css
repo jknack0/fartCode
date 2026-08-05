@@ -1,23 +1,48 @@
-:root {
-  --navy: #101828;
-  --navy-2: #182236;
-  --amber: #d97706;
-  --amber-dim: #b45309;
-  --text: #e5e7eb;
-  --muted: #9ca3af;
-  --line: #26324a;
-  --danger: #dc2626;
+@import "@fontsource/libre-franklin/400.css";
+@import "@fontsource/libre-franklin/500.css";
+@import "@fontsource/libre-franklin/600.css";
+@import "@fontsource/libre-franklin/700.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
 
-  /* conversation / task-layout */
-  --border: #26324a;
-  --bg-sidebar: #182236;
-  --fg-muted: #9ca3af;
-  --fg: #e5e7eb;
-  --bg-hover: #1e2d4a;
-  --bg-active: #243454;
-  --accent: #d97706;
-  --bg-badge: #26324a;
-  --bg-input: #101828;
+/* ade — signal box.
+   The app's job is interlocking: routing many agent movements across
+   worktree sidings without collision. The chrome borrows the artifacts of
+   that world and makes them carry real information: a painted diagram
+   board (deep green-grey), ivory track lines, and multi-aspect signalling
+   for state — green proceed (live work), amber caution (review / editing
+   focus), red stop (cancelled / danger), lunar white (called-on / todo).
+   Selection is a lit route: ivory. Plates: Libre Franklin (industrial
+   grotesque). Data/chords/readouts: IBM Plex Mono. */
+
+:root {
+  /* surfaces — diagram board ramp, darkest at the bottom (terminal well) */
+  --board: #131715;
+  --panel: #1a201c;
+  --raised: #242c26;
+  --inset: #0d110e;
+  --line: #2b332c;
+  --line-strong: #414c41;
+
+  /* text — painted ivory */
+  --ivory: #e4dfd0;
+  --faded: #99a193;
+  --ghost: #687160;
+
+  /* aspects — railway signal indications; these carry all state */
+  --aspect-proceed: #45b25c; /* movement under way */
+  --proceed-hot: #5ccb74;
+  --proceed-ink: #0a140c;
+  --proceed-wash: rgba(69, 178, 92, 0.12);
+  --aspect-caution: #e0a43a; /* review, attention, editing */
+  --caution-dim: #9c7226;
+  --aspect-stop: #d2473c; /* cancelled, danger, errors */
+  --aspect-shunt: #93a0a8; /* lunar white: not yet called on */
+
+  --font-ui: "Libre Franklin", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --r: 2px;
 }
 
 * {
@@ -32,10 +57,24 @@ body,
 }
 
 body {
-  background: var(--navy);
-  color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--board);
+  color: var(--ivory);
+  font-family: var(--font-ui);
   font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(69, 178, 92, 0.3);
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 1px solid var(--ivory);
+  outline-offset: 1px;
 }
 
 .shell {
@@ -46,46 +85,84 @@ body {
 /* Sidebar ----------------------------------------------------------------- */
 
 .sidebar {
-  width: 240px;
-  min-width: 240px;
-  background: var(--navy-2);
+  width: 248px;
+  min-width: 248px;
+  background: var(--panel);
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
 }
 
+.sidebar::-webkit-scrollbar {
+  width: 8px;
+}
+.sidebar::-webkit-scrollbar-thumb {
+  background: var(--line);
+}
+.sidebar::-webkit-scrollbar-thumb:hover {
+  background: var(--line-strong);
+}
+
 .sidebar-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 12px 12px;
   border-bottom: 1px solid var(--line);
 }
 
+/* wordmark: enamel nameplate, like the plates screwed onto the box */
 .brand {
+  font-family: var(--font-ui);
   font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--amber);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.24em;
+  color: var(--ivory);
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 1px;
+  padding: 4px 7px 4px 10px;
 }
 
 .sidebar-header button {
   background: none;
   border: 1px solid var(--line);
-  color: var(--text);
-  border-radius: 4px;
+  color: var(--faded);
+  border-radius: var(--r);
   width: 22px;
   height: 22px;
   cursor: pointer;
   line-height: 1;
 }
+.sidebar-header button:hover:not(:disabled) {
+  background: var(--raised);
+  color: var(--ivory);
+  border-color: var(--line-strong);
+}
+.sidebar-header button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 
+/* section labels: small plate captions with a rule to the edge */
 .sidebar-section h3 {
-  margin: 10px 12px 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 12px 4px;
+  font-family: var(--font-ui);
+  font-weight: 600;
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
+  letter-spacing: 0.14em;
+  color: var(--ghost);
+}
+.sidebar-section h3::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--line);
 }
 
 .sidebar ul {
@@ -108,29 +185,35 @@ body {
   overflow: hidden;
   font-weight: 600;
   font-size: 13px;
+  box-shadow: inset 2px 0 0 transparent;
 }
 
-.project-row:hover { background: rgba(217, 119, 6, 0.08); }
-.project-row.selected { background: rgba(217, 119, 6, 0.14); }
+.project-row:hover { background: var(--raised); }
+.project-row.selected {
+  background: var(--raised);
+  box-shadow: inset 2px 0 0 var(--ivory);
+}
 
 .project-row .chevron {
   background: none;
   border: none;
-  color: var(--muted);
+  color: var(--ghost);
   cursor: pointer;
+  font-family: var(--font-mono);
   font-size: 10px;
   width: 16px;
   padding: 0;
   flex-shrink: 0;
 }
+.project-row .chevron:hover { color: var(--ivory); }
 
 .project-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 
 .add-task-btn {
   background: none;
   border: 1px solid var(--line);
-  color: var(--muted);
-  border-radius: 4px;
+  color: var(--faded);
+  border-radius: var(--r);
   width: 20px;
   height: 20px;
   cursor: pointer;
@@ -141,28 +224,53 @@ body {
   flex-shrink: 0;
 }
 .project-row:hover .add-task-btn { opacity: 1; }
+.add-task-btn:hover {
+  color: var(--ivory);
+  border-color: var(--line-strong);
+}
 
 /* ---- task rows (indented children) ---- */
 
 .project-row + ul {
-  /* left-border tree line */
+  /* the running line — tasks join it as sidings */
   margin-left: 10px;
-  border-left: 1px solid var(--line);
+  border-left: 1px solid var(--line-strong);
+}
+
+/* siding tick: joins each task to the running line; lights ivory when the
+   route is set (selected) */
+.task-row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 9px;
+  height: 1px;
+  background: var(--line-strong);
+}
+.task-row.selected::before {
+  background: var(--ivory);
 }
 
 .task-row {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 12px 3px 16px;
+  gap: 7px;
+  padding: 3px 12px 3px 15px;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   font-size: 12px;
+  color: var(--faded);
+  box-shadow: inset 2px 0 0 transparent;
 }
 
-.task-row:hover { background: rgba(217, 119, 6, 0.06); }
-.task-row.selected { background: rgba(217, 119, 6, 0.12); }
+.task-row:hover { background: var(--raised); color: var(--ivory); }
+.task-row.selected {
+  background: var(--raised);
+  color: var(--ivory);
+  box-shadow: inset 2px 0 0 var(--ivory);
+}
 
 .task-row .task-name {
   flex: 1;
@@ -170,26 +278,42 @@ body {
   text-overflow: ellipsis;
 }
 
+/* signal aspects: round lenses with a dark rim. A live movement shows
+   proceed and breathes; done is an extinguished lens — the route released. */
 .status-dot {
-  width: 7px;
-  height: 7px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  background: var(--muted);
+  background: var(--aspect-shunt);
+  box-shadow: inset 0 0 0 1.5px rgba(0, 0, 0, 0.45);
   flex-shrink: 0;
 }
 
 .status-dot.status-in_progress {
-  background: var(--amber);
+  background: var(--aspect-proceed);
+  animation: aspect-pulse 3s ease-in-out infinite;
 }
 .status-dot.status-todo {
-  background: #6b7280;
+  background: var(--aspect-shunt);
 }
-.status-dot.status-done,
 .status-dot.status-review {
-  background: #16a34a;
+  background: var(--aspect-caution);
+}
+.status-dot.status-done {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--ghost);
 }
 .status-dot.status-cancelled {
-  background: var(--danger);
+  background: var(--aspect-stop);
+}
+
+@keyframes aspect-pulse {
+  0%, 100% { box-shadow: inset 0 0 0 1.5px rgba(0, 0, 0, 0.45), 0 0 0 0 rgba(69, 178, 92, 0); }
+  50% { box-shadow: inset 0 0 0 1.5px rgba(0, 0, 0, 0.45), 0 0 6px 1px rgba(69, 178, 92, 0.55); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-dot.status-in_progress { animation: none; }
 }
 
 .pin {
@@ -200,7 +324,7 @@ body {
 .delete-task-btn {
   background: none;
   border: none;
-  color: var(--muted);
+  color: var(--faded);
   cursor: pointer;
   font-size: 12px;
   line-height: 1;
@@ -209,13 +333,48 @@ body {
   flex-shrink: 0;
 }
 .task-row:hover .delete-task-btn { opacity: 1; }
-.delete-task-btn:hover { color: var(--danger); }
+.delete-task-btn:hover { color: var(--aspect-stop); }
 
 .empty {
   padding: 4px 12px;
-  color: var(--muted);
+  color: var(--ghost);
   font-style: italic;
   font-size: 11px;
+}
+
+/* ---- ops readout (sidebar foot) ---- */
+
+.sidebar-ops {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ghost);
+  position: sticky;
+  bottom: 0;
+  background: var(--panel);
+}
+
+.ops-lamp {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--aspect-shunt);
+  box-shadow: inset 0 0 0 1.5px rgba(0, 0, 0, 0.45);
+  flex-shrink: 0;
+}
+.ops-lamp.live {
+  background: var(--aspect-proceed);
+  animation: aspect-pulse 3s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ops-lamp.live { animation: none; }
 }
 
 /* Main -------------------------------------------------------------------- */
@@ -234,27 +393,38 @@ body {
   padding: 24px;
 }
 
-.main > .task-layout {
-  flex: 1;
-  min-height: 0;
-}
-
 .placeholder {
   text-align: center;
   max-width: 420px;
 }
 
 .placeholder h1 {
-  color: var(--amber);
-  margin-bottom: 8px;
+  display: inline-block;
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 20px;
+  text-transform: uppercase;
+  letter-spacing: 0.3em;
+  color: var(--ivory);
+  margin: 0 0 12px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 1px;
+  padding: 10px 16px 10px 20px;
+}
+
+.placeholder .muted {
+  font-size: 13px;
 }
 
 .muted {
-  color: var(--muted);
+  color: var(--faded);
 }
 
 .error {
-  color: #fca5a5;
+  color: var(--aspect-stop);
+  padding: 4px 12px;
+  font-size: 12px;
 }
 
 /* Modals ------------------------------------------------------------------ */
@@ -262,7 +432,7 @@ body {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(9, 12, 10, 0.62);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -270,27 +440,38 @@ body {
 }
 
 .modal {
-  background: var(--navy-2);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
   padding: 18px;
   width: 380px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
 
 .modal h2 {
   margin: 0 0 6px;
-  font-size: 15px;
-  color: var(--amber);
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ivory);
 }
 
 .modal input {
   width: 100%;
   margin: 10px 0;
   padding: 7px 9px;
-  background: var(--navy);
+  background: var(--inset);
   border: 1px solid var(--line);
-  border-radius: 4px;
-  color: var(--text);
+  border-radius: var(--r);
+  color: var(--ivory);
+  font: inherit;
+}
+.modal input:focus {
+  outline: none;
+  border-color: var(--caution-dim);
+  box-shadow: 0 0 0 1px var(--caution-dim);
 }
 
 .modal-actions {
@@ -301,20 +482,23 @@ body {
 }
 
 button.primary {
-  background: var(--amber);
+  background: var(--aspect-proceed);
   border: none;
-  color: #1a1206;
+  color: var(--proceed-ink);
   font-weight: 600;
-  border-radius: 4px;
+  border-radius: var(--r);
   padding: 6px 12px;
   cursor: pointer;
 }
+button.primary:hover {
+  background: var(--proceed-hot);
+}
 
 button.danger {
-  background: var(--danger);
+  background: var(--aspect-stop);
   border: none;
-  color: white;
-  border-radius: 4px;
+  color: var(--ivory);
+  border-radius: var(--r);
   padding: 6px 12px;
   cursor: pointer;
 }
@@ -322,10 +506,14 @@ button.danger {
 .modal-actions button:not(.primary):not(.danger) {
   background: none;
   border: 1px solid var(--line);
-  color: var(--text);
-  border-radius: 4px;
+  color: var(--ivory);
+  border-radius: var(--r);
   padding: 6px 12px;
   cursor: pointer;
+}
+.modal-actions button:not(.primary):not(.danger):hover {
+  background: var(--raised);
+  border-color: var(--line-strong);
 }
 
 .settings-modal {
@@ -336,10 +524,12 @@ button.danger {
 
 .settings-modal h3 {
   margin: 16px 0 6px;
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
+  letter-spacing: 0.16em;
+  color: var(--ghost);
   border-bottom: 1px solid var(--line);
   padding-bottom: 4px;
 }
@@ -347,7 +537,7 @@ button.danger {
 .settings-modal label {
   display: block;
   font-size: 12px;
-  color: var(--muted);
+  color: var(--faded);
   margin: 8px 0;
 }
 
@@ -355,7 +545,7 @@ button.danger {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--text);
+  color: var(--ivory);
 }
 
 .settings-modal input,
@@ -364,16 +554,24 @@ button.danger {
   width: 100%;
   margin-top: 4px;
   padding: 6px 8px;
-  background: var(--navy);
+  background: var(--inset);
   border: 1px solid var(--line);
-  border-radius: 4px;
-  color: var(--text);
+  border-radius: var(--r);
+  color: var(--ivory);
   font: inherit;
+}
+.settings-modal input:focus,
+.settings-modal select:focus,
+.settings-modal textarea:focus {
+  outline: none;
+  border-color: var(--caution-dim);
+  box-shadow: 0 0 0 1px var(--caution-dim);
 }
 
 .settings-modal label.check input {
   width: auto;
   margin: 0;
+  accent-color: var(--aspect-proceed);
 }
 
 .settings-modal .row {
@@ -387,12 +585,12 @@ button.danger {
 
 .hint {
   font-size: 11px;
-  color: var(--muted);
+  color: var(--ghost);
   margin: -4px 0 8px;
 }
 
 .notice {
-  color: #86efac;
+  color: var(--aspect-proceed);
   font-size: 12px;
 }
 
@@ -401,24 +599,28 @@ button.danger {
   gap: 6px;
 }
 
+/* Command palette ---------------------------------------------------------- */
+
 .palette {
-  background: var(--navy-2);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
   width: 480px;
   max-height: 60vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
 
 .palette input {
   width: 100%;
   padding: 10px 12px;
-  background: var(--navy);
+  background: var(--inset);
   border: none;
   border-bottom: 1px solid var(--line);
-  color: var(--text);
+  color: var(--ivory);
+  font-family: var(--font-ui);
   font-size: 14px;
   outline: none;
 }
@@ -436,47 +638,57 @@ button.danger {
   gap: 12px;
   padding: 7px 12px;
   cursor: pointer;
+  box-shadow: inset 2px 0 0 transparent;
 }
 
 .palette-results li.selected {
-  background: rgba(217, 119, 6, 0.18);
+  background: var(--raised);
+  box-shadow: inset 2px 0 0 var(--ivory);
 }
 
 .palette-hint {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--ghost);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
   padding: 8px 12px;
 }
+
+/* Resource monitor ---------------------------------------------------------- */
 
 .resource-panel {
   position: fixed;
   bottom: 12px;
   right: 12px;
   width: 260px;
-  background: var(--navy-2);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
   padding: 10px 12px;
   z-index: 20;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
 }
 
 .resource-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--amber);
+  letter-spacing: 0.14em;
+  color: var(--ghost);
   margin-bottom: 8px;
 }
 
 .resource-header button {
   background: none;
   border: none;
-  color: var(--muted);
+  color: var(--faded);
   cursor: pointer;
 }
+.resource-header button:hover { color: var(--ivory); }
 
 .meter {
   display: flex;
@@ -487,113 +699,36 @@ button.danger {
 
 .meter-label {
   width: 32px;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--ghost);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
 }
 
 .meter-bar {
   flex: 1;
-  height: 8px;
-  background: var(--navy);
-  border-radius: 4px;
+  height: 6px;
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: 0;
   overflow: hidden;
 }
 
 .meter-fill {
   height: 100%;
-  background: var(--amber);
+  background: var(--aspect-proceed);
 }
 
 .meter-value {
   width: 110px;
   text-align: right;
+  font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--muted);
+  color: var(--faded);
 }
 
-/* -- E2-08 conversation layout ------------------------------------------- */
-
-.task-layout {
-  display: flex;
-  height: 100%;
-  gap: 0;
-}
-
-/* terminal pane placeholder */
-.terminal-pane {
-  flex: 1;
-  background: #111;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 0;
-}
-
-.terminal-placeholder {
-  color: #555;
-  font-size: 14px;
-}
-
-/* context pills */
-.context-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 6px 12px;
-  border-top: 1px solid var(--border);
-}
-
-.context-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: var(--bg-badge);
-  color: var(--fg-muted);
-}
-
-.context-pill button {
-  background: none;
-  border: none;
-  font-size: 12px;
-  cursor: pointer;
-  color: var(--fg-muted);
-}
-
-/* message input */
-.message-input-bar {
-  display: flex;
-  gap: 8px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--border);
-}
-
-.message-input-bar textarea {
-  flex: 1;
-  resize: none;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font: inherit;
-  font-size: 13px;
-  background: var(--bg-input);
-  color: var(--fg);
-}
-
-.message-input-bar button {
-  align-self: flex-end;
-}
-
-/* -- E2-10 task tabs + panes ---------------------------------------------- */
-
-.conversation-view {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
+/* -- task tabs + panes ----------------------------------------------------- */
 
 .task-view {
   flex: 1;
@@ -624,36 +759,54 @@ button.danger {
   align-items: center;
   gap: 2px;
   padding: 4px 6px;
-  background: var(--navy-2);
+  background: var(--panel);
   border-bottom: 1px solid var(--line);
   min-height: 30px;
 }
 
 .tab-bar.active {
-  border-bottom-color: var(--amber-dim);
+  border-bottom-color: var(--line-strong);
 }
 
+/* radio-channel strips: mono titles, lamp first, signal top edge when live */
 .tab {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   max-width: 200px;
-  padding: 3px 6px 3px 10px;
-  border-radius: 4px;
-  font-size: 12px;
-  color: var(--muted);
+  padding: 4px 6px 4px 9px;
+  border-radius: var(--r);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--faded);
   cursor: pointer;
   user-select: none;
+  box-shadow: inset 0 2px 0 transparent;
+}
+
+.tab::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ghost);
+  box-shadow: inset 0 0 0 1.5px rgba(0, 0, 0, 0.45);
+  flex-shrink: 0;
 }
 
 .tab:hover {
-  background: var(--bg-hover);
-  color: var(--fg);
+  background: var(--raised);
+  color: var(--ivory);
 }
 
 .tab.active {
-  background: var(--bg-active);
-  color: var(--fg);
+  background: var(--raised);
+  color: var(--ivory);
+  box-shadow: inset 0 2px 0 var(--aspect-proceed);
+}
+
+.tab.active::before {
+  background: var(--aspect-proceed);
 }
 
 .tab-title {
@@ -665,25 +818,25 @@ button.danger {
 .tab-close {
   background: none;
   border: none;
-  color: var(--muted);
+  color: var(--faded);
   font-size: 13px;
   line-height: 1;
   padding: 0 3px;
-  border-radius: 3px;
+  border-radius: var(--r);
   cursor: pointer;
 }
 
 .tab-close:hover {
-  color: var(--danger);
-  background: rgba(220, 38, 38, 0.15);
+  color: var(--aspect-stop);
+  background: rgba(210, 71, 60, 0.15);
 }
 
 .tab-add {
   margin-left: 4px;
   background: none;
   border: 1px solid var(--line);
-  color: var(--muted);
-  border-radius: 4px;
+  color: var(--faded);
+  border-radius: var(--r);
   width: 20px;
   height: 20px;
   line-height: 1;
@@ -691,8 +844,8 @@ button.danger {
 }
 
 .tab-add:hover {
-  color: var(--amber);
-  border-color: var(--amber-dim);
+  color: var(--ivory);
+  border-color: var(--line-strong);
 }
 
 .pane-content {
@@ -702,7 +855,15 @@ button.danger {
   flex-direction: column;
 }
 
-/* -- E14-01 shortcuts settings ------------------------------------------- */
+/* every tab stays mounted (a hidden tab keeps its PTY alive) */
+.tab-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* -- shortcuts settings ---------------------------------------------------- */
 
 .shortcuts-settings {
   width: 620px;
@@ -717,10 +878,12 @@ button.danger {
 
 .shortcut-table th {
   text-align: left;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--ghost);
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.14em;
   padding: 6px 8px;
   border-bottom: 1px solid var(--line);
 }
@@ -740,59 +903,60 @@ button.danger {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--amber);
+  background: var(--aspect-caution);
   display: inline-block;
 }
 
 .shortcut-scope {
-  color: var(--muted);
+  color: var(--ghost);
   font-size: 11px;
   white-space: nowrap;
 }
 
 .shortcut-chord {
-  background: var(--navy);
+  background: var(--inset);
   border: 1px solid var(--line);
-  color: var(--text);
-  border-radius: 4px;
+  color: var(--ivory);
+  border-radius: var(--r);
   padding: 2px 8px;
-  font: inherit;
+  font-family: var(--font-mono);
   font-size: 12px;
   cursor: pointer;
 }
 
 .shortcut-chord.customized {
-  border-color: var(--amber-dim);
-  color: var(--amber);
+  border-color: var(--caution-dim);
+  color: var(--aspect-caution);
 }
 
 .shortcut-chord:hover {
-  border-color: var(--amber-dim);
+  border-color: var(--line-strong);
 }
 
 .shortcut-editing {
   display: inline-block;
   padding: 2px 8px;
-  border: 1px dashed var(--amber);
-  border-radius: 4px;
-  color: var(--amber);
+  border: 1px dashed var(--aspect-caution);
+  border-radius: var(--r);
+  color: var(--aspect-caution);
+  font-family: var(--font-mono);
   outline: none;
 }
 
 .shortcut-reset {
   background: none;
   border: none;
-  color: var(--muted);
+  color: var(--faded);
   cursor: pointer;
   margin-left: 4px;
   font-size: 13px;
 }
 
 .shortcut-reset:hover {
-  color: var(--amber);
+  color: var(--ivory);
 }
 
-/* -- E3-07 provider accounts ---------------------------------------------- */
+/* -- provider accounts ----------------------------------------------------- */
 
 .provider-accounts {
   margin-top: 16px;
@@ -820,32 +984,32 @@ button.danger {
 
 .account-id {
   flex: 1;
-  color: var(--muted);
+  color: var(--faded);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .account-secret {
-  font-family: ui-monospace, monospace;
-  color: var(--muted);
+  font-family: var(--font-mono);
+  color: var(--faded);
 }
 
 .account-default {
-  color: var(--amber);
+  color: var(--aspect-caution);
   font-size: 11px;
 }
 
 .account-remove {
   background: none;
   border: none;
-  color: var(--muted);
+  color: var(--faded);
   cursor: pointer;
   font-size: 14px;
 }
 
 .account-remove:hover {
-  color: var(--danger);
+  color: var(--aspect-stop);
 }
 
 .account-add {
@@ -860,27 +1024,27 @@ button.danger {
   flex-direction: column;
   gap: 3px;
   font-size: 11px;
-  color: var(--muted);
+  color: var(--faded);
 }
 
 .account-add input,
 .account-add select {
   padding: 5px 7px;
-  background: var(--navy);
+  background: var(--inset);
   border: 1px solid var(--line);
-  border-radius: 4px;
-  color: var(--text);
+  border-radius: var(--r);
+  color: var(--ivory);
   font: inherit;
   font-size: 12px;
 }
 
-/* -- E2-12 task terminals -------------------------------------------------- */
+/* -- task terminals -------------------------------------------------------- */
 
 .terminal-container {
   flex: 1;
   min-height: 0;
-  padding: 4px 6px;
-  background: #0d1424;
+  padding: 6px 8px;
+  background: var(--inset);
   overflow: hidden;
 }
 
@@ -888,6 +1052,8 @@ button.danger {
   height: 100%;
 }
 
+/* The session registry's host node (lib/terminals.ts) fills the container;
+   xterm fills the host. Detached/reattached on tab/task switches. */
 .terminal-surface {
   height: 100%;
 }

@@ -9,18 +9,29 @@ one exists).
 - **Work tracking is GitHub issues only** (`jknack0/ade`) — `tickets-phase0.md`
   was retired 2026-08-04; its Appendix is preserved as `phase0-checklists.md`.
   New work = new issue (`phase:0`/`phase:2` + `size:*` labels, milestone "Phase 0").
-- **E2-12 terminal lifecycle fixed (#37):** terminals no longer die on
-  task/tab switch or restart. xterm sessions live outside React keyed by PTY
-  id (`lib/terminals.ts`); PTY ownership moved to the tab store (only ⌘W's
-  last reference / split collapse / task delete kills); terminal tabs persist
-  and respawn a fresh shell on restore (scrollback restart survival = future
-  tmux work).
+- **Terminal-only task view (2026-08-04):** chat surfaces fully removed —
+  ⌘T/⌘⇧T open plain terminals; ⌘D splits right with a fresh shell; ⌘⇧O opens
+  the OMP agent terminal via new `terminal_open_agent` (provider-registry
+  binary resolution through `find_on_path`). Frontend `conversation` tab
+  kind, ConversationView, conversations store, palette branch, and backend
+  conversation commands/indexing/search are gone; `ade_core::conversations`
+  stays (PTY launcher + boot rehydration depend on it). Scope precedence is
+  now modal > editor > task-view > project-view > app-view > global.
+- **Terminal lifecycle (#37) kept under the terminal-only refactor:** xterm
+  sessions live outside React keyed by PTY id (`lib/terminals.ts`); PTY
+  ownership is in the tab store (only ⌘W's last reference / split collapse /
+  task delete kills); terminal tabs persist and respawn a fresh shell on
+  restore (scrollback restart survival = future tmux work). Panes ALSO keep
+  all tabs mounted (hidden, not unmounted) so tab flips never even detach.
+- **Signal-box theme:** dark green-grey diagram board, ivory track lines,
+  multi-aspect state colors (proceed/caution/stop/shunt), Libre Franklin +
+  IBM Plex Mono (@fontsource). Terminal theme matches --inset/--ivory/
+  --aspect-proceed.
 - **Phase 0 is fully closed** (2026-08-04). **Phase 2 in progress:** E2-11
   broken into #28–#33; #28 (2827012), #34 (9041aad), #29 (2ca862a) done.
   **#35 E2-12 interactive task terminal done (713dfbd) + terminal-first
-  default (5ea481d)** — selecting a task opens a shell in its worktree;
-  chat is summoned-only (⌘T/⌘D), never auto-opened; no + button on the
-  tab bar. Work-inside-ade path for agents like omp. Next E2-11:
+  default (5ea481d) + lifecycle fix (#37) + terminal-only refactor.**
+  Work-inside-ade path for agents like omp. Next E2-11:
   **#30 E2-11-3** (SessionManager + session-id persistence).
 - **HEAD (2827012, 2026-08-04):** E2-11-1 — ade-acp is a real ACP v1
   client: stdio JSON-RPC transport + client lifecycle (initialize/new/load/
@@ -29,7 +40,8 @@ one exists).
   v1.6 (ADR-0024); test fixture `ade-acp/src/bin/fake_acp_adapter.rs`;
   8 integration tests in `ade-acp/tests/protocol_integration.rs`.
 - **E14-01 (16b8e8f):** keybinding registry — scope precedence
-  modal > editor > conversation-view > task-view > project-view > global,
+  modal > editor > task-view > project-view > app-view > global
+  (conversation-view scope removed with the chat surfaces),
   user overrides in `view-state:app:keybindings`. E2-10's
   `lib/shortcuts.ts` was superseded and deleted.
 - **E2-08 removed the standalone conversation list** — conversations now live

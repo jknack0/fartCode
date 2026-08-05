@@ -3,13 +3,13 @@
 // extend `TabKind` AND add an entry to `TAB_KINDS` — the tab bar, shortcuts,
 // and view-state persistence pick it up automatically.
 //
-// Later tickets register their kinds here:
+// Later tickets may register their kinds here:
 //   diff        — E4-04 (diff renderer)
 //   browser     — E6-01 (per-task browser tab, ⌘⇧B)
 //   file-editor — E5-02 (editor tabs, ⌘S/⌘⇧S)
-// Registered now: conversation (E2-10), terminal (E2-12).
+// Registered now: terminal only — chat surfaces were removed; everything
+// that opens is a terminal (E2-12).
 import type { ReactNode } from "react";
-import ConversationView from "../components/ConversationView";
 import TerminalView from "../components/TerminalView";
 import type { PaneId } from "../store/tabs";
 
@@ -20,12 +20,15 @@ export interface Tab {
   title: string;
 }
 
-export type TabKind = "conversation" | "terminal";
+export type TabKind = "terminal";
 
 export interface TabRenderProps {
   taskId: string;
   tab: Tab;
   pane: PaneId;
+  /** The pane's active tab gets keyboard focus and is visible; inactive
+   * tabs stay mounted (their session survives a tab switch) but hidden. */
+  active: boolean;
 }
 
 export interface TabKindDef {
@@ -34,15 +37,13 @@ export interface TabKindDef {
 }
 
 export const TAB_KINDS: Record<TabKind, TabKindDef> = {
-  conversation: {
-    label: "Conversation",
-    render: ({ taskId }) => <ConversationView taskId={taskId} />,
-  },
   terminal: {
     label: "Terminal",
     // The tab id IS the PTY id (minted by terminal_open); on restart the
     // tabs store respawns the PTY and rewrites the tab id.
-    render: ({ tab }) => <TerminalView terminalId={tab.id} />,
+    render: ({ tab, active }) => (
+      <TerminalView terminalId={tab.id} active={active} />
+    ),
   },
 };
 

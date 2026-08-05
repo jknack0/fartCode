@@ -8,7 +8,6 @@ export interface ProjectDto {
   path: string;
   workspaceProvider: string;
   baseRef: string | null;
-  sshConnectionId: string | null;
   repositoryWorkspaceId: string | null;
   createdAt: string | null;
   updatedAt: string | null;
@@ -34,10 +33,7 @@ export type AdeEvent =
   | { type: "project:deleted"; id: string }
   | { type: "task:created"; id: string; projectId: string; name: string }
   | { type: "task:deleted"; taskId: string }
-  | { type: "task:status_changed"; taskId: string; status: string }
-  | { type: "conversation:created"; id: string; taskId: string; title: string }
-  | { type: "conversation:renamed"; id: string; title: string }
-  | { type: "conversation:deleted"; id: string };
+  | { type: "task:status_changed"; taskId: string; status: string };
 
 export function listProjects(): Promise<ProjectDto[]> {
   return invoke("list_projects");
@@ -165,50 +161,6 @@ export function setResourceMonitorEnabled(enabled: boolean): Promise<void> {
   return invoke("set_resource_monitor_enabled", { enabled });
 }
 
-// -- E2-08 conversation commands ------------------------------------------------
-
-export type ConversationDto = {
-  id: string;
-  projectId: string;
-  taskId: string | null;
-  provider: string | null;
-  title: string;
-  agentStatus: string | null;
-  sessionId: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export function listConversations(taskId: string): Promise<ConversationDto[]> {
-  return invoke("list_conversations", { taskId });
-}
-
-export function createConversation(
-  projectId: string,
-  taskId: string,
-  provider: string | null,
-  title: string,
-  model: string | null,
-  initialPrompt: string | null,
-): Promise<ConversationDto> {
-  return invoke("create_conversation", {
-    projectId,
-    taskId,
-    provider,
-    title,
-    model,
-    initialPrompt,
-  });
-}
-
-export function deleteConversation(
-  projectId: string,
-  taskId: string,
-  conversationId: string,
-): Promise<void> {
-  return invoke("delete_conversation", { projectId, taskId, conversationId });
-}
-
 // -- E3-07 provider accounts -------------------------------------------------
 
 export interface ProviderAccountDto {
@@ -305,4 +257,13 @@ export function onTerminalExited(
     "terminal:exited",
     (e) => cb(e.payload),
   );
+}
+
+export function terminalOpenAgent(
+  taskId: string,
+  agent: string,
+  rows: number,
+  cols: number,
+): Promise<string> {
+  return invoke("terminal_open_agent", { taskId, agent, rows, cols });
 }

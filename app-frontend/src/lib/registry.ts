@@ -2,7 +2,7 @@
 //
 // Every keyboard shortcut in the app is a registered Command. Commands are
 // dispatched by a single window listener against scopes in precedence order:
-// modal > editor > conversation-view > task-view > project-view > global.
+// modal > editor > task-view > project-view > global.
 // Higher-priority scopes consume the chord first; a match prevents
 // fall-through.
 //
@@ -24,7 +24,6 @@ export type Scope =
   | "app-view"
   | "project-view"
   | "task-view"
-  | "conversation-view"
   | "editor"
   | "modal";
 
@@ -32,7 +31,6 @@ export type Scope =
 const SCOPE_PRECEDENCE: Scope[] = [
   "modal",
   "editor",
-  "conversation-view",
   "task-view",
   "project-view",
   "app-view",
@@ -45,11 +43,9 @@ export type CommandId =
   | "new-project"
   | "add-task"
   | "delete-task"
-  | "add-context"
-  | "add-and-send-context"
-  | "new-conversation"
-  | "new-conversation-right-split"
   | "new-terminal"
+  | "new-terminal-right-split"
+  | "open-omp"
   | "toggle-sidebar"
   | "toggle-right-panel"
   | "previous-task"
@@ -95,7 +91,6 @@ export interface ActiveBinding {
 export interface ScopeContext {
   projectView: boolean;
   taskView: boolean;
-  conversationView: boolean;
   editorFocused: boolean;
   modalOpen: boolean;
 }
@@ -210,12 +205,11 @@ export function resetToDefaults(registry: Registry): void {
 function activeScopes(ctx: ScopeContext): Set<Scope> {
   const scopes = new Set<Scope>(["global", "app-view"]);
   // View scopes are suspended while a modal is open — modal keys (Esc) own
-  // the keyboard; task/conversation commands must not fire underneath a
-  // dialog (matches E2-10's modal guard).
+  // the keyboard; task commands must not fire underneath a dialog
+  // (matches E2-10's modal guard).
   if (!ctx.modalOpen) {
     if (ctx.projectView) scopes.add("project-view");
     if (ctx.taskView) scopes.add("task-view");
-    if (ctx.conversationView) scopes.add("conversation-view");
   }
   if (ctx.editorFocused) scopes.add("editor");
   if (ctx.modalOpen) scopes.add("modal");
@@ -223,9 +217,8 @@ function activeScopes(ctx: ScopeContext): Set<Scope> {
 }
 
 /** Dispatches a key event against the registry. Returns the command id that
- * ran, or null. Scope precedence: modal > editor > conversation-view >
- * task-view > project-view > global; within a scope the first matching
- * binding wins. */
+ * ran, or null. Scope precedence: modal > editor > task-view >
+ * project-view > global; within a scope the first matching binding wins. */
 export function dispatchKey(
   registry: Registry,
   e: KeyboardEvent,

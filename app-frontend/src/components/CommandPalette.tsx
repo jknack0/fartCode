@@ -1,5 +1,5 @@
 // Command palette (E1-09): ⌘K finds anything — commands + FTS search results
-// over projects/tasks/conversations. Selecting a result runs its action.
+// over projects/tasks. Selecting a result runs its action.
 import { useEffect, useRef, useState } from "react";
 import { hint } from "../lib/useCommands";
 import {
@@ -107,11 +107,6 @@ export default function CommandPalette() {
     } else if (item.itemType === "task" && item.itemId) {
       if (item.projectId) selectProject(item.projectId);
       selectTask(item.itemId);
-    } else if (item.itemType === "conversation" && item.itemId) {
-      // Conversations live under their task — navigate there (task tabs are
-      // placeholders until the E2 series).
-      if (item.projectId) selectProject(item.projectId);
-      if (item.taskId) selectTask(item.taskId);
     }
   };
 
@@ -123,7 +118,7 @@ export default function CommandPalette() {
         <input
           ref={inputRef}
           value={query}
-          placeholder="Search projects, tasks, conversations, commands…"
+          placeholder="Search projects, tasks, commands…"
           onChange={(e) => {
             setQuery(e.target.value);
             setSelected(0);
