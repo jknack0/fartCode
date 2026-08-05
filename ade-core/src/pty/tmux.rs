@@ -54,7 +54,13 @@ pub fn build_tmux_shell_line(session_name: &str, command_line: &str) -> String {
     let set_history = format!(
         "tmux set-option -t {quoted_name} history-limit {TMUX_HISTORY_LIMIT} 2>/dev/null || true"
     );
-    let configure = format!("({enable_mouse}) && ({set_history})");
+    // Hide tmux's status bar: inside ade's pane the bar shows nothing the
+    // tab bar doesn't already say — just the opaque `ade-<base64>` session
+    // name (ADR-0026). Per-session, so the user's own tmux keeps its bar.
+    // Runs on every attach, which also silences sessions created before
+    // this shipped.
+    let hide_status = format!("tmux set-option -t {quoted_name} status off 2>/dev/null || true");
+    let configure = format!("({enable_mouse}) && ({set_history}) && ({hide_status})");
     let attach = format!("tmux -u attach-session -t {quoted_name}");
     let script = format!("({check_exists} || {new_session}) && {configure} && {attach}");
     script
@@ -290,14 +296,12 @@ mod tests {
         let line = build_tmux_shell_line("ade-abc", "codex exec");
         assert!(line.contains("tmux has-session -t \"ade-abc\""), "{line}");
         assert!(
-            line.contains("tmux -u new-session -d -s \"ade-abc\" \"codex exec\""),
-            "{line}"
-        );
-        assert!(line.contains("mouse on"), "{line}");
-        assert!(
             line.contains(&format!("history-limit {TMUX_HISTORY_LIMIT}")),
             "{line}"
         );
+        // Status bar off: the pane's tab bar already identifies the session;
+        // tmux's bar only shows the opaque `ade-<base64>` name (ADR-0026).
+        assert!(line.contains("status off"), "{line}");
         assert!(
             line.contains("tmux -u attach-session -t \"ade-abc\""),
             "{line}"
