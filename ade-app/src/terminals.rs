@@ -310,7 +310,8 @@ impl TerminalManager {
     pub fn write(&self, id: &str, data: &str) -> Result<(), ade_core::Error> {
         let entry = self
             .terminals
-            .lock()            .get(id)
+            .lock()
+            .get(id)
             .cloned()
             .ok_or_else(|| ade_core::Error::Internal(format!("terminal not found: {id}")))?;
         let result = entry.handle.lock().write(data);
