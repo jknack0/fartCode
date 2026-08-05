@@ -75,6 +75,7 @@ version = "0.1.0"
 dependencies = [
  "ade-core",
  "git2",
+ "serde",
  "tempfile",
 ]
 

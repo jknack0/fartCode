@@ -4,6 +4,34 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## Current state (2026-08-05, latest++++)
+
+- **#42 E4-02 Git status/diff engine (worktree-scoped):** `ade-git` grew
+  `status.rs` + `diff.rs` (crate doc already claimed status/diff — now
+  true). Status: one `git --no-optional-locks status --porcelain=v2 -z
+  -uall` (no-optional-locks so status never writes the index → no E4-01
+  watcher feedback loop) + staged/unstaged `diff --numstat -z`;
+  `StatusSnapshot { staged, unstaged, stagedAdditions/Deletions,
+  truncated }` (camelCase serde, returned by commands directly); reference
+  split semantics: X column → staged, Y/untracked → unstaged, conflicts
+  (`u` records, AA/DD) appear in BOTH lists; renames carry `origPath`;
+  untracked additions = capped line count; >10k entries → truncated=true
+  w/ empty lists. Diff: NOT hunks — two-sided content payloads (`FileDiff`
+  old/new content+size+exists, binary, tooLarge) because @codemirror/merge
+  computes hunks from documents (reference getFileAtRef design). Sides:
+  staged = HEAD:{origPath|path} ↔ :0:path; unstaged = :0: (fallback :2:
+  ours during conflict, then HEAD:) ↔ worktree file. Guards: 512 KiB/side
+  cap (size-checked via cat-file -s BEFORE reading — oversize blobs never
+  materialize), NUL-in-8KiB binary sniff; guarded payloads keep sizes,
+  drop contents. Path inputs validated lexically (no abs, no `..`).
+  Commands `git_status(workspaceId)` / `git_file_diff(workspaceId, path,
+  side: "staged"|"unstaged", origPath?)` in ade-app/src/commands/git.rs.
+  22 new tests (fixture repos: conflict both-lists + :2: fallback, rename,
+  spaces-in-paths, binary, oversize both paths, traversal rejection;
+  synthetic parser/numstat vectors incl. rename `\0` framing). Next:
+  **#43 E4-03** (Changes sidebar UI) or **#44 E4-04** (diff renderer) —
+  both unblocked now.
+
 ## Current state (2026-08-05, latest+++)
 
 - **#41 E4-01 File+git event watcher → live refresh pipeline:** E4 series

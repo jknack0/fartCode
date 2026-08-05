@@ -8,7 +8,9 @@
 //! violating the leaf rule; this crate provides the implementations and
 //! re-exports the trait.
 
+pub mod diff;
 pub mod git2ops;
+pub mod status;
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -41,6 +43,35 @@ fn git_cmd(path: Option<&Path>) -> Command {
         cmd.arg("-C").arg(path);
     }
     cmd
+}
+
+/// Runs git in `worktree`, returning raw stdout bytes; non-zero exit is an
+/// `Error::Git` carrying stderr.
+pub(crate) fn git_stdout(worktree: &Path, args: &[&str]) -> Result<Vec<u8>, Error> {
+    let mut cmd = git_cmd(Some(worktree));
+    cmd.args(args);
+    let output = cmd
+        .output()
+        .map_err(|e| Error::Git(format!("failed to spawn git: {e}")))?;
+    if output.status.success() {
+        Ok(output.stdout)
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(Error::Git(format!(
+            "git {args:?} failed: {}",
+            stderr.trim()
+        )))
+    }
+}
+
+/// Runs git in `worktree`, returning stdout bytes on success and `None` on
+/// any failure (missing blob spec, spawn error). Probing helper for callers
+/// that treat absence as data (`diff::read_blob_chain`, tolerated numstat).
+pub(crate) fn git_stdout_ok(worktree: &Path, args: &[&str]) -> Option<Vec<u8>> {
+    let mut cmd = git_cmd(Some(worktree));
+    cmd.args(args);
+    let output = cmd.output().ok()?;
+    output.status.success().then_some(output.stdout)
 }
 
 impl CliGit {

@@ -120,6 +120,8 @@ pub fn run() {
             commands::tasks::list_tasks,
             commands::tasks::toggle_pin,
             commands::tasks::delete_task,
+            commands::git::git_status,
+            commands::git::git_file_diff,
             commands::conversations::create_conversation,
             commands::conversations::list_conversations,
             commands::conversations::acp_start,
