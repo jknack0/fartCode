@@ -67,7 +67,9 @@ export const TAB_KINDS: Record<TabKind, TabKindDef> = {
     glyph: "DIFF",
     // The tab id encodes the diff params (`diff:<side>:<workspaceId>:<path>`);
     // the diffs store holds the payload (#44, E4-04).
-    render: ({ tab, active }) => <DiffView tabId={tab.id} title={tab.title} active={active} />,
+    render: ({ taskId, tab, active }) => (
+      <DiffView tabId={tab.id} title={tab.title} taskId={taskId} active={active} />
+    ),
   },
 };
 

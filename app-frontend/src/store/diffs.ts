@@ -30,6 +30,17 @@ export interface DiffEntry {
 
 export type DiffMode = "unified" | "split";
 
+/** A text selection inside a diff editor (E4 selection → agent). Side `a`
+ * is the baseline, `b` the worktree, `single` the one-document views. */
+export interface DiffSelection {
+  side: "a" | "b" | "single";
+  from: number;
+  to: number;
+  fromLine: number;
+  toLine: number;
+  text: string;
+}
+
 const DIFF_MODE_KEY = "view-state:app:diff-mode";
 
 interface DiffsState {
@@ -40,6 +51,8 @@ interface DiffsState {
   dirtyByTab: Record<string, true>;
   /** Last save failure per tab (rendered as a header chip). */
   saveErrorByTab: Record<string, string>;
+  /** Live text selection per tab (null when collapsed). */
+  selectionByTab: Record<string, DiffSelection | null>;
   mode: DiffMode;
   modeLoaded: boolean;
 
@@ -53,6 +66,7 @@ interface DiffsState {
   /** ⌘S: write the editor's worktree-side document to disk. The refresh
    * after the write arrives via the watcher's files:changed event. */
   save: (tabId: string) => Promise<void>;
+  setSelection: (tabId: string, selection: DiffSelection | null) => void;
   ensureMode: () => Promise<void>;
   setMode: (mode: DiffMode) => void;
 }
@@ -91,6 +105,7 @@ export const useDiffs = create<DiffsState>((set, get) => {
     byTab: {},
     dirtyByTab: {},
     saveErrorByTab: {},
+    selectionByTab: {},
     mode: "split",
     modeLoaded: false,
 
@@ -112,12 +127,14 @@ export const useDiffs = create<DiffsState>((set, get) => {
         const byTab = { ...s.byTab };
         const dirtyByTab = { ...s.dirtyByTab };
         const saveErrorByTab = { ...s.saveErrorByTab };
+        const selectionByTab = { ...s.selectionByTab };
         delete paramsByTab[tabId];
         delete previewTabs[tabId];
         delete byTab[tabId];
         delete dirtyByTab[tabId];
         delete saveErrorByTab[tabId];
-        return { paramsByTab, previewTabs, byTab, dirtyByTab, saveErrorByTab };
+        delete selectionByTab[tabId];
+        return { paramsByTab, previewTabs, byTab, dirtyByTab, saveErrorByTab, selectionByTab };
       }),
 
     ensure: async (tabId, params) => {
@@ -172,6 +189,22 @@ export const useDiffs = create<DiffsState>((set, get) => {
         }));
       }
     },
+
+    setSelection: (tabId, selection) =>
+      set((s) => {
+        const prev = s.selectionByTab[tabId] ?? null;
+        if (prev === selection) return s;
+        if (
+          prev &&
+          selection &&
+          prev.side === selection.side &&
+          prev.from === selection.from &&
+          prev.to === selection.to
+        ) {
+          return s;
+        }
+        return { selectionByTab: { ...s.selectionByTab, [tabId]: selection } };
+      }),
 
     ensureMode: async () => {
       if (get().modeLoaded) return;

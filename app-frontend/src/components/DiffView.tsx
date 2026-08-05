@@ -23,6 +23,7 @@ import { LanguageDescription } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { basicSetup } from "codemirror";
+import DiffSelectionPopover from "./DiffSelectionPopover";
 import { parseDiffTabId } from "../lib/diff-tabs";
 import {
   diffViewDocs,
@@ -62,13 +63,44 @@ function editableExtensions(tabId: string): Extension[] {
   ];
 }
 
+/** Reports text selections in any diff editor to the diffs store (the
+ * "Ask agent" popover reads them). Selection text is capped. */
+const MAX_SELECTION_CHARS = 4000;
+
+function selectionExtensions(tabId: string, side: "a" | "b" | "single"): Extension[] {
+  return [
+    EditorView.updateListener.of((update) => {
+      if (!update.selectionSet && !update.docChanged) return;
+      const sel = update.state.selection.main;
+      if (sel.empty) {
+        const prev = useDiffs.getState().selectionByTab[tabId];
+        if (prev && prev.side === side) useDiffs.getState().setSelection(tabId, null);
+        return;
+      }
+      useDiffs.getState().setSelection(tabId, {
+        side,
+        from: sel.from,
+        to: sel.to,
+        fromLine: update.state.doc.lineAt(sel.from).number,
+        toLine: update.state.doc.lineAt(sel.to).number,
+        text: update.state.sliceDoc(
+          sel.from,
+          Math.min(sel.to, sel.from + MAX_SELECTION_CHARS),
+        ),
+      });
+    }),
+  ];
+}
+
 export default function DiffView({
   tabId,
   title,
+  taskId,
   active,
 }: {
   tabId: string;
   title: string;
+  taskId: string;
   active: boolean;
 }) {
   const storeParams = useDiffs((s) => s.paramsByTab[tabId]);
@@ -166,12 +198,20 @@ export default function DiffView({
         let view: EditorView | MergeView;
         if (payload.oldExists && payload.newExists && mode === "split") {
           view = new MergeView({
-            a: { doc: oldDoc, extensions: [...baseExtensions(lang), ...readOnlyExtensions()] },
+            a: {
+              doc: oldDoc,
+              extensions: [
+                ...baseExtensions(lang),
+                ...readOnlyExtensions(),
+                ...selectionExtensions(tabId, "a"),
+              ],
+            },
             b: {
               doc: newDoc,
               extensions: [
                 ...baseExtensions(lang),
                 ...(editable ? editableExtensions(tabId) : readOnlyExtensions()),
+                ...selectionExtensions(tabId, "b"),
               ],
             },
             parent: container,
@@ -185,6 +225,7 @@ export default function DiffView({
             extensions: [
               ...baseExtensions(lang),
               ...(editable ? editableExtensions(tabId) : readOnlyExtensions()),
+              ...selectionExtensions(tabId, "single"),
               unifiedMergeView({
                 original: oldDoc,
                 highlightChanges: true,
@@ -201,6 +242,7 @@ export default function DiffView({
             extensions: [
               ...baseExtensions(lang),
               ...(editable ? editableExtensions(tabId) : readOnlyExtensions()),
+              ...selectionExtensions(tabId, "single"),
             ],
             parent: container,
           });
@@ -306,7 +348,14 @@ export default function DiffView({
       ) : buildError ? (
         <p className="diff-notice error">{buildError}</p>
       ) : payload ? (
-        <div className="diff-body" ref={containerRef} />
+        <div className="diff-body" ref={containerRef}>
+          <DiffSelectionPopover
+            tabId={tabId}
+            params={params}
+            taskId={taskId}
+            containerRef={containerRef}
+          />
+        </div>
       ) : (
         <p className="diff-notice">Loading diff…</p>
       )}

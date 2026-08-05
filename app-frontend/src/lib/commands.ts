@@ -5,8 +5,9 @@
 // Terminal-first: ⌘T opens a shell in the task's worktree; ⌘⇧O opens OMP;
 // ⌘⇧A opens the task's structured-chat conversation (E2-11-6).
 import { CommandId, createRegistry, registerCommand } from "./registry";
+import { ensureAcpConversation, focusConversationTab } from "./acp-conversation";
 import { useSidebar, visibleTaskOrder } from "../store/sidebar";
-import { listProviders, terminalOpen, terminalOpenAgent } from "./tauri";
+import { terminalOpen, terminalOpenAgent } from "./tauri";
 import { useConversations } from "../store/conversations";
 import { useTabs, type PaneId } from "../store/tabs";
 import { useUi } from "../store/ui";
@@ -33,46 +34,14 @@ async function openOmpTab(taskId: string, pane: PaneId): Promise<void> {
   });
 }
 
-/** Opens (or focuses) the task's ACP conversation tab (⌘⇧A). Reuses the
- * task's existing ACP conversation; otherwise creates one with the first
- * ACP-capable provider — the runtime type itself is decided SERVER-SIDE
- * from the provider decision (E2-11-5), the renderer never picks it. */
+/** Opens (or focuses) the task's ACP conversation tab (⌘⇧A). */
 async function openConversationTab(
   projectId: string,
   taskId: string,
   pane: PaneId,
 ): Promise<void> {
-  await useConversations.getState().ensure(taskId);
-  let conv = useConversations.getState().activeAcp(taskId);
-  if (!conv) {
-    const providers = await listProviders();
-    const acp = providers.find((p) => p.capabilities.includes("acp"));
-    if (!acp) {
-      // Unreachable with the compiled-in registry (claude is ACP-capable);
-      // guarded so a future registry change degrades loudly, not weirdly.
-      console.warn("open-conversation: no ACP-capable provider available");
-      return;
-    }
-    conv = await useConversations.getState().create(projectId, taskId, acp.id, "Agent");
-    if (conv.runtime !== "acp") {
-      console.warn("open-conversation: provider resolved to the TUI path", conv.provider);
-      return;
-    }
-  }
-  // One tab per conversation: focus it wherever it already lives.
-  const tabs = useTabs.getState();
-  const panes = tabs.panesByTask[taskId];
-  for (const p of ["left", "right"] as const) {
-    if (panes?.[p]?.tabs.some((t) => t.id === conv.id)) {
-      tabs.setActiveTab(taskId, p, conv.id);
-      return;
-    }
-  }
-  tabs.addTab(taskId, pane, {
-    id: conv.id,
-    kind: "conversation",
-    title: conv.title || "Agent",
-  });
+  const conv = await ensureAcpConversation(projectId, taskId);
+  if (conv) focusConversationTab(taskId, conv.id, pane);
 }
 
 function switchTask(dir: 1 | -1): void {
