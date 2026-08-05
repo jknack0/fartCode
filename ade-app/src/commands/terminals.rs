@@ -9,31 +9,50 @@ use rusqlite::OptionalExtension;
 use tauri::State;
 
 use crate::app::App;
-use crate::terminals::TerminalManager;
+use crate::terminals::{TerminalManager, TerminalSpec};
 
-/// Resolves the task's working directory: worktree path when the task has
-/// a workspace with a materialized path, else the project path.
-fn resolve_task_cwd(db: &Arc<dyn Db>, task_id: &str) -> Result<String, String> {
+/// Resolves the task's terminal context: owning project (id + path, for
+/// project-settings reads) and working directory (worktree path when the
+/// task has a workspace with a materialized path, else the project path).
+struct TaskContext {
+    project_id: String,
+    project_path: String,
+    cwd: String,
+}
+
+fn resolve_task_context(db: &Arc<dyn Db>, task_id: &str) -> Result<TaskContext, String> {
     let conn = db
         .conn()
         .lock()
         .map_err(|_| "db connection mutex poisoned".to_string())?;
-    let cwd: Option<String> = conn
+    let row: Option<(String, String, String)> = conn
         .query_row(
-            "SELECT COALESCE(
-                (SELECT path FROM workspaces WHERE id = t.workspace_id AND path IS NOT NULL AND path != ''),
-                (SELECT p.path FROM projects p WHERE p.id = t.project_id)
-             )
-             FROM tasks t WHERE t.id = ?1",
+            "SELECT t.project_id,
+                    p.path,
+                    COALESCE(
+                        (SELECT path FROM workspaces WHERE id = t.workspace_id AND path IS NOT NULL AND path != ''),
+                        p.path
+                    )
+             FROM tasks t JOIN projects p ON p.id = t.project_id
+             WHERE t.id = ?1",
             [task_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(|e| e.to_string())?;
-    cwd.ok_or_else(|| format!("task not found: {task_id}"))
+    row.map(|(project_id, project_path, cwd)| TaskContext {
+        project_id,
+        project_path,
+        cwd,
+    })
+    .ok_or_else(|| format!("task not found: {task_id}"))
 }
 
 /// Opens a shell in the task's workspace. Returns the terminal id.
+///
+/// The shell runs under tmux when the project's `tmux` setting is on AND a
+/// tmux binary resolves (ADR-0025): the session survives an app crash and
+/// the next open reattaches it.
 #[tauri::command]
 pub fn terminal_open(
     terminals: State<'_, Arc<TerminalManager>>,
@@ -42,23 +61,32 @@ pub fn terminal_open(
     rows: u16,
     cols: u16,
 ) -> Result<String, String> {
-    let cwd = resolve_task_cwd(&app.db, &task_id)?;
+    let ctx = resolve_task_context(&app.db, &task_id)?;
+    // Effective tmux flag: defaults < .ade.json < DB (settings precedence).
+    let tmux = app
+        .settings
+        .get_project_settings(&ctx.project_id, std::path::Path::new(&ctx.project_path))
+        .map(|s| s.tmux.unwrap_or(false))
+        .unwrap_or(false);
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     terminals
-        .open(
-            &task_id,
-            &shell,
-            &[],
-            std::path::Path::new(&cwd),
+        .open(TerminalSpec {
+            task_id: &task_id,
+            project_id: &ctx.project_id,
+            tmux,
+            program: &shell,
+            args: &[],
+            cwd: std::path::Path::new(&ctx.cwd),
             rows,
             cols,
-        )
+        })
         .map_err(|e| e.to_string())
 }
 
 /// Opens an agent CLI (e.g. `omp`) in the task's workspace. The binary is
 /// resolved from the provider registry's `binaries` list via PATH. Returns
-/// the terminal id.
+/// the terminal id. Agent terminals always run as plain PTYs — tmux slot
+/// durability (ADR-0025) is for shell terminals.
 #[tauri::command]
 pub fn terminal_open_agent(
     terminals: State<'_, Arc<TerminalManager>>,
@@ -68,7 +96,7 @@ pub fn terminal_open_agent(
     rows: u16,
     cols: u16,
 ) -> Result<String, String> {
-    let cwd = resolve_task_cwd(&app.db, &task_id)?;
+    let ctx = resolve_task_context(&app.db, &task_id)?;
     let provider = ade_providers::get(&agent).ok_or_else(|| format!("unknown agent: {agent}"))?;
     let binary = provider
         .binaries
@@ -76,14 +104,16 @@ pub fn terminal_open_agent(
         .find_map(|b| ade_core::pty::launcher::find_on_path(b))
         .ok_or_else(|| format!("agent not installed: {agent}"))?;
     terminals
-        .open(
-            &task_id,
-            &binary.to_string_lossy(),
-            &[],
-            std::path::Path::new(&cwd),
+        .open(TerminalSpec {
+            task_id: &task_id,
+            project_id: &ctx.project_id,
+            tmux: false,
+            program: &binary.to_string_lossy(),
+            args: &[],
+            cwd: std::path::Path::new(&ctx.cwd),
             rows,
             cols,
-        )
+        })
         .map_err(|e| e.to_string())
 }
 

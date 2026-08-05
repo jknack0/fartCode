@@ -5,8 +5,18 @@
 //! user's env, unlike agent launches which are allowlisted-only), pumps
 //! output to the frontend as `terminal:output` events (base64 chunks), and
 //! reports `terminal:exited` when the shell ends.
+//!
+//! **Tmux durability (ADR-0025):** when the project's `tmux` setting is on
+//! AND the tmux binary resolves, the spawned PTY runs the E2-07
+//! create-or-attach shell line around a deterministic per-task slot session
+//! (`{project}:{task}:terminal:{slot}`). The tmux SERVER owns the shell, so
+//! an app crash/restart leaves it alive: the next `open` for the task
+//! reattaches (slot 0 = the default terminal). Closing a tab kills only the
+//! attach client (detach — the session survives); deleting the task sweeps
+//! every `…:terminal:` session of the task, orphans included.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -44,11 +54,31 @@ struct Entry {
     handle: Mutex<Box<dyn PtyHandle>>,
 }
 
+/// Everything needed to open one interactive terminal (ADR-0025 merged with
+/// the agent-terminal spawn: program + args for plain PTYs, project id +
+/// tmux flag for slot durability).
+pub struct TerminalSpec<'a> {
+    pub task_id: &'a str,
+    pub project_id: &'a str,
+    /// Run under tmux slot durability when the binary resolves.
+    pub tmux: bool,
+    pub program: &'a str,
+    pub args: &'a [String],
+    pub cwd: &'a Path,
+    pub rows: u16,
+    pub cols: u16,
+}
+
 /// Owns all live interactive terminals.
 pub struct TerminalManager {
     pty: PortablePtyManager,
     app: tauri::AppHandle,
     terminals: Arc<Mutex<HashMap<String, Arc<Entry>>>>,
+    /// Tmux slots allocated per task BY THIS PROCESS (ADR-0025). A closed
+    /// tab keeps its slot allocated (detach semantics) so the next open gets
+    /// a NEW session; a restart starts empty, so the task's first open
+    /// reattaches slot 0 — the surviving default terminal.
+    task_slots: Mutex<HashMap<String, HashSet<u32>>>,
 }
 
 impl TerminalManager {
@@ -57,25 +87,62 @@ impl TerminalManager {
             pty: PortablePtyManager,
             app,
             terminals: Arc::new(Mutex::new(HashMap::new())),
+            task_slots: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Spawns `program` (with `args`) in `cwd` and starts the output pump.
-    /// Returns the terminal id.
-    pub fn open(
-        &self,
-        task_id: &str,
-        program: &str,
-        args: &[String],
-        cwd: &Path,
-        rows: u16,
-        cols: u16,
-    ) -> Result<String, ade_core::Error> {
-        let handle = self.pty.spawn(
+    /// Spawns `spec.program` (with `spec.args`) in `spec.cwd` and starts
+    /// the output pump. Returns the terminal id.
+    ///
+    /// With `spec.tmux` on AND a resolvable tmux binary (ADR-0025) the PTY
+    /// runs the create-or-attach shell line for slot `{project}:{task}:
+    /// terminal:{slot}` with `spec.program` as the session's foreground
+    /// command (`spec.args` are not passed into a tmux session) — the tmux
+    /// server owns it, so it survives an app crash; the next `open`
+    /// reattaches.
+    pub fn open(&self, spec: TerminalSpec<'_>) -> Result<String, ade_core::Error> {
+        let TerminalSpec {
+            task_id,
+            project_id,
+            tmux,
             program,
             args,
             cwd,
-            &[],
+            rows,
+            cols,
+        } = spec;
+        let tmux_binary = tmux
+            .then(ade_core::pty::tmux::resolve_tmux_binary)
+            .flatten();
+        let (spawn_cmd, spawn_args, spawn_env): (String, Vec<String>, Vec<(String, String)>) =
+            match tmux_binary {
+                Some(binary) => {
+                    let slot = self.allocate_slot(task_id);
+                    let session_id = format!("{project_id}:{task_id}:terminal:{slot}");
+                    let name = ade_core::pty::tmux::make_tmux_session_name(&session_id);
+                    let inner = ade_core::pty::tmux::build_terminal_session_command(cwd, program);
+                    let line = ade_core::pty::tmux::build_tmux_shell_line(&name, &inner);
+                    // tmux needs TERM; portable-pty sets none and Dock-launched
+                    // apps may inherit no TERM either. PATH overlay covers the
+                    // Dock PATH that lacks Homebrew.
+                    let mut env = vec![("TERM".into(), "xterm-256color".into())];
+                    if let Some(path) = &binary.path_overlay {
+                        env.push(("PATH".into(), path.clone()));
+                    }
+                    ("/bin/sh".into(), vec!["-c".into(), line], env)
+                }
+                None => {
+                    if tmux {
+                        tracing::debug!(task_id, "tmux enabled but no binary — plain spawn");
+                    }
+                    (program.to_string(), args.to_vec(), Vec::new())
+                }
+            };
+        let handle = self.pty.spawn(
+            &spawn_cmd,
+            &spawn_args,
+            cwd,
+            &spawn_env,
             PtySize {
                 rows: rows.max(1),
                 cols: cols.max(2),
@@ -145,6 +212,19 @@ impl TerminalManager {
         Ok(id)
     }
 
+    /// Smallest unused tmux slot for the task IN THIS PROCESS (ADR-0025).
+    /// Slots stay allocated after tab close (detach semantics — a new open
+    /// gets a fresh session, never accidentally reattaches a detached one);
+    /// a restarted process starts empty, so its first open for the task
+    /// claims slot 0 and reattaches the surviving default terminal.
+    fn allocate_slot(&self, task_id: &str) -> u32 {
+        let mut slots = self.task_slots.lock();
+        let used = slots.entry(task_id.to_string()).or_default();
+        let slot = (0..).find(|n| !used.contains(n)).expect("u32 slot space");
+        used.insert(slot);
+        slot
+    }
+
     /// Types into the terminal.
     pub fn write(&self, id: &str, data: &str) -> Result<(), ade_core::Error> {
         let entry = self
@@ -178,7 +258,9 @@ impl TerminalManager {
     }
 
     /// Closes every terminal belonging to a task (task deletion teardown).
-    pub fn close_task(&self, task_id: &str) {
+    /// Also sweeps the task's tmux sessions — including ones orphaned by a
+    /// crashed app instance (ADR-0025). Best-effort: absent tmux → no-op.
+    pub fn close_task(&self, project_id: &str, task_id: &str) {
         let ids: Vec<String> = self
             .terminals
             .lock()
@@ -189,5 +271,16 @@ impl TerminalManager {
         for id in ids {
             self.close(&id);
         }
+        let killed = ade_core::pty::tmux::kill_tmux_sessions_by_prefix(&format!(
+            "{project_id}:{task_id}:terminal:"
+        ));
+        if killed > 0 {
+            tracing::info!(
+                task_id,
+                killed,
+                "tmux terminal sessions swept on task deletion"
+            );
+        }
+        self.task_slots.lock().remove(task_id);
     }
 }

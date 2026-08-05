@@ -6,6 +6,12 @@ one exists).
 
 ## Current state (2026-08-04)
 
+- **#36 durable terminals (ADR-0025):** with the project `tmux` setting on,
+  E2-12 terminals run under tmux (`{project}:{task}:terminal:{slot}` sessions)
+  — app crash/restart leaves the shell alive and the next open REATTACHES
+  slot 0. Close-tab = detach; task-delete sweeps the prefix (orphans included).
+  tmux binary resolved with Dock-PATH fallback; setting off/binary absent →
+  plain shell unchanged. `tmux_by_default` stays false.
 - **Work tracking is GitHub issues only** (`jknack0/ade`) — `tickets-phase0.md`
   was retired 2026-08-04; its Appendix is preserved as `phase0-checklists.md`.
   New work = new issue (`phase:0`/`phase:2` + `size:*` labels, milestone "Phase 0").
@@ -93,6 +99,9 @@ one exists).
   id; the TAB owns the PTY (tab store kills on close/split-collapse/delete),
   the VIEW only attaches/detaches the DOM node. Also: one PTY drives one
   xterm surface — splitting a terminal spawns a fresh shell. (E2-12 fix #37.)
+- **PTY integration tests: never gate readiness on echoed output** — the PTY
+  echoes the typed command, so a sentinel inside the command self-matches
+  before it runs (tmux_durability flake). Gate on files the shell writes.
 - Before touching DB, PTY, SSH, or provider-spawning code, read the matching
   `reference/emdash/agents/risky-areas/*.md` page (reference impl is a clone of
   `generalaction/emdash`, Electron + TS).

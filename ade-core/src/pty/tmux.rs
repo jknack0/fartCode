@@ -60,14 +60,26 @@ pub fn build_tmux_shell_line(session_name: &str, command_line: &str) -> String {
     script
 }
 
+/// The command a durable interactive terminal runs INSIDE its tmux session
+/// (ADR-0025): `cd` into the task workspace and exec the user's shell.
+/// Both values go through the shared `shell_escape` (never ad-hoc quoting).
+/// tmux runs the line in its own default shell; `exec` makes the user shell
+/// the session's foreground process, so typing `exit` ends the session.
+pub fn build_terminal_session_command(cwd: &std::path::Path, shell: &str) -> String {
+    format!(
+        "cd {} && exec {}",
+        crate::shell_escape::single_quote(&cwd.to_string_lossy()),
+        crate::shell_escape::single_quote(shell),
+    )
+}
+
 /// `tmux kill-session -t <name>` — the teardown side of the durability path
-/// (conversation delete / task stop). Best-effort: a session that already
-/// died is not an error.
+/// (conversation delete / task stop / terminal task teardown). Best-effort:
+/// a session that already died is not an error.
 pub fn kill_tmux_session(session_name: &str) -> Result<(), std::io::Error> {
-    let quoted_name =
-        serde_json::to_string(session_name).unwrap_or_else(|_| format!("\"{session_name}\""));
-    let status = std::process::Command::new("tmux")
-        .args(["kill-session", "-t", quoted_name.trim_matches('"')])
+    let binary = tmux_command();
+    let status = std::process::Command::new(&binary)
+        .args(["kill-session", "-t", session_name])
         .status()?;
     if status.success() {
         Ok(())
@@ -75,6 +87,103 @@ pub fn kill_tmux_session(session_name: &str) -> Result<(), std::io::Error> {
         // Exit 1 = "no such session" — already gone, not an error.
         Ok(())
     }
+}
+
+/// Resolved tmux binary (ADR-0025).
+#[derive(Debug, Clone)]
+pub struct TmuxBinary {
+    /// argv[0] for direct tmux invocations — a PATH name or an absolute path.
+    pub command: String,
+    /// `PATH` value to overlay on PTY children when tmux is NOT on the
+    /// inherited PATH (GUI/Dock launch on macOS gets a minimal PATH).
+    /// `None` when plain PATH lookup already works.
+    pub path_overlay: Option<String>,
+}
+
+static RESOLVED_TMUX: std::sync::LazyLock<Option<TmuxBinary>> = std::sync::LazyLock::new(|| {
+    if probe_tmux("tmux") {
+        return Some(TmuxBinary {
+            command: "tmux".into(),
+            path_overlay: None,
+        });
+    }
+    for dir in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
+        let bin = format!("{dir}/tmux");
+        if std::path::Path::new(&bin).is_file() && probe_tmux(&bin) {
+            let current = std::env::var("PATH").unwrap_or_default();
+            return Some(TmuxBinary {
+                command: bin,
+                path_overlay: Some(format!("{dir}:{current}")),
+            });
+        }
+    }
+    None
+});
+
+/// Locates tmux: PATH probe first, then the common install prefixes
+/// (Dock-launched macOS apps inherit a minimal PATH that excludes
+/// Homebrew). Cached for the process lifetime — install/uninstall mid-run
+/// is not a supported transition. `None` when tmux is absent.
+pub fn resolve_tmux_binary() -> Option<&'static TmuxBinary> {
+    RESOLVED_TMUX.as_ref()
+}
+
+/// argv[0] for direct tmux calls: the resolved binary, or bare `tmux` when
+/// tmux is absent (preserves the historical spawn-ENOENT error path).
+fn tmux_command() -> String {
+    resolve_tmux_binary()
+        .map(|b| b.command.clone())
+        .unwrap_or_else(|| "tmux".into())
+}
+
+fn probe_tmux(candidate: &str) -> bool {
+    std::process::Command::new(candidate)
+        .arg("-V")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Names whose decoded ade session id starts with `id_prefix` (pure filter —
+/// foreign and malformed names never match).
+fn tmux_sessions_matching<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+    id_prefix: &str,
+) -> Vec<String> {
+    names
+        .into_iter()
+        .filter(|name| parse_tmux_session_name(name).is_some_and(|id| id.starts_with(id_prefix)))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Kill every ade session whose decoded id starts with `id_prefix`
+/// (ADR-0025 terminal task teardown — sweeps sessions orphaned by a crashed
+/// app instance too). Best-effort: no tmux / no server → 0.
+pub fn kill_tmux_sessions_by_prefix(id_prefix: &str) -> usize {
+    let Some(binary) = resolve_tmux_binary() else {
+        return 0;
+    };
+    let output = std::process::Command::new(&binary.command)
+        .args(["list-sessions", "-F", "#{session_name}"])
+        .output();
+    let Ok(output) = output else { return 0 };
+    if !output.status.success() {
+        // No tmux server running → nothing to kill.
+        return 0;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut killed = 0;
+    for name in tmux_sessions_matching(stdout.lines(), id_prefix) {
+        match kill_tmux_session(&name) {
+            Ok(()) => killed += 1,
+            Err(e) => tracing::warn!(session = %name, error = %e, "tmux kill-session failed"),
+        }
+    }
+    killed
 }
 
 #[cfg(test)]
@@ -146,5 +255,54 @@ mod tests {
             parse_tmux_session_name(&name).as_deref(),
             Some("conv-ünïcode")
         );
+    }
+
+    #[test]
+    fn terminal_session_command_cds_and_execs() {
+        let cmd = build_terminal_session_command(std::path::Path::new("/tmp/wt-1"), "/bin/zsh");
+        assert_eq!(cmd, "cd '/tmp/wt-1' && exec '/bin/zsh'");
+    }
+
+    #[test]
+    fn terminal_session_command_cd_survives_hostile_path() {
+        // A workspace path with a space and a single quote must survive the
+        // `cd` we emit: create it for real and run the cd-portion through sh.
+        let dir = tempfile::tempdir().unwrap();
+        let hostile = dir.path().join("it's here");
+        std::fs::create_dir_all(&hostile).unwrap();
+        let cmd = build_terminal_session_command(&hostile, "/bin/sh");
+        // cd-portion is everything before the `exec`.
+        let cd_part = cmd.split(" && exec ").next().unwrap();
+        let output = std::process::Command::new("sh")
+            .args(["-c", &format!("{cd_part} && pwd")])
+            .output()
+            .expect("sh runs");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.trim().ends_with("it's here"),
+            "pwd={stdout:?} cmd={cmd:?} status={:?}",
+            output.status
+        );
+    }
+
+    #[test]
+    fn sessions_matching_filters_by_decoded_prefix() {
+        // Our own sessions decode and match on the id prefix.
+        let ours_a = make_tmux_session_name("task-1:terminal:0");
+        let ours_b = make_tmux_session_name("task-1:terminal:1");
+        let foreign_task = make_tmux_session_name("task-2:terminal:0");
+        let conv_session = make_tmux_session_name("task-1:conv-9");
+        let names = [
+            "other-1",
+            "ade-!!!bad!!!",
+            &ours_a,
+            &ours_b,
+            &foreign_task,
+            &conv_session,
+        ];
+        let matched = tmux_sessions_matching(names, "task-1:terminal:");
+        assert_eq!(matched, vec![ours_a.clone(), ours_b.clone()], "{matched:?}");
+        // Prefix that matches nothing → empty (never kills foreign sessions).
+        assert!(tmux_sessions_matching(names, "task-9:").is_empty());
     }
 }

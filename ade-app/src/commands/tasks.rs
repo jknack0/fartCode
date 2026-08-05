@@ -67,7 +67,8 @@ pub fn delete_task(
     app.deletion
         .delete_task(&project_id, &task_id, &options)
         .map_err(|e| e.to_string())?;
-    // E2-12: deleting a task closes its interactive terminals.
-    terminals.close_task(&task_id);
+    // E2-12: deleting a task closes its interactive terminals; ADR-0025:
+    // and sweeps its tmux sessions (surviving orphans from crashes too).
+    terminals.close_task(&project_id, &task_id);
     Ok(())
 }
