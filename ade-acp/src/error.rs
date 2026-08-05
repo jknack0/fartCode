@@ -32,4 +32,12 @@ pub enum Error {
     /// The adapter exited / the transport is closed.
     #[error("connection closed: {0}")]
     Closed(String),
+
+    /// The conversation has no running session (manager operations).
+    #[error("conversation not found: {0}")]
+    ConversationNotFound(String),
+
+    /// The operation is invalid in the session's current lifecycle state.
+    #[error("invalid session state: {0}")]
+    InvalidState(String),
 }

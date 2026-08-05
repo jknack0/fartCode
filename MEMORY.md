@@ -4,6 +4,25 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## Current state (2026-08-05)
+
+- **#30 E2-11-3 SessionManager + SessionCell:** `ade-acp::session` owns the
+  runtime (cell = state machine starting→ready→working/cancelling→closed,
+  prompt queue with drain-on-settle, permission broker, rev-guarded draft,
+  raw update stream per turn; manager = cells keyed by conversationId,
+  routes by ACP sessionId, `start` = session/load-resume w/ fallback to
+  session/new + `SessionIdStore` persistence, initial-queue dispatch).
+  Persistence is a one-method trait — the real `DbConversationStore`
+  adapter wires at #32. Provider decision hook =
+  `ade_core::conversations::resolve_session_path` (ACP needs config type
+  AND `capabilities.acp`; else TUI path, E2-06 launcher untouched).
+  Deviations from reference in cell module docs (no quiesce timer, no
+  background agents — both arrive with the E2-11-4 reducer). ADR-0027.
+  Tests: `ade-acp/tests/session_manager_integration.rs` (9 tests vs fake
+  adapter incl. restart-resume) + decision regression in
+  `ade-core/tests/conversations_integration.rs`. Next: **#31 E2-11-4**
+  (transcript reducer + live models + `acp:*` events).
+
 ## Current state (2026-08-04)
 
 - **#36 durable terminals (ADR-0025):** with the project `tmux` setting on,
@@ -67,7 +86,7 @@ one exists).
   tmux kill, remote hook, dirty-check on worktree open (ADR-0022 for the
   sync-command decision).
 
-## Key decisions (see decisions/ for full ADRs, 0001–0024)
+## Key decisions (see decisions/ for full ADRs, 0001–0027)
 
 - **Git strategy:** `git2` v0.21 for worktree lifecycle (add/list/prune); shell
   out to `git` CLI for everything else. `gix` rejected (no worktree ops as of 0.86).

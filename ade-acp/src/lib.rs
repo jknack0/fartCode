@@ -17,6 +17,7 @@
 pub mod client;
 pub mod error;
 pub mod handlers;
+pub mod session;
 pub mod transport;
 
 pub use client::{AcpClient, InitializeResult, PromptResult, SessionUpdateEvent};
@@ -24,7 +25,12 @@ pub use error::Error;
 pub use handlers::{
     ClientHandlers, LocalHandlers, PermissionAnswerer, PermissionDecision, PermissionRequest,
 };
+pub use session::{
+    Lifecycle, QueuedPrompt, SessionCell, SessionIdStore, SessionManager, StartInput, StartOutcome,
+    Turn, TurnOutcome,
+};
 pub use transport::{Incoming, StdioTransport};
+
 /// ACP method names (stable strings from the v1 spec; the schema crate keeps
 /// its constants `pub(crate)`).
 pub mod methods {

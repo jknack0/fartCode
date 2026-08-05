@@ -124,6 +124,38 @@ fn acp_conversation_starts_without_session_id_and_derives_initial_queue() {
     assert_eq!(conv.initial_queue(), None);
 }
 
+// -- E2-11-3 acceptance 3: provider decision hook (ACP vs TUI path) ----------
+
+#[test]
+fn session_path_decision_acp_requires_capability_and_type() {
+    use ade_core::conversations::{resolve_session_path, SessionPath};
+    let fx = Fixture::new();
+
+    // ACP config + ACP-capable provider (claude) → structured ACP path.
+    let mut params = fx.conv("conv-acp", ConversationType::Acp);
+    params.provider = Some("claude".into());
+    let conv = fx.store.create(params).unwrap();
+    assert_eq!(resolve_session_path(&conv), SessionPath::Acp);
+
+    // ACP config but NON-ACP provider (pi) → TUI/PTY path untouched.
+    let mut params = fx.conv("conv-pi", ConversationType::Acp);
+    params.provider = Some("pi".into());
+    let conv = fx.store.create(params).unwrap();
+    assert_eq!(resolve_session_path(&conv), SessionPath::Pty);
+
+    // ACP-capable provider but PTY config → TUI path (type wins too).
+    let mut params = fx.conv("conv-pty", ConversationType::Pty);
+    params.provider = Some("claude".into());
+    let conv = fx.store.create(params).unwrap();
+    assert_eq!(resolve_session_path(&conv), SessionPath::Pty);
+
+    // No provider at all → TUI path.
+    let mut params = fx.conv("conv-none", ConversationType::Acp);
+    params.provider = None;
+    let conv = fx.store.create(params).unwrap();
+    assert_eq!(resolve_session_path(&conv), SessionPath::Pty);
+}
+
 #[test]
 fn set_session_id_round_trips() {
     let fx = Fixture::new();

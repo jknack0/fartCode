@@ -82,6 +82,35 @@ pub fn resolve_agent_session_command_args(
     (conversation_id.to_string(), is_resuming)
 }
 
+/// How a conversation's agent session is delivered (ticket E2-11-3
+/// "provider decision hook").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionPath {
+    /// Structured chat over ACP (E2-11): needs an ACP-type conversation AND
+    /// a provider with `capabilities.acp`.
+    Acp,
+    /// Terminal/TUI path (E2-06 launcher) — the default for everything else,
+    /// untouched by the ACP work.
+    Pty,
+}
+
+/// Supervisor decision: which path delivers this conversation's agent
+/// session. ACP requires BOTH the conversation's config type (`'acp'`) and
+/// the provider registry's `capabilities.acp`; any miss falls back to the
+/// TUI/PTY path so non-ACP providers behave exactly as before E2-11.
+pub fn resolve_session_path(conversation: &Conversation) -> SessionPath {
+    let acp_capable = conversation
+        .provider
+        .as_deref()
+        .and_then(ade_providers::get)
+        .is_some_and(|p| p.capabilities.acp);
+    if conversation.config.r#type == ConversationType::Acp && acp_capable {
+        SessionPath::Acp
+    } else {
+        SessionPath::Pty
+    }
+}
+
 /// Typed create params (reference `CreateConversationParams`).
 #[derive(Debug, Clone)]
 pub struct CreateConversationParams {
