@@ -3,10 +3,12 @@
 // Tab state persists under `view-state:task:<id>:tabs` — the exact key the
 // backend tears down with the task (E2-09) and prunes on boot (E1-08).
 //
-// Today a tab is a conversation (the one registered kind). Creating a
-// conversation adds a tab; closing one deletes the conversation (see the
-// registry's `onClose`). Future kinds (diff, browser, file-editor) register
-// in `lib/tab-registry.tsx` and flow through the same machinery.
+// Tab kinds register in `lib/tab-registry.tsx` (conversation, terminal) and
+// flow through the same machinery. Terminal tabs survive restarts: their ids
+// are PTY ids, and on restore the PTY is respawned for the same task (the
+// shell itself cannot — the backend process died with the app; only tmux
+// durability would keep scrollback alive). Conversation tabs reconcile
+// against the conversation store.
 import { create } from "zustand";
 import {
   getViewState,
@@ -15,7 +17,8 @@ import {
   setViewState,
   terminalOpen,
 } from "../lib/tauri";
-import { isTabKind, TAB_KINDS, type Tab } from "../lib/tab-registry";
+import { killTerminal } from "../lib/terminals";
+import { isTabKind, type Tab } from "../lib/tab-registry";
 import { useConversations } from "./conversations";
 
 export type PaneId = "left" | "right";
@@ -46,14 +49,15 @@ interface TabsState {
   closeTab: (taskId: string, pane: PaneId, tabId: string) => void;
   jumpToTab: (taskId: string, pane: PaneId, n: number) => void;
   cycleTab: (taskId: string, pane: PaneId, dir: 1 | -1) => void;
-  toggleSplit: (taskId: string, taskName: string) => void;
+  toggleSplit: (taskId: string, taskName: string) => Promise<void>;
   setActivePane: (taskId: string, pane: PaneId) => void;
   setActiveTab: (taskId: string, pane: PaneId, tabId: string) => void;
   dropTask: (taskId: string) => void;
 }
 
 /// Validates a persisted pane: registry-known kinds only, at least one tab,
-/// active id present.
+/// active id present. Terminal tabs are kept — their PTYs are respawned on
+/// restore (restart-survival contract for the terminal-first task view).
 function sanitizePane(pane: Pane | undefined): Pane | null {
   if (!pane) return null;
   const tabs = pane.tabs.filter(
@@ -61,10 +65,7 @@ function sanitizePane(pane: Pane | undefined): Pane | null {
       typeof t?.id === "string" &&
       typeof t?.title === "string" &&
       typeof t?.kind === "string" &&
-      isTabKind(t.kind) &&
-      // Ephemeral kinds (terminals) do not survive a reload — their PTY is
-      // gone; drop them from restored state.
-      !TAB_KINDS[t.kind].ephemeral,
+      isTabKind(t.kind),
   );
   if (tabs.length === 0) return null;
   const activeId = pane.activeId && tabs.some((t) => t.id === pane.activeId)
@@ -99,23 +100,35 @@ export const useTabs = create<TabsState>((set, get) => ({
       const byId = new Map(convs.map((c) => [c.id, c]));
 
       // Reconcile persisted tabs: keep only registered kinds with live
-      // backing. Conversation tabs are never force-added — they exist only
-      // when the user opened them (terminal-first default below).
-      const reconcile = (pane: Pane | undefined): Pane => {
+      // backing. Conversation tabs reconcile against the store; terminal
+      // tabs respawn their PTY — a persisted terminal id always belongs to
+      // the previous app process, whose shells died with it (only tmux
+      // durability would keep them, and that is not wired yet).
+      const reconcile = async (pane: Pane | undefined): Promise<Pane> => {
         const clean = sanitizePane(pane);
-        const kept = clean
-          ? clean.tabs.filter((t) => t.kind !== "conversation" || byId.has(t.id))
-          : [];
+        if (!clean) return { tabs: [], activeId: null };
+        const kept: Tab[] = [];
+        for (const t of clean.tabs) {
+          if (t.kind === "conversation") {
+            if (byId.has(t.id)) kept.push(t);
+            continue;
+          }
+          try {
+            const freshId = await terminalOpen(taskId, 24, 80);
+            kept.push({ ...t, id: freshId });
+          } catch (e) {
+            console.warn("terminal respawn failed on restore:", e);
+          }
+        }
         if (kept.length === 0) return { tabs: [], activeId: null };
-        const activeId =
-          clean && clean.tabs.some((t) => t.id === clean.activeId)
-            ? clean.activeId
-            : kept[0].id;
+        const activeId = kept.some((t) => t.id === clean.activeId)
+          ? clean.activeId
+          : kept[0].id;
         return { tabs: kept, activeId };
       };
 
-      let left = reconcile(saved?.left);
-      let right = saved?.right ? reconcile(saved.right) : null;
+      let left = await reconcile(saved?.left);
+      let right: Pane | null = saved?.right ? await reconcile(saved.right) : null;
       if (right && right.tabs.length === 0) right = null;
       if (left.tabs.length === 0) {
         // Terminal-first: a task's default surface is a shell in its
@@ -133,6 +146,9 @@ export const useTabs = create<TabsState>((set, get) => ({
         }
       }
       const panes: TaskPanes = { left, right };
+      // Persist the respawned terminal ids immediately so the stored state
+      // never carries a previous-process PTY id past first restore.
+      persist(taskId, panes, saved?.activePane ?? "left");
       set((s) => ({
         panesByTask: { ...s.panesByTask, [taskId]: panes },
         activePaneByTask: {
@@ -207,6 +223,18 @@ export const useTabs = create<TabsState>((set, get) => ({
       return { panesByTask: { ...s.panesByTask, [taskId]: panes } };
     });
 
+    // Terminal tabs own their PTY: closing the LAST reference kills the
+    // shell. Task switches and tab flips only unmount the view, which
+    // detaches without killing (restart-survival of the working shell).
+    if (closedTab?.kind === "terminal") {
+      const after = get().panesByTask[taskId];
+      const stillReferenced = [after?.left.tabs ?? [], after?.right?.tabs ?? []]
+        .flat()
+        .some((t) => t.id === tabId);
+      if (!stillReferenced) killTerminal(tabId);
+      return;
+    }
+
     // The tab is the conversation's only surface, so closing its LAST
     // reference deletes the conversation (⌘W); split duplicates keep it.
     if (closedTab?.kind !== "conversation") return;
@@ -258,36 +286,57 @@ export const useTabs = create<TabsState>((set, get) => ({
     });
   },
 
-  toggleSplit: (taskId, taskName) => {
-    set((s) => {
-      const old = s.panesByTask[taskId];
-      if (!old) return s;
-      if (old.right) {
-        const panes: TaskPanes = { left: old.left, right: null };
-        const activePane: PaneId = "left";
-        persist(taskId, panes, activePane);
-        return {
-          panesByTask: { ...s.panesByTask, [taskId]: panes },
-          activePaneByTask: { ...s.activePaneByTask, [taskId]: activePane },
-        };
-      }
-      // Split duplicates the active tab into the new right pane (reference
-      // `splitActiveTab` semantics); ⌘D then adds a fresh conversation tab.
-      const activeId = old.left.activeId ?? old.left.tabs[0].id;
-      const tab =
-        old.left.tabs.find((t) => t.id === activeId) ??
-        ({ id: "conversation", kind: "conversation", title: taskName } as Tab);
-      const panes: TaskPanes = {
-        left: old.left,
-        right: { tabs: [{ ...tab }], activeId: tab.id },
-      };
-      const activePane: PaneId = "right";
+  toggleSplit: async (taskId, taskName) => {
+    let old = get().panesByTask[taskId];
+    if (!old) return;
+    if (old.right) {
+      // Collapse: terminal tabs referenced ONLY by the right pane die with
+      // it (split-spawned shells are never shared with the left pane).
+      const rightOnlyTerminals = old.right.tabs
+        .filter((t) => t.kind === "terminal" && !old!.left.tabs.some((l) => l.id === t.id))
+        .map((t) => t.id);
+      const panes: TaskPanes = { left: old.left, right: null };
+      const activePane: PaneId = "left";
       persist(taskId, panes, activePane);
-      return {
+      set((s) => ({
         panesByTask: { ...s.panesByTask, [taskId]: panes },
         activePaneByTask: { ...s.activePaneByTask, [taskId]: activePane },
-      };
-    });
+      }));
+      for (const id of rightOnlyTerminals) killTerminal(id);
+      return;
+    }
+    // Split duplicates the active tab into the new right pane (reference
+    // `splitActiveTab` semantics) — EXCEPT terminals: one PTY drives one
+    // xterm surface, so a terminal split spawns a fresh shell instead.
+    const activeId = old.left.activeId ?? old.left.tabs[0]?.id;
+    const tab = old.left.tabs.find((t) => t.id === activeId);
+    let rightTab: Tab;
+    if (tab?.kind === "terminal") {
+      try {
+        const freshId = await terminalOpen(taskId, 24, 80);
+        rightTab = { id: freshId, kind: "terminal", title: taskName };
+      } catch (e) {
+        console.warn("terminal open failed on split:", e);
+        return;
+      }
+      // The spawn awaited — state may have moved underneath us.
+      old = get().panesByTask[taskId];
+      if (!old || old.right) return;
+    } else {
+      rightTab = tab
+        ? { ...tab }
+        : ({ id: "conversation", kind: "conversation", title: taskName } as Tab);
+    }
+    const panes: TaskPanes = {
+      left: old.left,
+      right: { tabs: [rightTab], activeId: rightTab.id },
+    };
+    const activePane: PaneId = "right";
+    persist(taskId, panes, activePane);
+    set((s) => ({
+      panesByTask: { ...s.panesByTask, [taskId]: panes },
+      activePaneByTask: { ...s.activePaneByTask, [taskId]: activePane },
+    }));
   },
 
   setActivePane: (taskId, pane) => {
@@ -317,6 +366,12 @@ export const useTabs = create<TabsState>((set, get) => ({
   },
 
   dropTask: (taskId) => {
+    // Kill the task's terminal sessions (backend `close_task` already killed
+    // the PTYs on task deletion; this frees xterm state + listeners).
+    const panes = get().panesByTask[taskId];
+    const terminalIds = [...(panes?.left.tabs ?? []), ...(panes?.right?.tabs ?? [])]
+      .filter((t) => t.kind === "terminal")
+      .map((t) => t.id);
     set((s) => {
       const panesByTask = { ...s.panesByTask };
       const activePaneByTask = { ...s.activePaneByTask };
@@ -326,6 +381,7 @@ export const useTabs = create<TabsState>((set, get) => ({
       delete loadedByTask[taskId];
       return { panesByTask, activePaneByTask, loadedByTask };
     });
+    for (const id of terminalIds) killTerminal(id);
   },
 }));
 

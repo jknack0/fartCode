@@ -31,9 +31,6 @@ export interface TabRenderProps {
 export interface TabKindDef {
   label: string;
   render: (props: TabRenderProps) => ReactNode;
-  /** Ephemeral kinds are dropped from persisted view-state on restore —
-   * their backing process (a PTY) does not survive a reload. */
-  ephemeral?: boolean;
 }
 
 export const TAB_KINDS: Record<TabKind, TabKindDef> = {
@@ -43,9 +40,9 @@ export const TAB_KINDS: Record<TabKind, TabKindDef> = {
   },
   terminal: {
     label: "Terminal",
-    // The tab id IS the PTY id (minted by the new-terminal command).
+    // The tab id IS the PTY id (minted by terminal_open); on restart the
+    // tabs store respawns the PTY and rewrites the tab id.
     render: ({ tab }) => <TerminalView terminalId={tab.id} />,
-    ephemeral: true,
   },
 };
 

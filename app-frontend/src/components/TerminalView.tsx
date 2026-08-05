@@ -1,60 +1,12 @@
-// Terminal tab (E2-12): xterm.js bound to a PTY-backed shell in the task's
-// workspace. The PTY id IS the tab id (created by the new-terminal command).
-// Output/exit arrive as Tauri events; input goes through terminal_write.
+// Terminal tab (E2-12): attaches the task's live terminal session (xterm.js
+// bound to a PTY-backed shell, owned by lib/terminals) to the pane. The PTY
+// id IS the tab id. Unmount only detaches the DOM — task switches and tab
+// flips keep the shell (and its scrollback) alive; only closing the tab or
+// deleting the task kills it (tab store → killTerminal).
 import { useEffect, useRef } from "react";
-import { Terminal } from "xterm";
-import { FitAddon } from "@xterm/addon-fit";
+import { getTerminalSession } from "../lib/terminals";
+import { terminalResize } from "../lib/tauri";
 import "xterm/css/xterm.css";
-import {
-  onTerminalExited,
-  onTerminalOutput,
-  terminalClose,
-  terminalResize,
-  terminalWrite,
-} from "../lib/tauri";
-
-// PTY lifecycle is reference-counted OUTSIDE the React effect: StrictMode
-// runs dev effects as mount → cleanup → remount, so a close fired from
-// cleanup would kill the shell before the remounted view could use it.
-// Close only when the LAST view lets go — deferred one beat so an immediate
-// remount cancels the pending close.
-const ptyRefs = new Map<string, number>();
-const pendingCloses = new Map<string, number>();
-
-function acquirePty(id: string): void {
-  const pending = pendingCloses.get(id);
-  if (pending !== undefined) {
-    clearTimeout(pending);
-    pendingCloses.delete(id);
-  }
-  ptyRefs.set(id, (ptyRefs.get(id) ?? 0) + 1);
-}
-
-function releasePty(id: string): void {
-  const refs = (ptyRefs.get(id) ?? 1) - 1;
-  if (refs > 0) {
-    ptyRefs.set(id, refs);
-    return;
-  }
-  ptyRefs.delete(id);
-  pendingCloses.set(
-    id,
-    window.setTimeout(() => {
-      pendingCloses.delete(id);
-      // Releasing the last view kills the shell (⌘W, split collapse, task
-      // switch teardown all funnel through unmount). Errors are fine — the
-      // PTY may already be gone (restart-survival: tabs outlive shells).
-      void terminalClose(id).catch(() => {});
-    }, 250),
-  );
-}
-
-function base64ToBytes(b64: string): Uint8Array {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
 
 export default function TerminalView({
   terminalId,
@@ -67,67 +19,25 @@ export default function TerminalView({
     const container = containerRef.current;
     if (!container) return;
 
-    const term = new Terminal({
-      cursorBlink: true,
-      // Nerd Fonts first so Powerline/nerd glyphs (, , icons) render;
-      // machines without them fall back to the system mono stack.
-      fontFamily:
-        '"JetBrainsMono Nerd Font Mono", "MesloLGS Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
-      fontSize: 12,
-      theme: {
-        background: "#0d1424",
-        foreground: "#e5e7eb",
-        cursor: "#d97706",
-        selectionBackground: "rgba(217, 119, 6, 0.3)",
-      },
-    });
-    const fit = new FitAddon();
-    term.loadAddon(fit);
-    term.open(container);
-    fit.fit();
+    const session = getTerminalSession(terminalId);
+    container.appendChild(session.host);
+    session.fit.fit();
     // Terminal-first task view: selecting a task must land the keyboard in
     // the shell immediately — no click required.
-    term.focus();
-
-    acquirePty(terminalId);
-
-    let disposed = false;
-    let exited = false;
-
-    const unsubs: Array<() => void> = [];
-    void onTerminalOutput(({ terminalId: id, data }) => {
-      if (id === terminalId && !disposed && !exited) {
-        term.write(base64ToBytes(data));
-      }
-    }).then((un) => unsubs.push(un));
-    void onTerminalExited(({ terminalId: id, exitCode }) => {
-      if (id === terminalId && !disposed) {
-        exited = true;
-        term.write(
-          `\r\n[process exited${exitCode !== null ? ` with code ${exitCode}` : ""}] — close this tab\r\n`,
-        );
-      }
-    }).then((un) => unsubs.push(un));
-
-    const onData = term.onData((data) => {
-      if (!exited) void terminalWrite(terminalId, data).catch(() => {});
-    });
+    session.term.focus();
 
     const resizeObserver = new ResizeObserver(() => {
-      if (disposed) return;
-      fit.fit();
-      const { cols, rows } = term;
+      session.fit.fit();
+      const { cols, rows } = session.term;
       void terminalResize(terminalId, cols, rows).catch(() => {});
     });
     resizeObserver.observe(container);
 
     return () => {
-      disposed = true;
-      onData.dispose();
       resizeObserver.disconnect();
-      unsubs.forEach((un) => un());
-      term.dispose();
-      releasePty(terminalId);
+      // Detach, never kill: the session + PTY belong to the TAB, and the
+      // view remounts whenever the user comes back to this tab/task.
+      session.host.remove();
     };
   }, [terminalId]);
 

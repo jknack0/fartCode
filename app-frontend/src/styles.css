@@ -887,3 +887,7 @@ button.danger {
 .terminal-container .xterm {
   height: 100%;
 }
+
+.terminal-surface {
+  height: 100%;
+}

@@ -10,7 +10,6 @@ import { useUi } from "../store/ui";
 
 export const registry = createRegistry();
 
-/** Create a conversation and open it as a tab in the given pane (E2-10). */
 /** Opens a new terminal tab (⌘⇧T and the task-open default). */
 async function openTerminalTab(taskId: string, pane: PaneId): Promise<void> {
   const terminalId = await terminalOpen(taskId, 24, 80);
@@ -156,10 +155,17 @@ export function registerAllCommands(): void {
       const sb = useSidebar.getState();
       const tabs = useTabs.getState();
       if (!sb.selectedTaskId || !sb.selectedProjectId) return;
-      if (!tabs.panesByTask[sb.selectedTaskId]?.right) {
-        tabs.toggleSplit(sb.selectedTaskId, taskName(sb.selectedTaskId));
+      const taskId = sb.selectedTaskId;
+      const projectId = sb.selectedProjectId;
+      if (!tabs.panesByTask[taskId]?.right) {
+        // toggleSplit awaits a fresh shell when the active tab is a
+        // terminal — the right pane must exist before the tab lands.
+        void tabs
+          .toggleSplit(taskId, taskName(taskId))
+          .then(() => openConversationTab(taskId, projectId, "right"));
+      } else {
+        void openConversationTab(taskId, projectId, "right");
       }
-      void openConversationTab(sb.selectedTaskId, sb.selectedProjectId, "right");
     },
   });
   registerCommand(registry, {
@@ -202,7 +208,7 @@ export function registerAllCommands(): void {
     run: () => {
       const sb = useSidebar.getState();
       if (!sb.selectedTaskId) return;
-      useTabs.getState().toggleSplit(sb.selectedTaskId, taskName(sb.selectedTaskId));
+      void useTabs.getState().toggleSplit(sb.selectedTaskId, taskName(sb.selectedTaskId));
     },
   });
   registerCommand(registry, {

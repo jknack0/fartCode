@@ -9,6 +9,12 @@ one exists).
 - **Work tracking is GitHub issues only** (`jknack0/ade`) — `tickets-phase0.md`
   was retired 2026-08-04; its Appendix is preserved as `phase0-checklists.md`.
   New work = new issue (`phase:0`/`phase:2` + `size:*` labels, milestone "Phase 0").
+- **E2-12 terminal lifecycle fixed (#37):** terminals no longer die on
+  task/tab switch or restart. xterm sessions live outside React keyed by PTY
+  id (`lib/terminals.ts`); PTY ownership moved to the tab store (only ⌘W's
+  last reference / split collapse / task delete kills); terminal tabs persist
+  and respawn a fresh shell on restore (scrollback restart survival = future
+  tmux work).
 - **Phase 0 is fully closed** (2026-08-04). **Phase 2 in progress:** E2-11
   broken into #28–#33; #28 (2827012), #34 (9041aad), #29 (2ca862a) done.
   **#35 E2-12 interactive task terminal done (713dfbd) + terminal-first
@@ -69,11 +75,12 @@ one exists).
 - Worktree paths validated by realpath containment; never delete the project root.
 - Versioned JSON (`read_versioned`/`write_versioned`) for all JSON DB columns.
 - Tests use `tempfile` / `:memory:` — never touch real app data paths.
-- **Never kill a process in an effect cleanup a remount will re-use** —
-  dev StrictMode runs effects mount → cleanup → remount; TerminalView's
-  cleanup used to kill the PTY (E2-12 "can't type" bug). PTY lifecycle now
-  lives in a module-level refcount with a deferred close; also xterm's
-  helper textarea is NOT an editable target for `skipInEditor` chords.
+- **Terminal session lifecycle:** React effect cleanups run on task switches
+  and tab flips — never kill/cleanup shared resources there. Interactive
+  terminals keep their xterm instance in a module-level registry keyed by PTY
+  id; the TAB owns the PTY (tab store kills on close/split-collapse/delete),
+  the VIEW only attaches/detaches the DOM node. Also: one PTY drives one
+  xterm surface — splitting a terminal spawns a fresh shell. (E2-12 fix #37.)
 - Before touching DB, PTY, SSH, or provider-spawning code, read the matching
   `reference/emdash/agents/risky-areas/*.md` page (reference impl is a clone of
   `generalaction/emdash`, Electron + TS).
