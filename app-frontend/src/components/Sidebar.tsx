@@ -5,6 +5,7 @@
 import { useUi } from "../store/ui";
 import { useSidebar } from "../store/sidebar";
 import { hint } from "../lib/useCommands";
+import { IconChevron, IconClose, IconGear, IconPin, IconPlus } from "./icons";
 
 export default function Sidebar() {
   const {
@@ -56,13 +57,13 @@ export default function Sidebar() {
             onClick={() => setProjectSettingsOpen(true)}
             disabled={!selectedProjectId}
           >
-            ⚙
+            <IconGear />
           </button>
           <button
             title={`Add project (${hint("new-project")})`}
             onClick={() => setCreateProjectOpen(true)}
           >
-            +
+            <IconPlus />
           </button>
         </div>
       </div>
@@ -99,7 +100,15 @@ export default function Sidebar() {
             <li key={p.id}>
               <div
                 className={`project-row${selectedProjectId === p.id ? " selected" : ""}`}
+                role="button"
+                tabIndex={0}
                 onClick={() => selectProject(p.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    selectProject(p.id);
+                  }
+                }}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setDeleteProjectTarget(p.id);
@@ -107,13 +116,13 @@ export default function Sidebar() {
                 title="Right-click to delete"
               >
                 <button
-                  className="chevron"
+                  className={`chevron${collapsed[p.id] ? "" : " open"}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     toggleCollapsed(p.id);
                   }}
                 >
-                  {collapsed[p.id] ? "▸" : "▾"}
+                  <IconChevron size={10} />
                 </button>
                 <span className="project-name">{p.name}</span>
                 <button
@@ -124,7 +133,7 @@ export default function Sidebar() {
                     createTask(p.id);
                   }}
                 >
-                  +
+                  <IconPlus size={10} />
                 </button>
               </div>
               {!collapsed[p.id] && (
@@ -180,7 +189,15 @@ function TaskRow({
   return (
     <li
       className={`task-row${selected ? " selected" : ""}`}
+      role="button"
+      tabIndex={0}
       onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
       onContextMenu={(e) => {
         e.preventDefault();
         onPin();
@@ -189,17 +206,21 @@ function TaskRow({
     >
       <span className={`status-dot status-${task.status}`} />
       <span className="task-name">{task.name}</span>
-      {task.isPinned && <span className="pin">◆</span>}
+      {task.isPinned && (
+        <span className="pin">
+          <IconPin size={10} />
+        </span>
+      )}
       <button
         className="delete-task-btn"
         title={`Delete task (${hint("delete-task") || "⌘⌫"})`}
-        onClick={(e) => {
-          e.stopPropagation();
-          onDelete(projectId, task.id);
-        }}
-      >
-        &times;
-      </button>
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(projectId, task.id);
+          }}
+        >
+          <IconClose size={10} />
+        </button>
     </li>
   );
 }

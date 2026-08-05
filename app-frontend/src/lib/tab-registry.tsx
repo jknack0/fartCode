@@ -42,7 +42,7 @@ export const TAB_KINDS: Record<TabKind, TabKindDef> = {
 
   terminal: {
     label: "Terminal",
-    glyph: "$",
+    glyph: "TTY",
     // The tab id IS the PTY id (minted by terminal_open); on restart the
     // tabs store respawns the PTY and rewrites the tab id.
     render: ({ tab, active }) => (

@@ -2,6 +2,7 @@
 // activate, × to close (⌘W), ⌘T adds another.
 import { useTabs, type PaneId } from "../store/tabs";
 import { TAB_KINDS } from "../lib/tab-registry";
+import { IconClose } from "./icons";
 
 export default function TabBar({
   taskId,
@@ -38,7 +39,7 @@ export default function TabBar({
               useTabs.getState().closeTab(taskId, pane, tab.id);
             }}
           >
-            &times;
+            <IconClose size={9} />
           </button>
         </div>
       ))}

@@ -7,6 +7,7 @@ import {
   resourceSample,
 } from "../lib/tauri";
 import { useUi } from "../store/ui";
+import { IconClose } from "./icons";
 
 export default function ResourceMonitor() {
   const open = useUi((s) => s.resourceOpen);
@@ -47,7 +48,9 @@ export default function ResourceMonitor() {
     <div className="resource-panel">
       <div className="resource-header">
         <span>Resource monitor</span>
-        <button onClick={() => setOpen(false)}>✕</button>
+        <button onClick={() => setOpen(false)}>
+          <IconClose size={10} />
+        </button>
       </div>
       {sample ? (
         <div className="resource-body">

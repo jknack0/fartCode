@@ -4,6 +4,24 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## Current state (2026-08-05, later)
+
+- **UI redesign — Signal → "emdash world" (impeccable new-work, seed e3c1a90f):**
+  full replacement of `app-frontend`'s visual world. Neutral charcoal chassis
+  (`#111111` bg ramp from emdash `.emdark`), emerald primary action
+  (`--accent: #00a67b`), blue selection; status hues: in_progress = amber
+  `--status-in-progress`, in_review = green `--status-in-review`,
+  cancelled/destructive = red. Type: Inter Variable (UI voice) + JetBrains
+  Mono Variable (machine voice) via `@fontsource-variable/*`. Old
+  `--bg*`/`--amber` Signal tokens are gone — don't reintroduce;
+  `styles.css` `:root` is the token source (`--background*`/`--foreground*`/
+  `--border*`/`--accent*`/`--status-*`/`--xterm-*`), recorded in DESIGN.md
+  + `.impeccable/design.json`. Icons are drawn SVG in `components/icons.tsx`
+  (no unicode glyphs). xterm theme in `lib/terminals.ts` syncs with
+  `--xterm-*`. Direction contract comment lives in `index.html` body
+  (survives build). Supersedes the intermediate INSTRUMENT concept
+  (seed 0a35d91b, Barlow fonts) — never landed. Reviewer disposition: ship.
+
 ## Current state (2026-08-05)
 
 - **Terminal lifecycle fix (ADR-0028):** reopen now shows every surviving

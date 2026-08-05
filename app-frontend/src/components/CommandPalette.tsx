@@ -136,7 +136,7 @@ export default function CommandPalette() {
           }}
         />
         {query.trim() === "" ? (
-          <p className="palette-hint">Type to search the index; commands are listed first.</p>
+          <p className="palette-hint">↑↓ move · ↵ run · esc close — type to search the index</p>
         ) : (
           <ul className="palette-results">
             {combined.map((c, i) => (
