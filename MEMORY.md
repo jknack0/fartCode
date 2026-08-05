@@ -4,6 +4,32 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## Current state (2026-08-05, latest++)
+
+- **#33 E2-11-6 Chat UI — transcript renderer + permission prompts:**
+  E2-11 is now 6/6. New `conversation` tab kind (tab id = conversation id;
+  ⌘⇧A `open-conversation` creates/focuses with the first ACP-capable
+  provider). `ConversationView` + `TranscriptItems` render the reduced
+  transcript two-tier: `SettledTurn` = React.memo on (id, items.length,
+  outcome.kind) — sound because committed turns are immutable — so
+  streaming snapshots re-render only the active turn (verified: settled
+  DOM nodes identity-stable). Permission prompts dock at the composer
+  (allow*→primary / reject*→danger → `acp_resolve_permission`); transcript
+  rows show a blue awaiting glyph on the gated toolCallId. Plan = docked
+  strip above composer (session slice, not a transcript item). Composer:
+  native textarea (editor scope — no conversation-view scope), Enter
+  sends / Shift+Enter breaks, Stop→`acp_cancel`, send-while-working
+  queues. States: hero, starting, closed-notice, stop-reason notices
+  (max_turn_requests/max_tokens/refusal), send-error banner, conversation-
+  deleted. Restore: tabs-store `reconcile` now branches per kind
+  (conversation tabs restore as-is; view hydrates via `acp_history` with
+  in-flight guard). tauri.ts types tightened to the exact models.rs
+  discriminated unions. No Rust changes. ADR-0031. Verified per
+  ade-frontend-browser-smoke (mock: /tmp/ade-mock-33.js pattern): full
+  streaming+permission round-trip, task switch+return, cold-restart
+  history restore, closed/error states. Next: E2-11 parent #21 can close;
+  remaining Phase-2 work per issue list.
+
 ## Current state (2026-08-05, latest+)
 
 - **#32 E2-11-5 Commands + conversation-store wiring + provider decision:**

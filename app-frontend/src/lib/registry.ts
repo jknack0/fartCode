@@ -44,6 +44,7 @@ export type CommandId =
   | "add-task"
   | "delete-task"
   | "send-context"
+  | "open-conversation"
   | "new-terminal"
   | "new-terminal-right-split"
   | "open-omp"

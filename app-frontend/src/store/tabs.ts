@@ -101,12 +101,18 @@ export const useTabs = create<TabsState>((set, get) => ({
       // Reconcile persisted tabs: respawn every terminal's PTY. With tmux
       // durability each respawn reattaches one surviving session
       // (ADR-0028 slot reuse); without it the old shells died with the
-      // previous process and the respawn is a fresh shell.
+      // previous process and the respawn is a fresh shell. Conversation
+      // tabs restore as-is — their id IS the conversation id (a DB row),
+      // and the view rehydrates the transcript from acp_history (#33).
       const reconcile = async (pane: Pane | undefined): Promise<Pane> => {
         const clean = sanitizePane(pane);
         if (!clean) return { tabs: [], activeId: null };
         const kept: Tab[] = [];
         for (const t of clean.tabs) {
+          if (t.kind !== "terminal") {
+            kept.push(t);
+            continue;
+          }
           try {
             const freshId = await terminalOpen(taskId, 24, 80);
             kept.push({ ...t, id: freshId });

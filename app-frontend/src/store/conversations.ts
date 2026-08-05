@@ -7,6 +7,8 @@
 // path; #33 builds the transcript UI on top of `models`.
 import { create } from "zustand";
 import {
+  acpCancel,
+  acpHistory,
   acpResolvePermission,
   acpSendPrompt,
   acpStart,
@@ -54,7 +56,13 @@ interface ConversationsState {
   activeAcp: (taskId: string) => ConversationDto | null;
   /** Starts the session lazily, then sends the prompt (⌘Enter path). */
   sendPrompt: (conversationId: string, text: string) => Promise<{ queued: boolean }>;
+  /** Cancels the in-flight turn (composer Stop — the session stays up). */
+  cancel: (conversationId: string) => Promise<void>;
   stop: (conversationId: string) => Promise<void>;
+  /** Loads the reduced history snapshot when no live one arrived yet
+   * (ConversationView mount — restart/restore path). No-op when a
+   * snapshot exists or the session is not running (`acp_history` null). */
+  hydrate: (conversationId: string) => Promise<void>;
   resolvePermission: (
     conversationId: string,
     requestId: string,
@@ -98,6 +106,21 @@ export const useConversations = create<ConversationsState>((set, get) => ({
     return response;
   },
 
+  cancel: async (conversationId) => {
+    await acpCancel(conversationId);
+  },
+
+  hydrate: async (conversationId) => {
+    if (get().models[conversationId] || hydrating.has(conversationId)) return;
+    hydrating.add(conversationId);
+    try {
+      const models = await acpHistory(conversationId);
+      if (models) applySnapshot(conversationId, models);
+    } finally {
+      hydrating.delete(conversationId);
+    }
+  },
+
   stop: async (conversationId) => {
     await acpStop(conversationId);
   },
@@ -138,6 +161,9 @@ export const useConversations = create<ConversationsState>((set, get) => ({
     });
   },
 }));
+
+/** In-flight hydrate guard (per conversation id). */
+const hydrating = new Set<string>();
 
 /** Applies one live-model snapshot (the acp:transcript payload). */
 function applySnapshot(conversationId: string, models: LiveModels): void {

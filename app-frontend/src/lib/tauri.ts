@@ -306,10 +306,10 @@ export interface LiveModels {
   committed: TranscriptTurn[];
   activeTurn: TranscriptTurn | null;
   config: SessionConfigState;
-  usage: { contextSize: number; contextUsed: number; cost: unknown } | null;
+  usage: SessionUsage | null;
   title: string | null;
   agents: unknown[];
-  plan: unknown | null;
+  plan: PlanState | null;
   draft: { text: string; rev: number } | null;
   queuedPrompts: QueuedPromptDto[];
   terminals: unknown[];
@@ -321,16 +321,26 @@ export interface QueuedPromptDto {
   hiddenContext: string | null;
 }
 
+/** The tool call a permission request gates (ACP ToolCallUpdate — the
+ * fields the prompt card renders; the full update carries more). */
+export interface PermissionToolCall {
+  toolCallId?: string;
+  title?: string;
+  kind?: string;
+  status?: string;
+  [key: string]: unknown;
+}
+
 export interface PendingPermission {
   requestId: string;
   sessionId: string;
-  toolCall: unknown;
+  toolCall: PermissionToolCall;
   options: { optionId: string; name: string; kind: string }[];
 }
 
-/** One reduced turn. Item shapes are the serializer's untagged union —
- * `kind` discriminates ("message" | "thinking" | a tool-call kind |
- * "tool-group"). #33's renderer narrows these. */
+/** One reduced turn. Items are the serializer's untagged union — `kind`
+ * discriminates ("message" | "thinking" | a tool-call kind | "tool-group");
+ * shapes mirror `ade_acp::transcript::models` exactly. */
 export interface TranscriptTurn {
   id: string;
   seq: number;
@@ -343,11 +353,118 @@ export interface TranscriptTurn {
     | { kind: "interrupted"; reason?: string };
 }
 
-export interface TranscriptItem {
-  kind: string;
+export type TranscriptItem =
+  | MessageItem
+  | ThinkingItem
+  | ToolCallItem
+  | ToolGroupItem;
+
+/** A tool node in a nested tree (group children). */
+export type ToolNode = ToolCallItem | ToolGroupItem;
+
+export interface MessageItem {
+  kind: "message";
   id: string;
   seq: number;
-  [key: string]: unknown;
+  role: "user" | "assistant";
+  text: string;
+}
+
+export interface ThinkingItem {
+  kind: "thinking";
+  id: string;
+  seq: number;
+  segmentId: string;
+  text: string;
+  status: "thinking" | "done";
+  startedAt: number;
+  durationMs?: number;
+}
+
+export type ToolItemKind =
+  | "execute-tool-call"
+  | "read-tool-call"
+  | "create-file-tool-call"
+  | "modify-file-tool-call"
+  | "delete-file-tool-call"
+  | "search-tool-call"
+  | "mcp-tool-call"
+  | "web-fetch-tool-call"
+  | "spawn-subagent-tool-call"
+  | "create-plan-tool-call"
+  | "unknown-tool-call";
+
+export type ToolStatus = "running" | "done" | "error";
+
+/** One tool call row. Kind-specific fields are absent unless the kind
+ * carries them (flattened union, ADR-0029). */
+export interface ToolCallItem {
+  kind: ToolItemKind;
+  id: string;
+  seq: number;
+  toolCallId: string;
+  title: string;
+  status: ToolStatus;
+  inputSummary?: string;
+  parentToolCallId?: string;
+  children?: ToolNode[];
+  // execute
+  command?: string;
+  outputText?: string;
+  terminalId?: string;
+  // read / create-file / modify-file / delete-file
+  path?: string;
+  content?: string;
+  oldText?: string;
+  newText?: string;
+  // search
+  query?: string;
+  matchCount?: number;
+  // mcp
+  tool?: string;
+  server?: string;
+  // web fetch
+  url?: string;
+  pageTitle?: string;
+  // subagent / unknown
+  name?: string;
+  agentId?: string;
+  background?: boolean;
+  // plan
+  planId?: string;
+  // unknown
+  toolKind?: string;
+}
+
+/** Collapsed batch of sibling tool calls (e.g. read-batch). */
+export interface ToolGroupItem {
+  kind: "tool-group";
+  id: string;
+  seq: number;
+  label: string;
+  groupKind: string;
+  status: ToolStatus;
+  children: ToolNode[];
+}
+
+export interface SessionUsage {
+  contextSize: number;
+  contextUsed: number;
+  cost: { amount: number; currency: string } | null;
+}
+
+/** Session-scoped plan slice (latest full snapshot per update). */
+export interface PlanState {
+  id: string;
+  entries: PlanEntry[];
+  updatedAt: number;
+}
+
+export interface PlanEntry {
+  id: string;
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+  priority: "high" | "medium" | "low";
 }
 
 export interface SessionConfigState {

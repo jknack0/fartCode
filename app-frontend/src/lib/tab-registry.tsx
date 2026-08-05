@@ -7,9 +7,10 @@
 //   diff        — E4-04 (diff renderer)
 //   browser     — E6-01 (per-task browser tab, ⌘⇧B)
 //   file-editor — E5-02 (editor tabs, ⌘S/⌘⇧S)
-// Registered now: terminal only — chat surfaces were removed; everything
-// that opens is a terminal (E2-12).
+// Registered: terminal (E2-12) and conversation (E2-11-6 structured chat —
+// the tab id IS the conversation id, a DB row that survives restarts).
 import type { ReactNode } from "react";
+import ConversationView from "../components/ConversationView";
 import TerminalView from "../components/TerminalView";
 import type { PaneId } from "../store/tabs";
 
@@ -20,7 +21,7 @@ export interface Tab {
   title: string;
 }
 
-export type TabKind = "terminal";
+export type TabKind = "terminal" | "conversation";
 
 export interface TabRenderProps {
   taskId: string;
@@ -47,6 +48,16 @@ export const TAB_KINDS: Record<TabKind, TabKindDef> = {
     // tabs store respawns the PTY and rewrites the tab id.
     render: ({ tab, active }) => (
       <TerminalView terminalId={tab.id} active={active} />
+    ),
+  },
+
+  conversation: {
+    label: "Agent",
+    glyph: "ACP",
+    // The tab id IS the conversation id; the transcript lives in the
+    // conversations store and survives tab flips and restarts (#33).
+    render: ({ taskId, tab, active }) => (
+      <ConversationView conversationId={tab.id} taskId={taskId} active={active} />
     ),
   },
 };
