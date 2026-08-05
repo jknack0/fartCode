@@ -8,6 +8,7 @@ pub mod db;
 pub mod dependencies;
 pub mod error;
 pub mod events;
+pub mod fs_watch;
 pub mod git;
 pub mod projects;
 pub mod provider_accounts;

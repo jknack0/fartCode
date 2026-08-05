@@ -11,6 +11,7 @@ use ade_core::db::{Db, SqliteDb};
 use ade_core::dependencies::{HostDependencyStore, ProcessInstallRunner};
 use ade_core::events::EventBus;
 use ade_core::events::{BroadcastEventBus, InternalEvent};
+use ade_core::fs_watch::FsWatchService;
 use ade_core::projects::worktrees::WorktreeManager;
 use ade_core::projects::DbProjectStore;
 use ade_core::provider_accounts::ProviderAccountStore;
@@ -39,6 +40,8 @@ pub struct App {
     pub deletion: TaskDeletionService,
     /// E3-07 provider credentials (keyring-backed).
     pub provider_accounts: Arc<ProviderAccountStore>,
+    /// E4-01 workspace file+git watcher (registered via `watchers.rs`).
+    pub fs_watch: Arc<FsWatchService>,
 }
 
 impl App {
@@ -95,6 +98,13 @@ impl App {
             sessions,
         );
 
+        // E4-01: file+git event watcher → live refresh pipeline. Lifecycle
+        // (boot backfill, provision/delete hooks) is wired in watchers.rs.
+        let fs_watch = Arc::new(
+            FsWatchService::new(event_bus.clone() as Arc<dyn EventBus>)
+                .map_err(|e| e.to_string())?,
+        );
+
         Ok(Arc::new(Self {
             db,
             settings,
@@ -105,6 +115,7 @@ impl App {
             rehydrator,
             deletion,
             provider_accounts,
+            fs_watch,
         }))
     }
 }
@@ -142,6 +153,18 @@ pub fn event_to_value(event: &InternalEvent) -> Option<serde_json::Value> {
         InternalEvent::ConversationDeleted { id } => {
             Some(json!({ "type": "conversation:deleted", "id": id }))
         }
+        InternalEvent::GitChanged {
+            project_id,
+            workspace_id,
+        } => Some(json!({
+            "type": "git:changed", "projectId": project_id, "workspaceId": workspace_id,
+        })),
+        InternalEvent::FilesChanged {
+            workspace_id,
+            paths,
+        } => Some(json!({
+            "type": "files:changed", "workspaceId": workspace_id, "paths": paths,
+        })),
         _ => None,
     }
 }
@@ -193,6 +216,24 @@ mod tests {
         assert_eq!(v["type"], "task:created");
         assert_eq!(v["projectId"], "p1");
         assert_eq!(v["name"], "fix");
+
+        // E4-01 watcher events reach the frontend envelope.
+        let ev = InternalEvent::GitChanged {
+            project_id: "p1".into(),
+            workspace_id: "w1".into(),
+        };
+        let v = event_to_value(&ev).unwrap();
+        assert_eq!(v["type"], "git:changed");
+        assert_eq!(v["projectId"], "p1");
+        assert_eq!(v["workspaceId"], "w1");
+
+        let ev = InternalEvent::FilesChanged {
+            workspace_id: "w1".into(),
+            paths: vec!["src/main.rs".into()],
+        };
+        let v = event_to_value(&ev).unwrap();
+        assert_eq!(v["type"], "files:changed");
+        assert_eq!(v["paths"][0], "src/main.rs");
 
         // Events the UI doesn't consume are skipped, not panicked on.
         assert!(event_to_value(&InternalEvent::AppStarted).is_none());

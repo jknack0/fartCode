@@ -116,6 +116,13 @@ pub enum InternalEvent {
         project_id: String,
         workspace_id: String,
     },
+    /// E4-01: working files changed in a workspace's worktree. `paths` are
+    /// worktree-relative, deduped, and capped (a hint for editors; consumers
+    /// needing exact state refetch).
+    FilesChanged {
+        workspace_id: String,
+        paths: Vec<String>,
+    },
 
     // Settings
     SettingChanged {

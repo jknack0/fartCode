@@ -13,11 +13,13 @@ serde_json = { workspace = true }
 sysinfo = "0.30"
 sha2 = { workspace = true }
 glob = { workspace = true }
+notify = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 base64 = "0.22"
 tracing = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
+parking_lot = "0.12"
 
 [dev-dependencies]
 ade-git = { path = "../ade-git" }

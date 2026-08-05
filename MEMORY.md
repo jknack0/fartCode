@@ -4,6 +4,34 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## Current state (2026-08-05, latest+++)
+
+- **#41 E4-01 File+git event watcher → live refresh pipeline:** E4 series
+  opened (epic #40, children #41–51, milestone "Phase 1", label phase:1).
+  New `ade-core::fs_watch`: notify-8 `FsWatchService` — one
+  RecommendedWatcher, refcounted **canonical** watch roots (worktree +
+  shared git common dir when it lives outside the worktree), std-thread
+  dispatcher debouncing raw events into 100 ms batches → pure
+  `classifier` (reference port: common-dir HEAD/refs/heads/packed-refs →
+  conservative fan-out to every workspace sharing that common dir;
+  superset deviation: refs/remotes + config fan out too, for ahead/behind
+  freshness; per-worktree gitdir HEAD/index routed to the owning
+  workspace only; worktree files excl. `.git`; objects/logs = noise) →
+  bus: new `FilesChanged { workspace_id, paths (rel, ≤128) }` + existing
+  `GitChanged`. `layout.rs` resolves gitdir/commondir by pure fs (no git
+  binary; canonicalize everything — FSEvents reports realpaths, /tmp
+  symlink trap). Lifecycle in `ade-app/src/watchers.rs` (indexer.rs
+  pattern): boot backfill (`boot_targets`: non-archived tasks w/ local
+  workspace path), TaskProvisioned → `target_for` → register,
+  TaskDeleted → unregister; workspaces shared by several tasks
+  refcounted. Frontend receives git:changed / files:changed via the
+  established `ade:event` envelope (ticket's per-name Tauri events
+  adjusted to the envelope convention). Service mutexes are parking_lot
+  (rs-parking-lot rule; Db's std Mutex contract untouched). 19 fs_watch
+  tests incl. real-FSEvents integration: burst→one batch, linked-worktree
+  fan-out with index staying scoped, unregister stops events, refcounts,
+  DB helper queries. Next: **#42 E4-02** (git status/diff engine).
+
 ## Current state (2026-08-05, latest++)
 
 - **#33 E2-11-6 Chat UI — transcript renderer + permission prompts:**

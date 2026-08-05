@@ -124,6 +124,10 @@ pub enum Error {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    // -- File watching (E4-01) --
+    #[error("file watch error: {0}")]
+    Watch(String),
+
     // -- Catch-all --
     #[error("{0}")]
     Internal(String),

@@ -9,6 +9,7 @@ mod app;
 mod commands;
 mod indexer;
 mod terminals;
+mod watchers;
 
 use std::sync::Arc;
 
@@ -57,6 +58,13 @@ pub fn run() {
                 app_state.db.clone(),
                 app_state.projects.clone(),
                 app_state.tasks.clone(),
+                app_state.event_bus.clone(),
+            );
+            // E4-01: workspace file+git watches (boot backfill + provision/
+            // delete subscription).
+            watchers::spawn_workspace_watchers(
+                app_state.db.clone(),
+                app_state.fs_watch.clone(),
                 app_state.event_bus.clone(),
             );
             // E2-07: rehydrate previously-spawned agent sessions AFTER DB
