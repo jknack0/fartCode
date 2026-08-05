@@ -4,6 +4,26 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## Current state (2026-08-05, E4-05)
+
+- **#45 E4-05 Inline editing of unstaged diffs (c42dd17):** worktree side
+  of unstaged diffs is editable (split b-editor, unified view, Added
+  single-doc); staged + baselines read-only. ⌘S bound via CM keymap IN
+  the editable editor (no global-registry entry — E5 keeps its own path).
+  New `ade-core::files::write_file` (lexical + canonical containment;
+  `Error::PathEscape`) behind `write_workspace_file` (commands/files.rs;
+  `workspace_path` in commands/git.rs is now pub(crate)). Refresh rules:
+  content-identical payload (save echo) skips rebuild (cursor/scroll/undo
+  survive) — BUT the skip requires the view KIND to match the requested
+  mode (mode flip bug found in smoke); external change rebuilds with
+  scroll+selection preserved; refresh while dirty deferred (edit wins).
+  Dirty dot in TabBar + header badge; saveError chip. Live CM handles in
+  `lib/diff-views.ts` map (non-serializable, never in zustand);
+  `window.__tabsStore` seam added to store/tabs.ts (HMR resets zustand
+  stores on module reload — smoke calls into a re-created store silently
+  no-op until ensureTabs rehydrates; wait ~2s after HMR). E4 is 5/11;
+  next: **#48 E4-08** footer git actions or **#46 E4-06** commit card.
+
 ## Current state (2026-08-05, dogfood fix)
 
 - **create_task never provisioned (pre-existing gap, 393abee):** the
