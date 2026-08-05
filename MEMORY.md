@@ -4,6 +4,25 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## Current state (2026-08-05, selection → agent)
+
+- **Diff selection → agent prompt (de6c9eb, user-directed reshape of #50's
+  popover):** select text in ANY diff editor (split a/b, unified, single-
+  doc) → floating "Ask agent" button at selection end → popover textarea
+  (Enter sends, ⇧Enter breaks, Esc closes) → `<path> lines X–Y[(baseline)]:`
+  + fenced code + prompt → task's ACP conversation via shared
+  `lib/acp-conversation.ts` (`ensureAcpConversation` find-or-create +
+  `focusConversationTab`, extracted from the ⌘⇧A command) → conversation
+  tab focused. Selection lives in diffs store (`selectionByTab`, capped
+  4K chars). #50 (line comments) now inherits this popover — its
+  remaining scope is Add Note / Create Task actions + persistence +
+  comment-task linking, not popover mechanics. Mock lesson (recurring):
+  ALWAYS close+kill the browser before re-registering an init script —
+  duplicate init scripts share one scope and the second dies on
+  const-redeclaration; mock is now IIFE-wrapped for idempotent
+  registration. Also: no backticks in `git commit -m` double-quoted
+  strings (shell ate a code span + 'syntax error at end of input').
+
 ## Current state (2026-08-05, E4-05)
 
 - **#45 E4-05 Inline editing of unstaged diffs (c42dd17):** worktree side
