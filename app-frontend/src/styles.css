@@ -1154,6 +1154,9 @@ button.danger:hover {
   justify-content: center;
   width: 26px;
   height: 26px;
+  /* Override the global button padding/border — they would eat the whole
+   * 26px box and shrink the icon to zero width. */
+  padding: 0;
   border-radius: var(--radius-sm);
   color: var(--foreground-passive);
 }
