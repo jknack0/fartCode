@@ -240,6 +240,12 @@ export function terminalClose(terminalId: string): Promise<void> {
   return invoke("terminal_close", { terminalId });
 }
 
+/** Count of the task's tmux sessions that survive but this app process does
+ * not currently show (ADR-0028) — restore opens extras for each. */
+export function terminalSurviving(taskId: string): Promise<number> {
+  return invoke("terminal_surviving", { taskId });
+}
+
 /** Subscribe to terminal output chunks (base64); returns an unsubscribe fn. */
 export function onTerminalOutput(
   cb: (payload: { terminalId: string; data: string }) => void,

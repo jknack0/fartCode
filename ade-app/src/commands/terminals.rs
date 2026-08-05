@@ -142,7 +142,9 @@ pub fn terminal_resize(
         .map_err(|e| e.to_string())
 }
 
-/// Kills the shell and drops the terminal.
+/// Kills the shell and drops the terminal. With tmux durability this also
+/// kills the tmux session (ADR-0028) — a closed tab is a teardown, not a
+/// detach.
 #[tauri::command]
 pub fn terminal_close(
     terminals: State<'_, Arc<TerminalManager>>,
@@ -150,4 +152,26 @@ pub fn terminal_close(
 ) -> Result<(), String> {
     terminals.close(&terminal_id);
     Ok(())
+}
+
+/// Count of the task's tmux sessions that SURVIVE but this process does not
+/// currently show (ADR-0028): a fresh restore opens enough terminals to
+/// cover persisted tabs AND every survivor. 0 when tmux is off/absent.
+#[tauri::command]
+pub fn terminal_surviving(
+    terminals: State<'_, Arc<TerminalManager>>,
+    app: State<'_, Arc<App>>,
+    task_id: String,
+) -> Result<usize, String> {
+    let ctx = resolve_task_context(&app.db, &task_id)?;
+    // Plain-PTY projects have nothing to survive; skip the tmux probe.
+    let tmux = app
+        .settings
+        .get_project_settings(&ctx.project_id, std::path::Path::new(&ctx.project_path))
+        .map(|s| s.tmux.unwrap_or(false))
+        .unwrap_or(false);
+    if !tmux {
+        return Ok(0);
+    }
+    Ok(terminals.surviving_session_count(&ctx.project_id, &task_id))
 }

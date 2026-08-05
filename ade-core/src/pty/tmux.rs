@@ -160,24 +160,104 @@ fn tmux_sessions_matching<'a>(
         .collect()
 }
 
+/// `list-sessions` rows for the local tmux server. Best-effort: tmux
+/// absent / no server running → empty.
+fn list_tmux_session_rows() -> Vec<(String, bool)> {
+    let Some(binary) = resolve_tmux_binary() else {
+        return Vec::new();
+    };
+    let output = std::process::Command::new(&binary.command)
+        .args([
+            "list-sessions",
+            "-F",
+            "#{session_name}\t#{session_attached}",
+        ])
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        // No tmux server running → nothing to list.
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let (name, attached) = line.split_once('\t')?;
+            Some((name.to_string(), attached == "1"))
+        })
+        .collect()
+}
+
+/// One live ade tmux session (decoded id + attach state).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TmuxSessionInfo {
+    /// Decoded session id (`{project}:{task}:terminal:{slot}` for
+    /// interactive terminals).
+    pub session_id: String,
+    /// True while at least one attach client is connected.
+    pub attached: bool,
+}
+
+/// Live ade sessions whose decoded id starts with `id_prefix` (ADR-0028:
+/// listing surviving terminal sessions on reopen). Foreign and malformed
+/// names never match — they must decode via `parse_tmux_session_name`
+/// first. Best-effort: no tmux / no server → empty.
+pub fn list_tmux_sessions_by_prefix(id_prefix: &str) -> Vec<TmuxSessionInfo> {
+    list_tmux_session_rows()
+        .into_iter()
+        .filter_map(|(name, attached)| {
+            Some(TmuxSessionInfo {
+                session_id: parse_tmux_session_name(&name)?,
+                attached,
+            })
+        })
+        .filter(|info| info.session_id.starts_with(id_prefix))
+        .collect()
+}
+
+/// Slot for a task's next durable terminal (ADR-0028): reuse the smallest
+/// live DETACHED session not already owned by this process — reattaching a
+/// surviving shell instead of minting a fresh one. When nothing is
+/// reusable, take the smallest slot unused both locally and on the tmux
+/// server (never double-attach a session another client holds).
+///
+/// `id_prefix` is `{project}:{task}:terminal:`; `owned_slots` are the
+/// slots this process already shows (their sessions must not be reattached
+/// a second time). Pure — the caller supplies the live listing.
+pub fn choose_terminal_slot(
+    id_prefix: &str,
+    owned_slots: &std::collections::HashSet<u32>,
+    live: &[TmuxSessionInfo],
+) -> u32 {
+    let slot_of = |s: &TmuxSessionInfo| {
+        s.session_id
+            .strip_prefix(id_prefix)
+            .and_then(|rest| rest.parse::<u32>().ok())
+    };
+    let live_slots: std::collections::HashSet<u32> = live.iter().filter_map(slot_of).collect();
+    live.iter()
+        .filter(|s| !s.attached)
+        .filter_map(slot_of)
+        .filter(|slot| !owned_slots.contains(slot))
+        .min()
+        .unwrap_or_else(|| {
+            (0..)
+                .find(|n| !owned_slots.contains(n) && !live_slots.contains(n))
+                .expect("u32 slot space")
+        })
+}
+
 /// Kill every ade session whose decoded id starts with `id_prefix`
 /// (ADR-0025 terminal task teardown — sweeps sessions orphaned by a crashed
 /// app instance too). Best-effort: no tmux / no server → 0.
 pub fn kill_tmux_sessions_by_prefix(id_prefix: &str) -> usize {
-    let Some(binary) = resolve_tmux_binary() else {
-        return 0;
-    };
-    let output = std::process::Command::new(&binary.command)
-        .args(["list-sessions", "-F", "#{session_name}"])
-        .output();
-    let Ok(output) = output else { return 0 };
-    if !output.status.success() {
-        // No tmux server running → nothing to kill.
-        return 0;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let names: Vec<String> = list_tmux_session_rows()
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
     let mut killed = 0;
-    for name in tmux_sessions_matching(stdout.lines(), id_prefix) {
+    for name in tmux_sessions_matching(names.iter().map(String::as_str), id_prefix) {
         match kill_tmux_session(&name) {
             Ok(()) => killed += 1,
             Err(e) => tracing::warn!(session = %name, error = %e, "tmux kill-session failed"),
@@ -189,6 +269,7 @@ pub fn kill_tmux_sessions_by_prefix(id_prefix: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn tmux_name_roundtrips() {
@@ -285,6 +366,63 @@ mod tests {
         );
     }
 
+    fn info(slot: u32, attached: bool) -> TmuxSessionInfo {
+        TmuxSessionInfo {
+            session_id: format!("p:t:terminal:{slot}"),
+            attached,
+        }
+    }
+
+    #[test]
+    fn choose_slot_prefers_smallest_detached_survivor() {
+        // Crash/restart recovery: slots 2 and 5 survived detached; the
+        // fresh process owns nothing → reattach 2, not create 0.
+        let live = [info(2, false), info(5, false)];
+        assert_eq!(
+            choose_terminal_slot("p:t:terminal:", &HashSet::new(), &live),
+            2
+        );
+    }
+
+    #[test]
+    fn choose_slot_never_double_attaches_or_reuses_owned() {
+        // Attached sessions belong to another client; owned slots are this
+        // process's already-shown terminals — neither is reusable.
+        let live = [info(0, true), info(1, false), info(2, false)];
+        let owned: HashSet<u32> = [1].into_iter().collect();
+        assert_eq!(choose_terminal_slot("p:t:terminal:", &owned, &live), 2);
+        // Everything live is attached or owned → mint the first free slot.
+        let live = [info(0, true), info(1, false)];
+        assert_eq!(
+            choose_terminal_slot("p:t:terminal:", &[1].into_iter().collect(), &live),
+            2
+        );
+    }
+
+    #[test]
+    fn choose_slot_starts_at_zero_when_nothing_is_live() {
+        assert_eq!(
+            choose_terminal_slot("p:t:terminal:", &HashSet::new(), &[]),
+            0
+        );
+    }
+
+    #[test]
+    fn choose_slot_ignores_non_numeric_suffixes() {
+        // A malformed/foreign tail must not poison the slot space.
+        let live = [
+            TmuxSessionInfo {
+                session_id: "p:t:terminal:abc".into(),
+                attached: false,
+            },
+            info(3, false),
+        ];
+        assert_eq!(
+            choose_terminal_slot("p:t:terminal:", &HashSet::new(), &live),
+            3
+        );
+    }
+
     #[test]
     fn sessions_matching_filters_by_decoded_prefix() {
         // Our own sessions decode and match on the id prefix.
@@ -304,5 +442,21 @@ mod tests {
         assert_eq!(matched, vec![ours_a.clone(), ours_b.clone()], "{matched:?}");
         // Prefix that matches nothing → empty (never kills foreign sessions).
         assert!(tmux_sessions_matching(names, "task-9:").is_empty());
+    }
+
+    #[test]
+    fn list_by_prefix_filters_decoded_ids() {
+        // Pure filtering half of `list_tmux_sessions_by_prefix` (the live
+        // listing itself needs a tmux server; covered by the durability
+        // integration test).
+        let ours = make_tmux_session_name("proj-1:task-1:terminal:0");
+        let foreign = make_tmux_session_name("proj-2:task-1:terminal:0");
+        let names = vec!["other".to_string(), ours.clone(), foreign];
+        let matched: Vec<String> = names
+            .into_iter()
+            .filter_map(|name| parse_tmux_session_name(&name))
+            .filter(|id| id.starts_with("proj-1:task-1:terminal:"))
+            .collect();
+        assert_eq!(matched, vec!["proj-1:task-1:terminal:0"]);
     }
 }

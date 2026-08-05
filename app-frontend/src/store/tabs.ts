@@ -5,16 +5,19 @@
 //
 // Every tab is a terminal (chat surfaces were removed). Terminal tabs
 // survive restarts: their ids are PTY ids, and on restore the PTY is
-// respawned for the same task (the shell itself cannot — the backend
-// process died with the app; only tmux durability would keep scrollback
-// alive). Future kinds (diff, browser, file-editor) register in
-// `lib/tab-registry.tsx` and flow through the same machinery.
+// respawned for the same task. With the project's tmux setting on the
+// respawn REATTACHES the surviving tmux session (ADR-0025/0028), and any
+// survivor the persisted tabs don't cover gets an extra tab so every
+// existing terminal shows on reopen. Future kinds (diff, browser,
+// file-editor) register in `lib/tab-registry.tsx` and flow through the
+// same machinery.
 import { create } from "zustand";
 import {
   getViewState,
   onAdeEvent,
   setViewState,
   terminalOpen,
+  terminalSurviving,
 } from "../lib/tauri";
 import { killTerminal } from "../lib/terminals";
 import { isTabKind, type Tab } from "../lib/tab-registry";
@@ -95,10 +98,10 @@ export const useTabs = create<TabsState>((set, get) => ({
         `view-state:task:${taskId}:tabs`,
       )) as SavedTabs | null;
 
-      // Reconcile persisted tabs: respawn every terminal's PTY — a
-      // persisted terminal id always belongs to the previous app process,
-      // whose shells died with it (only tmux durability would keep them,
-      // and that is not wired yet).
+      // Reconcile persisted tabs: respawn every terminal's PTY. With tmux
+      // durability each respawn reattaches one surviving session
+      // (ADR-0028 slot reuse); without it the old shells died with the
+      // previous process and the respawn is a fresh shell.
       const reconcile = async (pane: Pane | undefined): Promise<Pane> => {
         const clean = sanitizePane(pane);
         if (!clean) return { tabs: [], activeId: null };
@@ -121,6 +124,23 @@ export const useTabs = create<TabsState>((set, get) => ({
       let left = await reconcile(saved?.left);
       let right: Pane | null = saved?.right ? await reconcile(saved.right) : null;
       if (right && right.tabs.length === 0) right = null;
+
+      // Show existing terminals that survived a crash/close (ADR-0028):
+      // every live session this process does not already cover gets a tab.
+      // Each open reattaches the next detached survivor (backend slot
+      // policy), so nothing is spawned fresh while a survivor exists.
+      try {
+        const surviving = await terminalSurviving(taskId);
+        for (let i = 0; i < surviving; i++) {
+          const id = await terminalOpen(taskId, 24, 80);
+          left = {
+            tabs: [...left.tabs, { id, kind: "terminal", title: "Terminal" }],
+            activeId: left.activeId ?? id,
+          };
+        }
+      } catch (e) {
+        console.warn("survivor restore failed:", e);
+      }
       if (left.tabs.length === 0) {
         // Terminal-first: a task's default surface is a shell in its
         // worktree; extra terminals are summoned explicitly (⌘T / ⌘D),
