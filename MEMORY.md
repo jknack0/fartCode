@@ -6,6 +6,18 @@ one exists).
 
 ## Current state (2026-08-05, selection → agent)
 
+- **Terminal reattach on frontend reload (fd5956c):** vite HMR/webview
+  reloads used to RESPAWN every terminal tab (fresh shell!) while the
+  live agent PTY stayed orphaned in the backend — "my sessions don't
+  show". ensureTabs reconcile now reattaches persisted tabs whose id is
+  live in `terminal_list_for_task` (title + agent preserved), respawning
+  only dead ids (app-restart path unchanged). Scrollback: TerminalManager
+  keeps a 64KB output tail per entry, replayed via `terminal_tail` into a
+  fresh xterm (subscribe-first buffering so the fetch race can't lose
+  chunks). tmux shells benefit equally (no fresh attach ⇒ no tmux redraw
+  ⇒ tail is the only content source, no duplication). Mock lesson again:
+  EVERYTHING in __MOCK re-seeds on reload — flip cross-reload state via
+  localStorage overrides.
 - **Selection prompt routes to the LIVE AGENT TERMINAL first (68939da,
   user-directed):** opening a parallel ACP chat "while the work happens
   elsewhere" was wrong. TerminalSpec/Entry now carry `agent: Option<provider>`
