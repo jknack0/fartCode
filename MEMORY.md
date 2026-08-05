@@ -11,7 +11,18 @@ one exists).
   — app crash/restart leaves the shell alive and the next open REATTACHES
   slot 0. Close-tab = detach; task-delete sweeps the prefix (orphans included).
   tmux binary resolved with Dock-PATH fallback; setting off/binary absent →
-  plain shell unchanged. `tmux_by_default` stays false.
+  plain shell unchanged. `tmux_by_default` stays false. Agent terminals
+  (⌘⇧O) are always plain PTYs — slot durability is for shell terminals.
+- **"Signal" UI design system (#38):** full restyle of `app-frontend`. Tokens
+  live in `styles.css` `:root` (`--bg0..3`, `--line`, `--text/--muted/--faint`,
+  `--amber` reserved for the ONE active signal: selected task row bar, focused
+  pane's active tab, primary actions). Type: Space Grotesk = UI voice,
+  JetBrains Mono = data voice (tasks, chords, terminals, meters) — bundled via
+  `@fontsource/*` (imported in `main.tsx`; no CDN, Tauri stays offline-safe).
+  Tab kinds carry a `glyph` in `lib/tab-registry.tsx` (terminal = `$`).
+  xterm theme re-tinted in `lib/terminals.ts` (bg `#0b0d10`, cursor amber).
+  Old `--navy*` AND #39's signal-box `--board/--ivory/--aspect-*` tokens are
+  gone — don't reintroduce.
 - **Work tracking is GitHub issues only** (`jknack0/ade`) — `tickets-phase0.md`
   was retired 2026-08-04; its Appendix is preserved as `phase0-checklists.md`.
   New work = new issue (`phase:0`/`phase:2` + `size:*` labels, milestone "Phase 0").

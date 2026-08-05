@@ -1,6 +1,7 @@
 // Tab bar (E2-10): one per task pane. Tabs are terminals; click to
 // activate, × to close (⌘W), ⌘T adds another.
 import { useTabs, type PaneId } from "../store/tabs";
+import { TAB_KINDS } from "../lib/tab-registry";
 
 export default function TabBar({
   taskId,
@@ -27,6 +28,7 @@ export default function TabBar({
           onClick={() => activate(tab.id)}
           title={`${tab.title} — ${tab.id === paneState.activeId ? "⌘W to close" : "click to activate"}`}
         >
+          <span className="tab-kind">{TAB_KINDS[tab.kind].glyph}</span>
           <span className="tab-title">{tab.title}</span>
           <button
             className="tab-close"

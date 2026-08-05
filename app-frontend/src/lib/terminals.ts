@@ -38,17 +38,17 @@ export function getTerminalSession(terminalId: string): TermSession {
   const term = new Terminal({
     cursorBlink: true,
     // Nerd Fonts first so Powerline/nerd glyphs (, , icons) render;
-    // machines without them fall back to the system mono stack.
+    // then the bundled JetBrains Mono; last resort the system mono stack.
     fontFamily:
-      '"JetBrainsMono Nerd Font Mono", "MesloLGS Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
+      '"JetBrainsMono Nerd Font Mono", "MesloLGS Nerd Font Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
     fontSize: 12,
-    // Matches the app surface tokens in styles.css (diagram board, signal
-    // aspects) — keep in sync with --inset / --ivory / --aspect-proceed.
+    // Matches the Signal design system in styles.css — keep in sync with
+    // --bg0 / --text / --amber.
     theme: {
-      background: "#0d110e",
-      foreground: "#e4dfd0",
-      cursor: "#45b25c",
-      selectionBackground: "rgba(69, 178, 92, 0.28)",
+      background: "#0b0d10",
+      foreground: "#e6e9ee",
+      cursor: "#f0a02c",
+      selectionBackground: "rgba(240, 160, 44, 0.28)",
     },
   });
   const fit = new FitAddon();
