@@ -12,6 +12,7 @@ import { useUi } from "../store/ui";
 import { hint } from "../lib/useCommands";
 import { provisionTask, type DiffSide, type GitChangeDto } from "../lib/tauri";
 import CommitCard from "./CommitCard";
+import GitFooter from "./GitFooter";
 import { IconBranch, IconClose, IconDiscard, IconMinus, IconPlus } from "./icons";
 
 const GLYPH: Record<GitChangeDto["status"], string> = {
@@ -144,7 +145,12 @@ export default function ChangesSidebar() {
         </div>
       ) : null}
 
-      {workspaceId && snapshot && <CommitCard workspaceId={workspaceId} />}
+      {workspaceId && snapshot && (
+        <>
+          <CommitCard workspaceId={workspaceId} />
+          <GitFooter workspaceId={workspaceId} />
+        </>
+      )}
     </aside>
   );
 }

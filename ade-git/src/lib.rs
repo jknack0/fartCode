@@ -11,6 +11,7 @@
 pub mod commit;
 pub mod diff;
 pub mod git2ops;
+pub mod remote;
 pub mod stage;
 pub mod status;
 

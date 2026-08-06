@@ -669,6 +669,11 @@ export interface GitCommitStateDto {
   published: boolean;
   prOpen: boolean;
   canCreatePr: boolean;
+  /** E4-08 footer state: upstream shorthand, ahead/behind, remotes. */
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  remotes: string[];
 }
 export interface GitCommitResultDto {
   hash: string;
@@ -696,6 +701,26 @@ export function gitPush(workspaceId: string): Promise<GitPushOutcomeDto> {
 }
 export function gitCreatePr(workspaceId: string): Promise<GitCreatePrOutcomeDto> {
   return invoke("git_create_pr", { workspaceId });
+}
+
+// -- E4-08 footer git actions ---------------------------------------------------
+
+export interface GitPublishOutcomeDto {
+  branch: string;
+  remote: string;
+}
+
+export function gitFetch(workspaceId: string): Promise<void> {
+  return invoke("git_fetch", { workspaceId });
+}
+export function gitPull(workspaceId: string): Promise<void> {
+  return invoke("git_pull", { workspaceId });
+}
+export function gitPublish(workspaceId: string): Promise<GitPublishOutcomeDto> {
+  return invoke("git_publish", { workspaceId });
+}
+export function gitAddRemote(workspaceId: string, name: string, url: string): Promise<void> {
+  return invoke("git_add_remote", { workspaceId, name, url });
 }
 
 /** Writes the worktree side of a diff back to disk (E4-05 ⌘S). */

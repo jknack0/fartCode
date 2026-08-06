@@ -4,6 +4,32 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## Current state (2026-08-06, E4-08 footer git actions)
+
+- **E4-08 Footer git actions (#48) shipped:** GitFooter under the commit
+  card in the Changes sidebar — branch label + ↑ahead/↓behind badges +
+  Fetch / Pull / Push / Publish, and an inline add-remote mini-form when
+  `remotes.length === 0`. Backend: new `ade_git::remote` module —
+  `fetch` (-q), `pull` **--ff-only** (deliberate reference deviation per
+  ticket; diverged history surfaces git's stderr, never a hidden merge),
+  `publish` (push -u, refuses when upstream already set — that's
+  commit.rs::push's path), `add_remote` (name charset + dup + empty-url
+  validation). `CommitState` extended with upstream/ahead/behind/remotes
+  — ONE DTO now feeds both card and footer (git_commit_state is the
+  single repo-state read). Commands: git_fetch/git_pull/git_publish/
+  git_add_remote. Frontend: store actions refetch state after every
+  success so the footer flips immediately (publish → push/pull
+  affordances, acceptance); errors inline (.git-footer-error, role=alert,
+  cleared on next success — repo has no toast system). Disabled matrix:
+  fetch needs hasRemote; pull needs upstream && behind>0; push needs
+  remote+branch+(upstream||published); Publish visible only when
+  branch+remote && !upstream. Browser smoke: 4 scenarios by workspace id
+  (synced ↑2↓1, no-remote+add-form, unpublished publish-flip, diverged
+  pull error). Rust tests: bare-remote clone fixture for real
+  ahead/behind + ff-pull + diverged-pull + rebase recovery.
+- Next: **#47** E4-07 PR section (needs the #49 sync engine's storage —
+  check its body) or **#50** E4-10 line comments; #49(⇐#46 done) and #51.
+
 ## Current state (2026-08-05, E4-06 commit card)
 
 - **E4-06 Commit card (#46) shipped:** bottom-of-Changes-sidebar card —

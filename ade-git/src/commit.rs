@@ -53,6 +53,14 @@ pub struct CommitState {
     /// "Commit & Create PR" is offered: branch + configured remote + no
     /// open PR. (E8 supplies the repository URL; Phase 0 assumes it.)
     pub can_create_pr: bool,
+    /// Upstream shorthand (`origin/feat-x`) when the branch tracks one —
+    /// E4-08 footer: pull/push affordances key off this.
+    pub upstream: Option<String>,
+    /// Commits ahead of / behind the upstream (0/0 without one).
+    pub ahead: u32,
+    pub behind: u32,
+    /// All configured remotes (origin first — `CliGit::remotes`).
+    pub remotes: Vec<String>,
 }
 
 /// Collects [`CommitState`] for `worktree`. `push_remote` is the project
@@ -92,6 +100,9 @@ pub fn state(
     let pr_open = pr_url.is_some();
     let can_create_pr = branch.is_some() && has_remote && !pr_open;
 
+    let upstream = crate::remote::upstream_of(worktree);
+    let (ahead, behind) = crate::remote::ahead_behind(worktree);
+
     Ok(CommitState {
         branch,
         remote: has_remote.then(|| push_remote.to_string()),
@@ -99,6 +110,10 @@ pub fn state(
         published,
         pr_open,
         can_create_pr,
+        upstream,
+        ahead,
+        behind,
+        remotes,
     })
 }
 

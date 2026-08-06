@@ -167,6 +167,46 @@ pub fn git_create_pr(
         .map_err(String::from)
 }
 
+/// Fetches the push remote (E4-08 footer).
+#[tauri::command]
+pub fn git_fetch(app: State<'_, Arc<App>>, workspace_id: String) -> Result<(), String> {
+    let worktree = workspace_path(&app, &workspace_id)?;
+    let push_remote = project_push_remote(&app, &workspace_id)?;
+    ade_git::remote::fetch(&worktree, &push_remote).map_err(String::from)
+}
+
+/// `git pull --ff-only` (E4-08): diverged history surfaces git's error,
+/// never a hidden merge.
+#[tauri::command]
+pub fn git_pull(app: State<'_, Arc<App>>, workspace_id: String) -> Result<(), String> {
+    let worktree = workspace_path(&app, &workspace_id)?;
+    ade_git::remote::pull(&worktree).map_err(String::from)
+}
+
+/// Publishes an unpublished branch (`push -u`; E4-08). Errors when the
+/// branch already tracks an upstream — that path is `git_push`.
+#[tauri::command]
+pub fn git_publish(
+    app: State<'_, Arc<App>>,
+    workspace_id: String,
+) -> Result<ade_git::remote::PublishOutcome, String> {
+    let worktree = workspace_path(&app, &workspace_id)?;
+    let push_remote = project_push_remote(&app, &workspace_id)?;
+    ade_git::remote::publish(&worktree, &push_remote).map_err(String::from)
+}
+
+/// Adds a remote (E4-08): the footer's zero-remotes affordance.
+#[tauri::command]
+pub fn git_add_remote(
+    app: State<'_, Arc<App>>,
+    workspace_id: String,
+    name: String,
+    url: String,
+) -> Result<(), String> {
+    let worktree = workspace_path(&app, &workspace_id)?;
+    ade_git::remote::add_remote(&worktree, &name, &url).map_err(String::from)
+}
+
 /// Effective `pushRemote` of the project owning `workspace_id` (reference
 /// `getPushRemote`: pushRemote ?? baseRemote ?? "origin"). Resolves
 /// workspace → task → project; falls back to "origin" for workspaces not

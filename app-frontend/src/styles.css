@@ -374,6 +374,71 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* E4-08 git footer — under the commit card, same pinned column. */
+.git-footer {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--background-tertiary);
+}
+.git-footer-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.git-branch {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--foreground-muted);
+}
+.git-counts {
+  margin-left: 6px;
+}
+.git-ahead {
+  color: var(--foreground-muted);
+}
+.git-behind {
+  margin-left: 4px;
+  color: var(--accent);
+}
+.git-footer-actions {
+  display: flex;
+  gap: 4px;
+}
+.git-footer-btn {
+  font-size: 11px;
+  padding: 2px 7px;
+}
+.git-add-remote input {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--background-1);
+  color: var(--foreground);
+  font-size: 11px;
+}
+.git-add-remote .git-remote-name {
+  width: 76px;
+}
+.git-add-remote .git-remote-url {
+  flex: 1;
+  min-width: 0;
+}
+.git-footer-error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--destructive);
+  overflow-wrap: anywhere;
+}
+
 /* Main -------------------------------------------------------------------- */
 
 /* Sidebar — the tertiary chassis column ------------------------------------ */

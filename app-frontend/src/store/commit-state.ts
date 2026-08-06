@@ -6,11 +6,16 @@
 // waiting for the watcher.
 import { create } from "zustand";
 import {
+  gitAddRemote,
   gitCommit,
   gitCommitState,
+  gitFetch,
+  gitPublish,
+  gitPull,
   gitPush,
   type GitCommitResultDto,
   type GitCommitStateDto,
+  type GitPublishOutcomeDto,
   type GitPushOutcomeDto,
 } from "../lib/tauri";
 
@@ -27,6 +32,11 @@ interface CommitStateStore {
   commit: (workspaceId: string, message: string) => Promise<GitCommitResultDto>;
   /** Push current branch (set-upstream on first push). Throws on errors. */
   push: (workspaceId: string) => Promise<GitPushOutcomeDto>;
+  // -- E4-08 footer verbs (each refetches state so the footer flips) ----
+  fetch: (workspaceId: string) => Promise<void>;
+  pull: (workspaceId: string) => Promise<void>;
+  publish: (workspaceId: string) => Promise<GitPublishOutcomeDto>;
+  addRemote: (workspaceId: string, name: string, url: string) => Promise<void>;
 }
 
 const inflight = new Set<string>();
@@ -77,6 +87,27 @@ export const useCommitState = create<CommitStateStore>((set, get) => {
       const outcome = await gitPush(workspaceId);
       await fetchState(workspaceId);
       return outcome;
+    },
+
+    fetch: async (workspaceId) => {
+      await gitFetch(workspaceId);
+      await fetchState(workspaceId);
+    },
+
+    pull: async (workspaceId) => {
+      await gitPull(workspaceId);
+      await fetchState(workspaceId);
+    },
+
+    publish: async (workspaceId) => {
+      const outcome = await gitPublish(workspaceId);
+      await fetchState(workspaceId);
+      return outcome;
+    },
+
+    addRemote: async (workspaceId, name, url) => {
+      await gitAddRemote(workspaceId, name, url);
+      await fetchState(workspaceId);
     },
   };
 });
