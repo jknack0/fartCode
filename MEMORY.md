@@ -4,6 +4,23 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## E17-03 dispatch engine landed (2026-08-06, 5ecacf7) — E17 epic COMPLETE
+
+- `issue_dispatch` (ade-app/src/dispatch.rs): reattach if linked task lives;
+  else provider = issue.provider ?? defaultAgent setting, prompt packet
+  (`build_dispatch_prompt` in issues module), create_with_provision with
+  `linked_issue {provider:"local", identifier:issue_id}` (NO struct change —
+  the external-tracker shape absorbs the local variant), link + move.
+- **Auto-flip hooks:** terminals.rs pump (agent PTY exit) and
+  acp_events.rs transcript_changed (turn settles Done, once-per-turn edge
+  detection via flipped_turns map). Both reach App state via
+  `app.try_state::<Arc<App>>()` (needs `use tauri::Manager`). Flip = only
+  in_progress → in_review.
+- Frontend: in_progress drop → dispatch (unlinked) or move+focus (linked);
+  agent terminal gets the packet bracket-pasted (Modals.tsx flow).
+- AgentStart event is still DEAD (no consumer) — dispatch skips it; the
+  frontend launches the terminal explicitly.
+
 ## E17-02 + E17-04 landed (2026-08-06)
 
 - **Dogfood fixes (6532b9b):** AcpRuntime::resolve_cwd hard-errored on
