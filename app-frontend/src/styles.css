@@ -139,14 +139,46 @@ body {
 
 .shell {
   display: grid;
-  grid-template-columns: 264px 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "sidebar header header"
+    "sidebar main sheet";
   height: 100%;
 }
 
+/* Full-width project header row (E17 dogfood) — the right sheet renders
+   below it, never over it. */
+.app-header {
+  grid-area: header;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--background-secondary-3);
+  min-width: 0;
+}
+
+.app-header-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted, #b8b7b8);
+}
+
+.app-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+
+.main {
+  grid-area: main;
+}
 /* Changes panel (E4-03) — the right-hand review column -------------------- */
 
 .changes-panel {
-  grid-column: 3;
+  grid-area: sheet;
   display: flex;
   flex-direction: column;
   width: 320px;
@@ -165,14 +197,15 @@ body {
   flex-direction: column;
 }
 
-/* Nested in the sheet (project scope): no second border/width. */
+/* Rendered inside the sheet (project scope): the chat fills the whole
+   sheet — changes and chat alternate, never stack (E17 dogfood). */
 .changes-panel .project-chat {
   width: auto;
   min-width: 0;
   border-left: none;
-  border-top: 1px solid var(--border);
-  flex: 0 0 42%;
-  min-height: 120px;
+  border-top: none;
+  flex: 1;
+  min-height: 0;
 }
 
 .changes-panel .card-detail {
@@ -476,11 +509,9 @@ body {
   overflow-wrap: anywhere;
 }
 
-/* Main -------------------------------------------------------------------- */
-
-/* Sidebar — the tertiary chassis column ------------------------------------ */
-
 .sidebar {
+  grid-area: sidebar;
+  width: 264px;
   display: flex;
   flex-direction: column;
   min-height: 0;

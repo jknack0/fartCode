@@ -127,7 +127,9 @@ export function registerAllCommands(): void {
       ui.setResourceOpen(!ui.resourceOpen);
     },
   });
-  // E4-03: the Changes sidebar (right-side panel in the task view).
+  // E4-03: the Changes sidebar (right-side panel). At project scope the
+  // sheet alternates between changes and the PM chat (E17) — opening
+  // changes leaves chat behind.
   registerCommand(registry, {
     id: "toggle-changes",
     label: "Toggle changes panel",
@@ -135,7 +137,15 @@ export function registerAllCommands(): void {
     scope: "global",
     run: () => {
       const ui = useUi.getState();
-      ui.setChangesOpen(!ui.changesOpen);
+      const projectScope = !useSidebar.getState().selectedTaskId;
+      if (!ui.changesOpen) {
+        ui.setChangesOpen(true);
+        if (projectScope) ui.setProjectChatOpen(false);
+      } else if (projectScope && ui.projectChatOpen) {
+        ui.setProjectChatOpen(false); // chat mode → changes mode
+      } else {
+        ui.setChangesOpen(false);
+      }
     },
   });
 
@@ -147,11 +157,14 @@ export function registerAllCommands(): void {
     scope: "project-view",
     run: () => {
       const ui = useUi.getState();
-      const next = !ui.projectChatOpen;
-      ui.setProjectChatOpen(next);
-      // The chat docks at the bottom of the changes sheet — showing it
-      // opens the sheet too.
-      if (next) ui.setChangesOpen(true);
+      if (!ui.changesOpen) {
+        ui.setProjectChatOpen(true);
+        ui.setChangesOpen(true);
+      } else if (ui.projectChatOpen) {
+        ui.setChangesOpen(false); // chat mode → close the sheet
+      } else {
+        ui.setProjectChatOpen(true); // changes mode → chat mode
+      }
     },
   });
   registerCommand(registry, {

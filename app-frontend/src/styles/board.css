@@ -13,26 +13,6 @@
   min-width: 0;
 }
 
-.project-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--background-secondary-3);
-}
-
-.project-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted, #b8b7b8);
-}
-
-.project-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
 .project-action {
   display: flex;
   align-items: center;

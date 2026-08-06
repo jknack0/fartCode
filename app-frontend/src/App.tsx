@@ -7,6 +7,7 @@ import ChangesSidebar from "./components/ChangesSidebar";
 import CommandPalette from "./components/CommandPalette";
 import Modals from "./components/Modals";
 import Onboarding from "./components/Onboarding";
+import ProjectHeader from "./components/ProjectHeader";
 import ProjectView from "./components/ProjectView";
 import ResourceMonitor from "./components/ResourceMonitor";
 import Sidebar from "./components/Sidebar";
@@ -52,6 +53,9 @@ function App() {
   return (
     <main className="shell">
       <Sidebar />
+      {selectedProjectId && !selectedTaskId && (
+        <ProjectHeader projectId={selectedProjectId} />
+      )}
       <Onboarding />
       <CommandPalette />
       <Modals />

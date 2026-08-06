@@ -53,8 +53,9 @@ export default function ChangesSidebar() {
 
   if (!open || (!taskId && !workspaceId)) return null;
 
-  // E17 project scope: the sheet hosts the PM chat docked at the bottom,
-  // and a board card click swaps the whole sheet to card detail.
+  // E17 project scope: the sheet shows ONE of changes | PM chat (they
+  // alternate, never stack), and a board card click swaps the whole sheet
+  // to card detail.
   const showDetail = !taskId && detailIssueId !== null;
   const showChat = !taskId && projectChatOpen && selectedProjectId !== null;
 
@@ -65,6 +66,8 @@ export default function ChangesSidebar() {
     <aside className="changes-panel">
       {showDetail ? (
         <CardDetail projectId={selectedProjectId!} issueId={detailIssueId} />
+      ) : showChat ? (
+        <ProjectChatPanel projectId={selectedProjectId} />
       ) : (
         <>
           <div className="changes-scroll">
@@ -171,7 +174,6 @@ export default function ChangesSidebar() {
         </>
       )}
           </div>
-          {showChat && <ProjectChatPanel projectId={selectedProjectId} />}
         </>
       )}
     </aside>
