@@ -6,6 +6,12 @@ one exists).
 
 ## E17-03 dispatch engine landed (2026-08-06, 5ecacf7) — E17 epic COMPLETE
 
+- **Sheet layout (886bb86, user pick):** at project scope the right surface
+  is ONE sheet — Changes on top, PM chat docked at the bottom (flex 42%);
+  card click swaps the whole sheet to CardDetail. ⌘⇧2 shows chat AND opens
+  the sheet (setChangesOpen(true) in the command); the GitHub icon toggles
+  the sheet. Chat/detail mount inside ChangesSidebar, not ProjectView.
+
 - `issue_dispatch` (ade-app/src/dispatch.rs): reattach if linked task lives;
   else provider = issue.provider ?? defaultAgent setting, prompt packet
   (`build_dispatch_prompt` in issues module), create_with_provision with
