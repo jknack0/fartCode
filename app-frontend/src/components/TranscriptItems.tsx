@@ -10,6 +10,8 @@
 // and awaiting-permission overrides with an info-blue key (the prompt
 // itself docks at the composer, reference PermissionBand placement).
 import { memo, useState } from "react";
+import { extractProposalBlocks, stripProposalBlocks } from "../lib/proposal";
+import ProposalCard from "./projectChat/ProposalCard";
 import type {
   MessageItem,
   ThinkingItem,
@@ -71,9 +73,31 @@ function dirname(path: string): string {
 
 // -- messages -----------------------------------------------------------------
 
-function MessageRow({ item }: { item: MessageItem }) {
+function MessageRow({
+  item,
+  proposalProjectId,
+}: {
+  item: MessageItem;
+  /** E17-04: set only for the PM chat (project: owner) — assistant text is
+   * scanned for ade-proposal blocks, each rendered as an approval card. */
+  proposalProjectId?: string | null;
+}) {
   if (item.role === "user") {
     return <div className="chat-user-card">{item.text}</div>;
+  }
+  if (proposalProjectId) {
+    const blocks = extractProposalBlocks(item.text);
+    if (blocks.length > 0) {
+      const prose = stripProposalBlocks(item.text);
+      return (
+        <div className="chat-assistant">
+          {prose && <div>{prose}</div>}
+          {blocks.map((raw, i) => (
+            <ProposalCard key={i} raw={raw} projectId={proposalProjectId} />
+          ))}
+        </div>
+      );
+    }
   }
   return <div className="chat-assistant">{item.text}</div>;
 }
@@ -337,13 +361,15 @@ function NodeRow({
 function ItemRow({
   item,
   awaitingIds,
+  proposalProjectId,
 }: {
   item: TranscriptItem;
   awaitingIds: ReadonlySet<string>;
+  proposalProjectId?: string | null;
 }) {
   switch (item.kind) {
     case "message":
-      return <MessageRow item={item} />;
+      return <MessageRow item={item} proposalProjectId={proposalProjectId} />;
     case "thinking":
       return <ThinkingRow item={item} />;
     case "tool-group":
@@ -362,16 +388,23 @@ const OUTCOME_LABEL: Record<string, string> = {
 export function TurnBlock({
   turn,
   awaitingIds,
+  proposalProjectId,
 }: {
   turn: TranscriptTurn;
   awaitingIds: ReadonlySet<string>;
+  proposalProjectId?: string | null;
 }) {
   const outcome = turn.outcome;
   const failed = outcome?.kind === "error";
   return (
     <div className="chat-turn" data-turn-id={turn.id}>
       {turn.items.map((item) => (
-        <ItemRow key={item.id} item={item} awaitingIds={awaitingIds} />
+        <ItemRow
+          key={item.id}
+          item={item}
+          awaitingIds={awaitingIds}
+          proposalProjectId={proposalProjectId}
+        />
       ))}
       {outcome && outcome.kind !== "done" && (
         <div className={`chat-outcome${failed ? " error" : ""}`}>

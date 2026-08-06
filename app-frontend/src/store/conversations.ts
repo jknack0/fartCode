@@ -61,8 +61,13 @@ interface ConversationsState {
   ) => Promise<ConversationDto>;
   /** The task's ACP conversation, if any (⌘Enter routing). */
   activeAcp: (taskId: string) => ConversationDto | null;
-  /** Starts the session lazily, then sends the prompt (⌘Enter path). */
-  sendPrompt: (conversationId: string, text: string) => Promise<{ queued: boolean }>;
+  /** Starts the session lazily, then sends the prompt (⌘Enter path).
+   * `hiddenContext` rides along unseen (E17-04 PM system prompt). */
+  sendPrompt: (
+    conversationId: string,
+    text: string,
+    hiddenContext?: string,
+  ) => Promise<{ queued: boolean }>;
   /** Cancels the in-flight turn (composer Stop — the session stays up). */
   cancel: (conversationId: string) => Promise<void>;
   stop: (conversationId: string) => Promise<void>;
@@ -115,11 +120,11 @@ export const useConversations = create<ConversationsState>((set, get) => ({
   activeAcp: (taskId) =>
     (get().byTask[taskId] ?? []).find((c) => c.runtime === "acp") ?? null,
 
-  sendPrompt: async (conversationId, text) => {
+  sendPrompt: async (conversationId, text, hiddenContext) => {
     // Lazy start: the session may not be running yet (first ⌘Enter after
     // boot). acp_start is idempotent, so racing sends converge.
     await acpStart(conversationId);
-    const response = await acpSendPrompt(conversationId, text);
+    const response = await acpSendPrompt(conversationId, text, hiddenContext);
     set((s) => ({ drafts: { ...s.drafts, [conversationId]: "" } }));
     return response;
   },

@@ -922,3 +922,39 @@ export function getOrCreateProjectConversation(
 ): Promise<ConversationDto> {
   return invoke("get_or_create_project_conversation", { projectId, provider });
 }
+
+// -- E17-04 PM proposal blocks (ADR-0032) ---------------------------------------
+
+export interface ProposalPrdDto {
+  path: string;
+  title: string | null;
+}
+
+export interface ProposalIssueDto {
+  title: string;
+  body: string | null;
+  acceptance: string[];
+  blockedBy: string[];
+  provider: string | null;
+  model: string | null;
+}
+
+export interface ProposalDto {
+  prd: ProposalPrdDto | null;
+  issues: ProposalIssueDto[];
+}
+
+/** Validates a raw ade-proposal block payload. Rejects (throws) on
+ * malformed input — the caller renders the block as plain text instead. */
+export function issueParseProposal(text: string): Promise<ProposalDto> {
+  return invoke("issue_parse_proposal", { text });
+}
+
+/** Applies an approved proposal (issues + blocked-by edges, all-or-nothing).
+ * Returns the created issues. */
+export function issueApplyProposal(
+  projectId: string,
+  proposal: ProposalDto,
+): Promise<IssueDto[]> {
+  return invoke("issue_apply_proposal", { projectId, proposal });
+}

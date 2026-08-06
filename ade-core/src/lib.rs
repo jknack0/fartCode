@@ -11,6 +11,7 @@ pub mod events;
 pub mod files;
 pub mod fs_watch;
 pub mod git;
+pub mod issue_proposal;
 pub mod issues;
 pub mod line_comments;
 pub mod projects;

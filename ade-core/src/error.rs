@@ -117,6 +117,9 @@ pub enum Error {
     #[error("blocked-by edge {from} blocked by {to} would create a dependency cycle")]
     IssueDependencyCycle { from: String, to: String },
 
+    #[error("invalid proposal: {0}")]
+    InvalidProposal(String),
+
     #[error("empty session id")]
     EmptySessionId,
 

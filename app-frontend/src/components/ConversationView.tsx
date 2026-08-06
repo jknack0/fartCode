@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { useConversations, type PermissionPrompt } from "../store/conversations";
 import type { LiveModels, PlanEntry } from "../lib/tauri";
 import { SettledTurn, TurnBlock, NO_AWAITING } from "./TranscriptItems";
+import { PM_PROMPT } from "./projectChat/pmPrompt";
 
 const COMPOSER_MAX_ROWS = 8;
 
@@ -179,13 +180,20 @@ export default function ConversationView({
     el.scrollTop = el.scrollHeight;
   };
 
+  // E17-04: the PM chat (project: owner key) sends the PM system prompt as
+  // hidden context on every prompt and renders ade-proposal blocks as
+  // approval cards. Task conversations get neither.
+  const proposalProjectId = ownerKey.startsWith("project:")
+    ? ownerKey.slice("project:".length)
+    : null;
+
   const send = () => {
     const text = draft.trim();
     if (!text) return;
     setSendError(null);
     void useConversations
       .getState()
-      .sendPrompt(conversationId, text)
+      .sendPrompt(conversationId, text, proposalProjectId ? PM_PROMPT : undefined)
       .catch((e) => setSendError(String(e)));
   };
 
@@ -246,10 +254,19 @@ export default function ConversationView({
         ) : (
           <div className="chat-transcript">
             {committed.map((turn) => (
-              <SettledTurn key={turn.id} turn={turn} awaitingIds={NO_AWAITING} />
+              <SettledTurn
+                key={turn.id}
+                turn={turn}
+                awaitingIds={NO_AWAITING}
+                proposalProjectId={proposalProjectId}
+              />
             ))}
             {activeTurn && (
-              <TurnBlock turn={activeTurn} awaitingIds={awaitingIds} />
+              <TurnBlock
+                turn={activeTurn}
+                awaitingIds={awaitingIds}
+                proposalProjectId={proposalProjectId}
+              />
             )}
             {isGenerating && (
               <div className="chat-working">

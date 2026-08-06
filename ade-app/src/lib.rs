@@ -148,6 +148,8 @@ pub fn run() {
             commands::issues::issue_delete,
             commands::issues::issue_link,
             commands::issues::issue_unlink,
+            commands::issue_proposals::issue_parse_proposal,
+            commands::issue_proposals::issue_apply_proposal,
             commands::files::write_workspace_file,
             commands::conversations::create_conversation,
             commands::conversations::list_conversations,

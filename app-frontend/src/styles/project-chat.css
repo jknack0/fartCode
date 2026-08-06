@@ -17,3 +17,87 @@
   color: var(--muted, #b8b7b8);
   border-bottom: 1px solid var(--background-secondary-3);
 }
+
+/* -- E17-04 proposal approval card -- */
+
+.proposal-card {
+  margin: 6px 0;
+  border: 1px solid var(--background-secondary-3);
+  border-radius: 8px;
+  background: var(--background-2);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.proposal-card.applied {
+  color: var(--status-review, #59b358);
+  font-size: 13px;
+}
+
+.proposal-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted, #b8b7b8);
+}
+
+.proposal-prd {
+  font-family: "JetBrains Mono Variable", monospace;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--passive, #929192);
+}
+
+.proposal-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.proposal-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.proposal-row-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.proposal-row-provider {
+  width: 72px;
+  font-size: 11px;
+  font-family: "JetBrains Mono Variable", monospace;
+}
+
+.proposal-row-edges {
+  font-size: 11px;
+  color: var(--status-in-progress, #dbae50);
+  white-space: nowrap;
+}
+
+.proposal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.proposal-raw {
+  font-family: "JetBrains Mono Variable", monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  background: var(--background-2);
+  border: 1px solid var(--background-secondary-3);
+  border-radius: 6px;
+  padding: 8px;
+}
