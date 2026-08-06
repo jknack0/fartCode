@@ -37,7 +37,10 @@ export type AdeEvent =
   | { type: "git:changed"; projectId: string; workspaceId: string }
   | { type: "files:changed"; workspaceId: string; paths: string[] }
   | { type: "comment:created"; id: string; taskId: string; filePath: string; lineNumber: number }
-  | { type: "comment:resolved"; id: string };
+  | { type: "comment:resolved"; id: string }
+  | { type: "issue:created"; id: string; projectId: string; title: string }
+  | { type: "issue:updated"; id: string; projectId: string }
+  | { type: "issue:deleted"; id: string; projectId: string };
 
 export function listProjects(): Promise<ProjectDto[]> {
   return invoke("list_projects");
@@ -326,6 +329,8 @@ export interface ConversationDto {
   id: string;
   projectId: string;
   taskId: string | null;
+  /** "task" | "project" (E17-04: the PM chat is project-scoped). */
+  scope: string;
   title: string;
   provider: string | null;
   type: "pty" | "acp";
@@ -813,4 +818,107 @@ export function createTaskFromComment(args: {
   enclosingFunction: string | null;
 }): Promise<CreateTaskFromCommentResult> {
   return invoke("create_task_from_comment", args);
+}
+
+// -- E17 project board + PM chat (ARCHITECTURE.md §13, ADR-0032) ----------------
+
+export type Lane = "backlog" | "ready" | "in_progress" | "in_review" | "done";
+
+export interface BlockerRefDto {
+  id: string;
+  title: string;
+  lane: Lane;
+}
+
+/** One board card. `blocked` is derived server-side (any blocker lane ≠
+ * done); `blockers` feeds the badge hover list. */
+export interface IssueDto {
+  id: string;
+  projectId: string;
+  title: string;
+  body: string | null;
+  acceptance: string[];
+  lane: Lane;
+  position: number;
+  provider: string | null;
+  model: string | null;
+  prdPath: string | null;
+  prdSection: string | null;
+  linkedTaskId: string | null;
+  blocked: boolean;
+  blockers: BlockerRefDto[];
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export function issueList(projectId: string): Promise<IssueDto[]> {
+  return invoke("issue_list", { projectId });
+}
+
+export function issueCreate(args: {
+  projectId: string;
+  title: string;
+  body?: string | null;
+  acceptance?: string[];
+  lane?: Lane;
+  provider?: string | null;
+  model?: string | null;
+  prdPath?: string | null;
+  prdSection?: string | null;
+}): Promise<IssueDto> {
+  return invoke("issue_create", { request: args });
+}
+
+/** Field patch: omit a key to leave it; explicit null clears a nullable
+ * field (title/acceptance are non-nullable). */
+export function issueUpdate(
+  issueId: string,
+  patch: {
+    title?: string;
+    body?: string | null;
+    acceptance?: string[];
+    provider?: string | null;
+    model?: string | null;
+    prdPath?: string | null;
+    prdSection?: string | null;
+  },
+): Promise<IssueDto> {
+  return invoke("issue_update", { issueId, patch });
+}
+
+/** Lane move (board drag). position omitted = append to lane end. */
+export function issueMove(
+  issueId: string,
+  lane: Lane,
+  position?: number,
+): Promise<IssueDto> {
+  return invoke("issue_move", { issueId, lane, position: position ?? null });
+}
+
+export function issueDelete(issueId: string): Promise<void> {
+  return invoke("issue_delete", { issueId });
+}
+
+/** `issueId` becomes blocked by `blockedById`; cycle/cross-project
+ * rejections surface as thrown errors. */
+export function issueLink(issueId: string, blockedById: string): Promise<IssueDto> {
+  return invoke("issue_link", { issueId, blockedById });
+}
+
+export function issueUnlink(issueId: string, blockedById: string): Promise<IssueDto> {
+  return invoke("issue_unlink", { issueId, blockedById });
+}
+
+/** Project-scoped (PM chat) conversations (E17-04). */
+export function listProjectConversations(projectId: string): Promise<ConversationDto[]> {
+  return invoke("list_project_conversations", { projectId });
+}
+
+/** The project's one persistent PM conversation, created on first call.
+ * `provider` must be ACP-capable (throws otherwise). */
+export function getOrCreateProjectConversation(
+  projectId: string,
+  provider: string,
+): Promise<ConversationDto> {
+  return invoke("get_or_create_project_conversation", { projectId, provider });
 }

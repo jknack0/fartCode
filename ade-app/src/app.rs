@@ -211,6 +211,21 @@ pub fn event_to_value(event: &InternalEvent) -> Option<serde_json::Value> {
         InternalEvent::CommentResolved { id } => {
             Some(json!({ "type": "comment:resolved", "id": id }))
         }
+        // E17: project board — any issue change refetches the project's list
+        // (blocked status is derived, so one move can flip other badges).
+        InternalEvent::IssueCreated {
+            id,
+            project_id,
+            title,
+        } => Some(json!({
+            "type": "issue:created", "id": id, "projectId": project_id, "title": title,
+        })),
+        InternalEvent::IssueUpdated { id, project_id } => Some(json!({
+            "type": "issue:updated", "id": id, "projectId": project_id,
+        })),
+        InternalEvent::IssueDeleted { id, project_id } => Some(json!({
+            "type": "issue:deleted", "id": id, "projectId": project_id,
+        })),
         _ => None,
     }
 }

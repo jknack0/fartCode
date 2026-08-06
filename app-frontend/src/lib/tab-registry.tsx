@@ -58,7 +58,7 @@ export const TAB_KINDS: Record<TabKind, TabKindDef> = {
     // The tab id IS the conversation id; the transcript lives in the
     // conversations store and survives tab flips and restarts (#33).
     render: ({ taskId, tab, active }) => (
-      <ConversationView conversationId={tab.id} taskId={taskId} active={active} />
+      <ConversationView conversationId={tab.id} ownerKey={taskId} active={active} />
     ),
   },
 

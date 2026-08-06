@@ -1,0 +1,19 @@
+/* E17 PM chat panel (E17-04, #58). Tokens from styles.css. */
+
+.project-chat {
+  display: flex;
+  flex-direction: column;
+  width: 380px;
+  min-width: 280px;
+  border-left: 1px solid var(--background-secondary-3);
+  background: var(--background-1);
+  min-height: 0;
+}
+
+.project-chat-header {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted, #b8b7b8);
+  border-bottom: 1px solid var(--background-secondary-3);
+}

@@ -34,6 +34,11 @@ interface UiState {
   resourceOpen: boolean;
   /** Changes sidebar (E4-03): right-side panel in the task view. */
   changesOpen: boolean;
+  /** PM chat panel (E17-04): right-side panel in the project view. */
+  projectChatOpen: boolean;
+  /** Open card-detail issue id (E17-02): takes precedence over the chat
+   * panel in the project view's right region; null shows the chat. */
+  boardDetailIssueId: string | null;
   /** App settings (E14-01 shortcut customization lives here). */
   settingsOpen: boolean;
   /** Project settings modal (opened from the sidebar gear). */
@@ -52,6 +57,8 @@ interface UiState {
   setCreateProjectOpen: (open: boolean) => void;
   setResourceOpen: (open: boolean) => void;
   setChangesOpen: (open: boolean) => void;
+  setProjectChatOpen: (open: boolean) => void;
+  setBoardDetailIssueId: (id: string | null) => void;
   setSettingsOpen: (open: boolean) => void;
   setProjectSettingsOpen: (open: boolean) => void;
   toggleSidebarVisible: () => void;
@@ -72,6 +79,8 @@ export const useUi = create<UiState>((set, get) => ({
   createProjectOpen: false,
   resourceOpen: false,
   changesOpen: false,
+  projectChatOpen: true,
+  boardDetailIssueId: null,
   settingsOpen: false,
   projectSettingsOpen: false,
   sidebarVisible: true,
@@ -86,6 +95,8 @@ export const useUi = create<UiState>((set, get) => ({
   setCreateProjectOpen: (createProjectOpen) => set({ createProjectOpen }),
   setResourceOpen: (resourceOpen) => set({ resourceOpen }),
   setChangesOpen: (changesOpen) => set({ changesOpen }),
+  setProjectChatOpen: (projectChatOpen) => set({ projectChatOpen }),
+  setBoardDetailIssueId: (boardDetailIssueId) => set({ boardDetailIssueId }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setProjectSettingsOpen: (projectSettingsOpen) => set({ projectSettingsOpen }),
   toggleSidebarVisible: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),

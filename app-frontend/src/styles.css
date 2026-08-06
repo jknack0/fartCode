@@ -16,9 +16,11 @@
  * strings (paths, chords, terminals); 14px body, 32px rows, 41px tab bar.
  */
 
+@import "./styles/board.css";
+@import "./styles/project-chat.css";
+
 :root {
-  color-scheme: dark;
-  /* neutral ramp (emdash .emdark) */
+  color-scheme: dark;  /* neutral ramp (emdash .emdark) */
   --background: #111111;
   --background-1: #181818;
   --background-2: #201f20;

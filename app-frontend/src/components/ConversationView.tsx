@@ -118,16 +118,18 @@ function PermissionBand({
 
 export default function ConversationView({
   conversationId,
-  taskId,
+  ownerKey,
   active,
 }: {
   conversationId: string;
-  taskId: string;
+  /** Store owner key: the taskId for task scopes, `project:<id>` for the
+   * E17-04 PM chat panel. */
+  ownerKey: string;
   active: boolean;
 }) {
-  const conversationsLoaded = useConversations((s) => s.byTask[taskId] != null);
+  const conversationsLoaded = useConversations((s) => s.byTask[ownerKey] != null);
   const conversation = useConversations(
-    (s) => (s.byTask[taskId] ?? []).find((c) => c.id === conversationId) ?? null,
+    (s) => (s.byTask[ownerKey] ?? []).find((c) => c.id === conversationId) ?? null,
   );
   const models = useConversations((s) => s.models[conversationId]);
   const prompts = useConversations((s) => s.permissions[conversationId]);
@@ -142,12 +144,12 @@ export default function ConversationView({
   // Restore path: a restart (or a tab restored from view-state) has no live
   // snapshot yet — pull the reduced history if the session is running.
   useEffect(() => {
-    void useConversations.getState().ensure(taskId).catch(() => {});
+    void useConversations.getState().ensure(ownerKey).catch(() => {});
     void useConversations
       .getState()
       .hydrate(conversationId)
       .catch((e) => console.warn("history hydrate failed:", e));
-  }, [conversationId, taskId]);
+  }, [conversationId, ownerKey]);
 
   // Stick to bottom: follow streaming output unless the user scrolled up.
   useEffect(() => {

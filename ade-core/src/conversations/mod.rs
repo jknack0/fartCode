@@ -218,16 +218,22 @@ impl DbConversationStore {
 
 impl ConversationStore for DbConversationStore {
     fn create(&self, params: CreateConversationParams) -> Result<Conversation, Error> {
-        // Phase 0: task-scoped only (reference: project scope arrives Phase 1).
+        // E17-04 (#58): project scope is live (PM chat) — a project-scoped
+        // conversation must have task_id NULL; task scope requires one.
         let scope = params.scope.unwrap_or(ConversationScope::Task);
-        if scope == ConversationScope::Project {
-            return Err(Error::InvalidTaskInput(
-                "project-scoped conversations arrive with Phase 1".into(),
-            ));
-        }
-        let task_id = params.task_id.ok_or_else(|| {
-            Error::InvalidTaskInput("task-scoped conversations require a task_id".into())
-        })?;
+        let task_id = match scope {
+            ConversationScope::Task => Some(params.task_id.ok_or_else(|| {
+                Error::InvalidTaskInput("task-scoped conversations require a task_id".into())
+            })?),
+            ConversationScope::Project => {
+                if params.task_id.is_some() {
+                    return Err(Error::InvalidTaskInput(
+                        "project-scoped conversations must not carry a task_id".into(),
+                    ));
+                }
+                None
+            }
+        };
         let id = params
             .id
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -282,7 +288,7 @@ impl ConversationStore for DbConversationStore {
         self.event_bus
             .send(crate::events::InternalEvent::ConversationCreated {
                 id: conversation.id.clone(),
-                task_id,
+                task_id: task_id.unwrap_or_default(),
                 provider: conversation.provider.clone().unwrap_or_default(),
                 title: conversation.title.clone(),
             });

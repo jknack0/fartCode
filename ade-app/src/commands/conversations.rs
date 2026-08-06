@@ -29,6 +29,8 @@ pub struct ConversationDto {
     pub id: String,
     pub project_id: String,
     pub task_id: Option<String>,
+    /// `"task" | "project"` (E17-04: the PM chat is project-scoped).
+    pub scope: String,
     pub title: String,
     pub provider: Option<String>,
     pub r#type: String,
@@ -43,6 +45,7 @@ fn conversation_dto(conv: &ade_core::conversations::model::Conversation) -> Conv
         id: conv.id.clone(),
         project_id: conv.project_id.clone(),
         task_id: conv.task_id.clone(),
+        scope: conv.scope.as_str().to_string(),
         title: conv.title.clone(),
         provider: conv.provider.clone(),
         r#type: conv.config.r#type.as_str().to_string(),
@@ -104,6 +107,73 @@ pub fn list_conversations(
         .list_by_task(&task_id)
         .map(|convs| convs.iter().map(conversation_dto).collect())
         .map_err(|e| e.to_string())
+}
+
+// -- E17-04 project (PM chat) conversations -----------------------------------
+
+/// Lists the project's project-scoped conversations (scope = 'project',
+/// task_id NULL) — the PM chat panel's restore path.
+#[tauri::command]
+pub fn list_project_conversations(
+    app: State<'_, Arc<App>>,
+    project_id: String,
+) -> Result<Vec<ConversationDto>, String> {
+    app.conversations
+        .list_by_project(&project_id)
+        .map(|convs| {
+            convs.iter()
+                .filter(|c| c.scope == ade_core::conversations::model::ConversationScope::Project)
+                .map(conversation_dto)
+                .collect()
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// Returns the project's ACP conversation, creating it on first use (E17-04:
+/// exactly one persistent PM conversation per project). The provider must be
+/// ACP-capable — the PM chat has no TUI fallback.
+#[tauri::command]
+pub fn get_or_create_project_conversation(
+    app: State<'_, Arc<App>>,
+    project_id: String,
+    provider: String,
+) -> Result<ConversationDto, String> {
+    let acp_capable = ade_providers::get(&provider).is_some_and(|p| p.capabilities.acp);
+    if !acp_capable {
+        return Err(format!(
+            "PM chat requires an ACP-capable provider; {provider:?} is not"
+        ));
+    }
+    let existing = app
+        .conversations
+        .list_by_project(&project_id)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|c| {
+            c.scope == ade_core::conversations::model::ConversationScope::Project
+                && c.config.r#type == ade_core::conversations::model::ConversationType::Acp
+        });
+    if let Some(conv) = existing {
+        return Ok(conversation_dto(&conv));
+    }
+    let conv = app
+        .conversations
+        .create(CreateConversationParams {
+            id: None,
+            project_id,
+            task_id: None,
+            scope: Some(ConversationScopeDto::Project),
+            provider: Some(provider),
+            title: "Project chat".to_string(),
+            auto_approve: None,
+            model: None,
+            initial_prompt: None,
+            initial_queue: None,
+            is_initial_conversation: false,
+            r#type: Some(ConversationTypeDto::Acp),
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(conversation_dto(&conv))
 }
 
 // -- ACP command surface ------------------------------------------------------

@@ -7,6 +7,7 @@ import ChangesSidebar from "./components/ChangesSidebar";
 import CommandPalette from "./components/CommandPalette";
 import Modals from "./components/Modals";
 import Onboarding from "./components/Onboarding";
+import ProjectView from "./components/ProjectView";
 import ResourceMonitor from "./components/ResourceMonitor";
 import Sidebar from "./components/Sidebar";
 import TaskView from "./components/TaskView";
@@ -60,10 +61,7 @@ function App() {
         {selectedTaskId && selectedProjectId ? (
           <TaskView taskId={selectedTaskId} projectId={selectedProjectId} />
         ) : selectedProjectId ? (
-          <div className="placeholder">
-            <h1>Project chat</h1>
-            <p className="muted">Coming in Phase 1 — project-level agent chat.</p>
-          </div>
+          <ProjectView projectId={selectedProjectId} />
         ) : (
           <div className="placeholder">
             <h1>

@@ -14,7 +14,9 @@ import {
   acpStart,
   acpStop,
   createConversation,
+  getOrCreateProjectConversation,
   listConversations,
+  listProjectConversations,
   onAcpPermissionRequest,
   onAcpTranscript,
   onAcpUpdate,
@@ -32,7 +34,8 @@ export interface PermissionPrompt {
 }
 
 interface ConversationsState {
-  /** Conversations per task, in creation order. */
+  /** Conversations per owner key, in creation order. The key is the taskId
+   * for task scopes, or `project:<projectId>` for the E17-04 PM chat. */
   byTask: Record<string, ConversationDto[]>;
   /** Latest live-model snapshot per conversation id (acp:transcript). */
   models: Record<string, LiveModels>;
@@ -43,8 +46,12 @@ interface ConversationsState {
   /** Composer draft per conversation id (local until the composer lands). */
   drafts: Record<string, string>;
 
-  /** Loads the task's conversations (idempotent per task). */
-  ensure: (taskId: string) => Promise<void>;
+  /** Loads the owner's conversations (idempotent per owner key — taskId,
+   * or `project:<projectId>` for the PM chat). */
+  ensure: (ownerKey: string) => Promise<void>;
+  /** The project's persistent PM conversation (E17-04), created on first
+   * call with the given ACP-capable provider. */
+  ensureProject: (projectId: string, provider: string) => Promise<ConversationDto>;
   /** Creates a conversation; the runtime type is decided server-side. */
   create: (
     projectId: string,
@@ -80,10 +87,21 @@ export const useConversations = create<ConversationsState>((set, get) => ({
   permissions: {},
   drafts: {},
 
-  ensure: async (taskId) => {
-    if (get().byTask[taskId]) return;
-    const list = await listConversations(taskId);
-    set((s) => ({ byTask: { ...s.byTask, [taskId]: list } }));
+  ensure: async (ownerKey) => {
+    if (get().byTask[ownerKey]) return;
+    const list = ownerKey.startsWith("project:")
+      ? await listProjectConversations(ownerKey.slice("project:".length))
+      : await listConversations(ownerKey);
+    set((s) => ({ byTask: { ...s.byTask, [ownerKey]: list } }));
+  },
+
+  ensureProject: async (projectId, provider) => {
+    const key = `project:${projectId}`;
+    const existing = (get().byTask[key] ?? []).find((c) => c.runtime === "acp");
+    if (existing) return existing;
+    const conv = await getOrCreateProjectConversation(projectId, provider);
+    set((s) => ({ byTask: { ...s.byTask, [key]: [conv] } }));
+    return conv;
   },
 
   create: async (projectId, taskId, provider = null, title) => {

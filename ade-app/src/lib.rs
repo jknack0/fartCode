@@ -151,6 +151,8 @@ pub fn run() {
             commands::files::write_workspace_file,
             commands::conversations::create_conversation,
             commands::conversations::list_conversations,
+            commands::conversations::list_project_conversations,
+            commands::conversations::get_or_create_project_conversation,
             commands::conversations::acp_start,
             commands::conversations::acp_send_prompt,
             commands::conversations::acp_cancel,

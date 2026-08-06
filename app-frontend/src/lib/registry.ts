@@ -51,6 +51,7 @@ export type CommandId =
   | "toggle-sidebar"
   | "toggle-right-panel"
   | "toggle-changes"
+  | "toggle-project-chat"
   | "previous-task"
   | "next-task"
   | "close-tab"

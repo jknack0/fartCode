@@ -141,6 +141,16 @@ export function registerAllCommands(): void {
 
   // -- project view -----------------------------------------------------------
   registerCommand(registry, {
+    id: "toggle-project-chat",
+    label: "Toggle project chat panel",
+    defaultKeys: ["⌘⇧2"],
+    scope: "project-view",
+    run: () => {
+      const ui = useUi.getState();
+      ui.setProjectChatOpen(!ui.projectChatOpen);
+    },
+  });
+  registerCommand(registry, {
     id: "add-task",
     label: "Add task",
     defaultKeys: ["⌘N"],
