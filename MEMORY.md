@@ -4,6 +4,30 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## E17-02 + E17-04 landed (2026-08-06)
+
+- **#56 board UI** (f47b3e6): 5-lane board with native HTML5 DnD →
+  `issue_move` (midpoint drop index, within-lane reorder correction),
+  blocked→In-Progress confirm modal, provider/linked-task badges, blocked
+  hover popover, CardDetail in the project view's right region (edits via
+  `issue_update`, edge add/remove, two-click delete). Card detail takes the
+  right region over the PM chat via `ui.boardDetailIssueId`.
+- **#58 PM chat** (dad40b5): `ade_core::issue_proposal` (parse — never
+  panics; apply — all-or-nothing with compensating rollback) +
+  `issue_parse_proposal`/`issue_apply_proposal` commands; frontend
+  `ProposalCard` in the transcript (rename rewrites blockedBy refs; parse
+  failure renders raw text); `PM_PROMPT` as hiddenContext on PM sends.
+- **Seams commit 2e00b8e** (pre-landed): project-scoped conversations
+  (store scope lift + `get_or_create_project_conversation`), issue command
+  wrappers/events, `ProjectView` shell, owner-key conversation store
+  (`project:<id>` keys), `toggle-project-chat` ⌘⇧2.
+- **Mock-recipe traps hit:** Tauri listen callbacks receive
+  `{event, payload}` (emit `payload` or listeners get undefined); mock
+  eventHandlers must be ARRAYS fanned out (last-writer-wins silently
+  un-wires earlier subscribers); programmatic `blur()` needs `focus()` first
+  or React onBlur never fires.
+- Remaining: #57 dispatch engine (needs both, now unblocked).
+
 ## E17 project board & PM chat — design locked (2026-08-06)
 
 - Re-grilled the §13 project-chat design; it was **stale** (predated the #39
@@ -19,7 +43,7 @@ one exists).
 - Tickets: epic #54; #55 (E17-01 issues module) → #56 board UI / #58 PM chat
   panel → #57 dispatch engine.
 
-
+## E1-06 lifecycle scripts wired into the app (2026-08-06)
 
 - **The E1-06 runner was unwired**: settings UI + core `LifecycleScriptService`
   existed, but nothing in ade-app ever ran a script — "set a script, create a
