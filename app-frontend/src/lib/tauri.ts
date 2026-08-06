@@ -725,6 +725,11 @@ export function gitAddRemote(workspaceId: string, name: string, url: string): Pr
   return invoke("git_add_remote", { workspaceId, name, url });
 }
 
+/** Left-nav project pull: `git pull --ff-only` at the project root. */
+export function projectGitPull(projectId: string): Promise<void> {
+  return invoke("project_git_pull", { projectId });
+}
+
 /** Writes the worktree side of a diff back to disk (E4-05 ⌘S). */
 export function writeWorkspaceFile(
   workspaceId: string,

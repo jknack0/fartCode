@@ -90,3 +90,14 @@ export function IconDiscard({ size }: IconProps) {
     </svg>
   );
 }
+
+export function IconPull({ size }: IconProps) {
+  // Down arrow onto a baseline: bring remote commits down (project pull).
+  return (
+    <svg {...base(size)}>
+      <path d="M6 1.5v6" />
+      <path d="M3.5 5L6 7.5L8.5 5" />
+      <path d="M2 10.5h8" />
+    </svg>
+  );
+}

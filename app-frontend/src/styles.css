@@ -625,6 +625,26 @@ body {
 .project-row:focus-within .add-task-btn {
   opacity: 1;
 }
+.add-task-btn:disabled {
+  /* Pull in flight: stay visible, read as busy. */
+  opacity: 0.5;
+  cursor: default;
+  animation: pull-busy 900ms ease-in-out infinite;
+}
+@keyframes pull-busy {
+  50% {
+    color: var(--foreground);
+  }
+}
+
+.project-pull-error {
+  margin: 2px 0 4px;
+  padding: 0 10px 0 30px; /* aligns under the project name, past the chevron */
+  font-size: 11px;
+  color: var(--destructive);
+  overflow-wrap: anywhere;
+}
+
 
 /* ---- task rows ---- */
 

@@ -4,6 +4,18 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## Project-level pull (2026-08-06, left nav)
+
+- **Sidebar project rows carry a pull action** — `project_git_pull(project_id)`
+  command resolves `app.projects.get(id)` → `ade_git::remote::pull` (ff-only,
+  same contract as the E4-08 footer) at the project ROOT checkout. Motivation:
+  after a worktree branch lands on origin's default branch, the project
+  checkout (often the branch the app itself runs from) had no in-app way to
+  catch up. UI: hover-revealed `IconPull` button on `.project-row` (reuses
+  `.add-task-btn` styling; `:disabled` = in-flight pulse), errors inline under
+  the row via `.project-pull-error` (no toast system). Verified via mocked
+  Tauri browser smoke (success / non-ff error / retry-clears).
+
 ## Current state (2026-08-06, E4-10 line comments)
 
 - **E4-10 Line comments (#50) shipped — ARCHITECTURE §14 end-to-end.**

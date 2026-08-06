@@ -207,6 +207,21 @@ pub fn git_add_remote(
     ade_git::remote::add_remote(&worktree, &name, &url).map_err(String::from)
 }
 
+/// `git pull --ff-only` at the project root (left-nav project pull): after a
+/// worktree branch lands on the remote default branch, this brings the
+/// project checkout — the branch the app itself may be running on — up to
+/// date. Same ff-only contract as `git_pull`: diverged history surfaces
+/// git's error, never a hidden merge.
+#[tauri::command]
+pub fn project_git_pull(app: State<'_, Arc<App>>, project_id: String) -> Result<(), String> {
+    let project = app
+        .projects
+        .get(&project_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("project not found: {project_id}"))?;
+    ade_git::remote::pull(&project.path).map_err(String::from)
+}
+
 /// Effective `pushRemote` of the project owning `workspace_id` (reference
 /// `getPushRemote`: pushRemote ?? baseRemote ?? "origin"). Resolves
 /// workspace → task → project; falls back to "origin" for workspaces not

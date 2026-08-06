@@ -2,10 +2,16 @@
 // toggling. The visible tree order is the task-switch navigation order
 // (E2-10 contract). Shortcuts are commands (E14-01): ⌘⇧N add project, ⌘N
 // add task, ⌘Backspace delete task, ⌘B toggles this panel.
+// Project rows also carry a pull action (git pull --ff-only at the project
+// root) so merged worktree branches can be brought down without leaving
+// the app. Errors surface inline under the row — the repo has no toast
+// system.
+import { useState } from "react";
 import { useUi } from "../store/ui";
 import { useSidebar } from "../store/sidebar";
 import { hint } from "../lib/useCommands";
-import { IconChevron, IconClose, IconGear, IconPin, IconPlus } from "./icons";
+import { projectGitPull } from "../lib/tauri";
+import { IconChevron, IconClose, IconGear, IconPin, IconPlus, IconPull } from "./icons";
 
 export default function Sidebar() {
   const {
@@ -29,6 +35,24 @@ export default function Sidebar() {
   const setPaletteOpen = useUi((s) => s.setPaletteOpen);
   const setDeleteProjectTarget = useUi((s) => s.setDeleteProjectTarget);
   const setDeleteTaskTarget = useUi((s) => s.setDeleteTaskTarget);
+
+  const [pullingId, setPullingId] = useState<string | null>(null);
+  const [pullError, setPullError] = useState<{
+    projectId: string;
+    message: string;
+  } | null>(null);
+
+  const pullProject = async (projectId: string) => {
+    setPullError(null);
+    setPullingId(projectId);
+    try {
+      await projectGitPull(projectId);
+    } catch (e) {
+      setPullError({ projectId, message: String(e) });
+    } finally {
+      setPullingId(null);
+    }
+  };
 
   if (!sidebarVisible) return null;
 
@@ -127,6 +151,17 @@ export default function Sidebar() {
                 <span className="project-name">{p.name}</span>
                 <button
                   className="add-task-btn"
+                  title="Pull project root (git pull --ff-only)"
+                  disabled={pullingId === p.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void pullProject(p.id);
+                  }}
+                >
+                  <IconPull size={10} />
+                </button>
+                <button
+                  className="add-task-btn"
                   title={`New task (${hint("add-task")})`}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -136,6 +171,11 @@ export default function Sidebar() {
                   <IconPlus size={10} />
                 </button>
               </div>
+              {pullError?.projectId === p.id && (
+                <p className="project-pull-error" role="alert">
+                  {pullError.message}
+                </p>
+              )}
               {!collapsed[p.id] && (
                 <ul>
                   {(tasksByProject[p.id] ?? [])
