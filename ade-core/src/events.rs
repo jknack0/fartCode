@@ -61,6 +61,24 @@ pub enum InternalEvent {
         id: String,
     },
 
+    // Issues (E17, ARCHITECTURE.md §13)
+    IssueCreated {
+        id: String,
+        project_id: String,
+        title: String,
+    },
+    /// Fields, lane, edges, or the linked task changed — consumers refetch
+    /// the project's issue list (blocked status is derived, so a lane move
+    /// can change OTHER cards' badges too).
+    IssueUpdated {
+        id: String,
+        project_id: String,
+    },
+    IssueDeleted {
+        id: String,
+        project_id: String,
+    },
+
     // Conversations
     ConversationCreated {
         id: String,

@@ -48,6 +48,8 @@ pub struct App {
     pub fs_watch: Arc<FsWatchService>,
     /// E4-10 diff line comments (§14).
     pub line_comments: Arc<ade_core::line_comments::LineCommentStore>,
+    /// E17-01 project board issues (§13).
+    pub issues: Arc<ade_core::issues::IssueStore>,
 }
 
 impl App {
@@ -127,6 +129,12 @@ impl App {
             db.clone(),
             event_bus.clone() as Arc<dyn EventBus>,
         ));
+        // E17-01: project board issues (§13) — local-first store, derived
+        // blocked state, cycle-rejected edges.
+        let issues = Arc::new(ade_core::issues::IssueStore::new(
+            db.clone(),
+            event_bus.clone() as Arc<dyn EventBus>,
+        ));
 
         Ok(Arc::new(Self {
             db,
@@ -141,6 +149,7 @@ impl App {
             provider_accounts,
             fs_watch,
             line_comments,
+            issues,
         }))
     }
 }

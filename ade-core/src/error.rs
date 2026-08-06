@@ -107,6 +107,16 @@ pub enum Error {
     #[error("conversation not found: {0}")]
     ConversationNotFound(String),
 
+    // -- Issues (E17) --
+    #[error("issue not found: {0}")]
+    IssueNotFound(String),
+
+    #[error("invalid issue input: {0}")]
+    InvalidIssueInput(String),
+
+    #[error("blocked-by edge {from} blocked by {to} would create a dependency cycle")]
+    IssueDependencyCycle { from: String, to: String },
+
     #[error("empty session id")]
     EmptySessionId,
 

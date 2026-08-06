@@ -45,6 +45,7 @@ fn sql_for_tag(tag: &str) -> Option<&'static str> {
     match tag {
         "0000_initial" => Some(include_str!("../../migrations/0000_initial.sql")),
         "0001_line_comments" => Some(include_str!("../../migrations/0001_line_comments.sql")),
+        "0002_issues" => Some(include_str!("../../migrations/0002_issues.sql")),
         _ => None,
     }
 }
