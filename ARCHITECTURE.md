@@ -1574,113 +1574,122 @@ function PtyTerminal({ ptyId }: { ptyId: string }) {
 
 ---
 
-## 13. Project-level chat (Phase 1 — architecture defined now)
+## 13. Project board & PM chat (Phase 1)
 
-> **Phase:** 1 (after Phase 0 core loop). **Phase 0 prep:** schema changes below are in the initial migration.
+> **Phase:** 1 · **ADR:** 0032 · **Epic:** E17. Supersedes the 2026-08-03
+> "project-level chat" design — the terminal-only pivot (#39) and the ACP
+> landing (E2-11) invalidated its layout and tool-surface assumptions.
+> **Phase 0 prep already applied:** `conversations.scope`, nullable
+> `conversations.task_id`, `tasks.created_by` (§11).
 
 ### Concept
 
-Every project has one persistent "project conversation" — a chat with an agent that
-runs in the project root directory. This agent is a coordinator: it reads the codebase,
-inspects git history, creates sub-tasks (each on its own worktree), reviews their
-output, and ships the results. Think of it as a lead developer overseeing the repo.
+The project view is a **planning surface**, not a chat with a terminal. A
+Jira-style board holds the project's issues; a PM-style agent chat grills the
+user, authors PRDs (`docs/prds/<slug>.md` in the repo), and proposes issue
+breakdowns that land on the board after human approval. Dragging a card into
+In Progress spawns an agent in a worktree that starts implementing. Issues
+can be blocked by other issues, and the board makes that visible.
 
-### Key decisions (from design grill)
+Two agent roles, both ordinary ade machinery:
+
+- **PM agent** — one persistent project-scoped ACP conversation
+  (`scope = 'project'`, `task_id` NULL) running in the project root. Writes
+  PRD files with its own file tools; proposes issues via the proposal block.
+- **Implementation agents** — normal tasks spawned by board dispatch;
+  terminals and conversations live in their task views as usual.
+
+### Key decisions (design grill 2026-08-06, ADR-0032)
 
 | Decision | Answer |
 |---|---|
-| Where it runs | Project root directory (no separate worktree) |
-| Delegation mechanism | Calls the same `create_task` backend API as the user's "Add Task" flow |
-| Task visibility | Sub-tasks appear in the sidebar tree alongside user-created tasks |
-| Sub-task access | Full: can read diffs, terminal output, conversation transcripts of sub-tasks it created |
-| Direct capabilities | Git operations (status, diff, log, branch, commit, push, PR) + read-only repo access |
-| Code generation | Delegated to sub-tasks — the project agent does not generate code directly |
-| Number per project | Exactly one persistent conversation |
-| Provider | User picks; defaults to project's `defaultAgent` setting |
-| Sub-agent providers | Project agent specifies provider/model per sub-task when calling `create_task` |
-| Initial context | Auto-generated project overview (repo structure, language detection, git status, recent commits) |
-| Sub-task completion | Auto-post summary to project chat |
-| Terminal | Yes — project view has the same conversation + terminal layout as tasks |
-| UI | Clicking the project name in the sidebar opens the project chat. Clicking a task in the tree replaces the view with that task's tabs |
+| Issue store | Local-first: `issues` + `issue_dependencies` tables. External trackers (E7/E8) become sync/export adapters, not the store |
+| Lanes | Backlog / Ready / In Progress / In Review / Done |
+| Dispatch trigger | Drag into In Progress = `create_task` + agent launch, composed from existing machinery |
+| Reverse moves | Board never kills; card moves change issue status only; re-drag into In Progress **reattaches** to the existing linked task |
+| Blocked-by | Derived at read time (any blocker ∉ Done ⇒ blocked); badge + hover list; cycles rejected at edge creation; dispatching a blocked card = confirm dialog, not a hard stop |
+| Completion | Auto-flip In Progress → In Review on ACP turn-complete or terminal-agent PTY exit; manual drag always works |
+| Chat → board writes | Fenced ` ```ade-proposal ` JSON block → interactive approval card in the transcript → Approve writes via ade-core commands. No agent tool registration; MCP tool server deferred to the E10 era |
+| PRD artifact | Markdown file in the repo (`docs/prds/<slug>.md`), written by the PM agent's own file tools; issues reference path + section |
+| Dispatch prompt | Structured packet: issue title + body + acceptance criteria + PRD path (by reference) + one-line Done-blocker summaries + branch/worktree conventions footer |
+| Provider | Project `defaultAgent`; proposal block may carry per-issue provider/model, editable at approval, stored on the issue |
+| Layout | Board primary; chat is a collapsible right panel (ChangesSidebar pattern); card detail swaps into the right panel |
+| Project-root terminals | Deferred — agent terminals live in their task views |
 
-### Architecture
+### Layout
 
 ```
 Sidebar                           Main view area
-┌──────────────┐                  ┌─────────────────────────────────┐
-│ 🏠 MyProject  │──click──▶       │ ┌─────────────────────────────┐ │
-│   📁 add-auth │                  │ │ Project chat                 │ │
-│   📁 fix-ci   │──click──▶       │ │ [agent messages + terminal]  │ │
-│   📁 refactor │                  │ └─────────────────────────────┘ │
-│              │                  │                                  │
-│ [+ Add Task] │                  │  (clicking a sub-task replaces   │
-│              │                  │   this with the task's tabs)     │
-└──────────────┘                  └─────────────────────────────────┘
+┌──────────────┐                  ┌───────────────────────────┬─────────────────┐
+│ 🏠 MyProject  │──click──▶       │ Board (5 lanes, drag)      │ Right panel:    │
+│   📁 add-auth │                  │  □ □ □  ▶ ▶  ✓            │ PM chat, or     │
+│   📁 fix-ci   │──click──▶       │  blocked badges, status    │ card detail     │
+│   📁 refactor │                  │  dots, provider badges     │ (swaps in)      │
+│ [+ Add Task] │                  └───────────────────────────┴─────────────────┘
+└──────────────┘                    (clicking a task replaces this with its tabs)
 ```
 
-### How delegation works
+### The board loop
 
-1. User types "Add OAuth to the API" in the project chat.
-2. Project agent reasons: this is a multi-file feature, spanning auth + middleware + tests.
-3. Project agent calls its `create_task` tool:
-   ```json
-   {
-     "name": "add-oauth",
-     "prompt": "Implement OAuth 2.0 with PKCE. Add middleware, token storage, and tests.",
-     "provider": "claude",
-     "model": "claude-sonnet-4-20250514",
-     "source_branch": "main"
-   }
-   ```
-4. Backend creates a normal task + worktree + conversation, starts the agent.
-5. Task appears in the sidebar as "add-oauth".
-6. When the sub-agent finishes, a summary is posted to the project chat:
-   > ✅ **add-oauth** completed. Diff: +340/-12 across 6 files. Exit code: 0.
-7. Project agent reads the diff, reviews the changes, and can: merge, request fixes (spawn another sub-task), or push + create PR.
+1. **Breakdown.** In the PM chat, the agent grills, writes a PRD file, then
+   emits a proposal block. The transcript renders it as an editable approval
+   card; Approve creates the issues (+ blocked-by edges) in Backlog/Ready.
+2. **Dispatch.** Drag a card into In Progress → confirm dialog if blocked →
+   `create_task` (issue-derived name, dispatch packet prompt,
+   `created_by = 'user'`, `linked_issue` = local issue id) → agent launch →
+   card shows live agent status dot.
+3. **Completion.** ACP turn-complete or terminal-agent exit flips the card to
+   In Review. The user reviews via the task's normal surfaces (Changes, diff)
+   and drags to Done (or back to In Progress with a follow-up prompt).
+4. **Re-dispatch.** A card with a linked task re-entering In Progress
+   reattaches to that task; it never spawns a second worktree. Teardown is
+   only ever the explicit ⌘Backspace task flow.
 
-### Tool surface (what the project agent sees)
+### Proposal block contract
 
-The project agent's provider gets these tools (in addition to the provider's built-in tools):
+The PM system prompt defines a fenced block; the transcript parser renders it
+as an interactive card and **never throws on malformed input** (bad blocks
+render as plain transcript text — golden-file parse tests ride E17-04):
 
-| Tool | Description |
-|---|---|
-| `create_task(name, prompt, provider?, model?, source_branch?)` | Create a sub-task on its own worktree |
-| `list_tasks(status?)` | List tasks in this project |
-| `read_task_output(task_id)` | Read the terminal output of a sub-task's agent |
-| `read_task_diff(task_id)` | Read the git diff of a sub-task |
-| `read_task_conversation(task_id)` | Read the sub-agent's conversation transcript |
-| `git_status()` | Run `git status` in the project root |
-| `git_diff(branch?)` | Run `git diff` in the project root |
-| `git_log(limit?)` | Run `git log --oneline` |
-| `git_branch_create(name)` | Create a branch |
-| `git_commit(message)` | Commit staged changes |
-| `git_push(branch?)` | Push to remote |
-| `create_pr(title, body, base?, head?)` | Create a pull request |
-| `read_file(path)` | Read a file in the project root |
-| `search_code(query)` | Search the codebase |
+    ```ade-proposal
+    {
+      "prd": { "path": "docs/prds/oauth.md", "title": "OAuth 2.0 PKCE" },
+      "issues": [
+        { "title": "Token storage", "body": "...", "acceptance": ["..."],
+          "blockedBy": [], "provider": null, "model": null },
+        { "title": "Middleware", "body": "...", "acceptance": ["..."],
+          "blockedBy": ["Token storage"] }
+      ]
+    }
+    ```
 
-### DB schema implications
+Approval resolves `blockedBy` titles to issue ids and writes rows through the
+ade-core issues module (E17-01) — the same functions the board UI uses.
 
-Already applied in the Phase 0 initial migration (section 11):
+### DB schema
 
-- `conversations.scope` = `'task'` | `'project'`
-- `conversations.task_id` is NULL for project-scoped conversations
-- `tasks.created_by` = `'user'` | `'agent:<conversation_id>'` — tracks who created the task
+New append-only migration (E17-01):
 
-### Phase 0 deliverables (prep only, no agent spawning)
+- `issues` — id, project_id FK, title, body, acceptance JSON (versioned),
+  lane (`backlog|ready|in_progress|in_review|done`), provider/model override
+  (nullable), prd_path/prd_section (nullable), linked_task_id (nullable),
+  position (per-lane ordering), created_at/updated_at.
+- `issue_dependencies` — (issue_id, blocked_by_id) PK pair + project-local
+  cycle rejection in the domain layer.
 
-1. **Schema** — `conversations.task_id` nullable, `conversations.scope` column, `tasks.created_by` column — in the initial migration.
-2. **Sidebar** — clicking the project name dispatches a navigation event. The main view shows a stub: "Project chat — coming in Phase 1."
-3. **`created_by`** — the "Add Task" flow sets `created_by = 'user'`. The field exists and is queryable; Phase 1 adds `'agent:<id>'` values.
-4. **Conversation model** — `Conversation` struct has `scope: ConversationScope` enum and `task_id: Option<String>`. Project-scoped conversations can be created (manually in tests). No agent launch logic for them yet.
+Reused as-is: `conversations.scope = 'project'` for the PM conversation,
+`tasks.created_by` (`'user'` for board dispatch), `tasks.linked_issue` JSON
+gains a `{ "kind": "local", "issue_id": ... }` variant alongside the external
+tracker shape.
 
-### Phase 1 deliverables (actual feature)
+### Tickets
 
-1. Project agent spawn: when the project chat opens and no agent is running, launch the default provider in the project root PTY.
-2. Tool registration: register the `create_task` + git + read tools listed above.
-3. Project overview generation: on first open, build a context prompt from repo structure + git log + language detection.
-4. Sub-task completion hook: when a task with `created_by = 'agent:<conversation_id>'` finishes, post a summary to that conversation.
-5. Full UI: clicking the project name opens the project chat (conversation + terminal).
+| # | Ticket | Size |
+|---|---|---|
+| E17-01 | Issues module: schema, CRUD, derived blocked status, cycle rejection, Tauri commands | M |
+| E17-02 | Board UI: 5 lanes, drag/drop, badges, card detail panel, confirm-on-dispatch | L |
+| E17-03 | Dispatch engine: drag → task+agent, reattach, auto-flip on completion, board events | L |
+| E17-04 | PM chat panel: project ACP conversation, PM system prompt, proposal-block approval card | L |
 
 ---
 

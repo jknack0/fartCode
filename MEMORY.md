@@ -4,7 +4,22 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
-## E1-06 lifecycle scripts wired into the app (2026-08-06)
+## E17 project board & PM chat — design locked (2026-08-06)
+
+- Re-grilled the §13 project-chat design; it was **stale** (predated the #39
+  terminal-only pivot and the E2-11 ACP landing). Full re-design recorded in
+  ARCHITECTURE.md §13 (rewritten) + `decisions/0032-project-board-pm-chat.md`.
+- Locked: local-first `issues`/`issue_dependencies` tables (ade IS the
+  tracker; E7/E8 become sync adapters later); 5 lanes with drag-into-
+  In-Progress spawning task+agent; board never kills (re-drag reattaches);
+  blocked-by derived at read time + cycle rejection + confirm-on-dispatch;
+  auto-flip to In Review on ACP turn-complete / PTY exit; chat writes via
+  fenced `ade-proposal` block → approval card (no MCP until E10 era); PRDs =
+  `docs/prds/*.md` in the repo; dispatch prompt packet by reference.
+- Tickets: epic #54; #55 (E17-01 issues module) → #56 board UI / #58 PM chat
+  panel → #57 dispatch engine.
+
+
 
 - **The E1-06 runner was unwired**: settings UI + core `LifecycleScriptService`
   existed, but nothing in ade-app ever ran a script — "set a script, create a
