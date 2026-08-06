@@ -18,9 +18,11 @@
 use std::collections::{HashMap, HashSet};
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use ade_core::terminals::lifecycle::LifecycleScriptType;
 use ade_core::terminals::pty::{EnvPolicy, PtyHandle, PtyManager, PtySize};
 use ade_terminal::PortablePtyManager;
 use parking_lot::Mutex;
@@ -57,6 +59,15 @@ struct Entry {
     /// Decoded tmux session id (`{project}:{task}:terminal:{slot}`) when
     /// the PTY runs a durable session (ADR-0025); `None` for plain shells.
     tmux_session_id: Option<String>,
+    /// Script type when this terminal runs a lifecycle script (E1-06);
+    /// `None` for plain shells and agent terminals. Lifecycle entries are
+    /// RETAINED after the script exits (the tab still shows the output tail
+    /// and a rerun mints a fresh terminal), whereas plain terminals drop
+    /// their entry when the shell exits.
+    lifecycle_type: Option<String>,
+    /// Set when the PTY process has exited (pump). Plain entries are then
+    /// removed from the map; retained lifecycle entries stay listable.
+    exited: AtomicBool,
     handle: Mutex<Box<dyn PtyHandle>>,
     /// Rolling output tail (replayed on frontend reattach after a webview
     /// reload — plain PTYs have no scrollback server, and a tmux session
@@ -80,15 +91,26 @@ pub struct TerminalSpec<'a> {
     pub tmux: bool,
     pub program: &'a str,
     pub args: &'a [String],
+    /// Extra environment for the spawned process (merged over the
+    /// inherited env). The E1-06 lifecycle env contract (`ADE_*` vars)
+    /// arrives through here.
+    pub env: &'a [(String, String)],
     pub cwd: &'a Path,
     pub rows: u16,
     pub cols: u16,
+    /// Script type when this terminal runs a lifecycle script (E1-06):
+    /// dedupes in-flight runs and retains the entry after exit so the
+    /// finished run stays attachable with its output tail. `None` for
+    /// shells and agent terminals (current behavior).
+    pub lifecycle: Option<LifecycleScriptType>,
 }
 
-/// Owns all live interactive terminals.
-pub struct TerminalManager {
+/// Owns all live interactive terminals. `R` defaults to the Wry runtime —
+/// tests construct `TerminalManager::<tauri::test::MockRuntime>` via
+/// `tauri::test::mock_app` (the emit calls are no-ops there).
+pub struct TerminalManager<R: tauri::Runtime = tauri::Wry> {
     pty: PortablePtyManager,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<R>,
     terminals: Arc<Mutex<HashMap<String, Arc<Entry>>>>,
     /// Tmux slots allocated per task BY THIS PROCESS (ADR-0025). A restart
     /// starts empty; the first open then prefers REUSING a live detached
@@ -96,17 +118,26 @@ pub struct TerminalManager {
     task_slots: Mutex<HashMap<String, HashSet<u32>>>,
 }
 
-/// One live terminal for `list_for_task`.
+/// One terminal for `list_for_task` (retained lifecycle terminals whose
+/// script already exited are listed too — their tabs reattach the tail).
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalInfo {
     pub id: String,
     /// Provider id for agent terminals; `None` for shells.
     pub agent: Option<String>,
+    /// `shell` | `agent` | `lifecycle` — the frontend uses this to restore
+    /// tabs: lifecycle terminals surface as script tabs, the rest as plain
+    /// terminal tabs.
+    pub kind: String,
+    /// Script type (`setup`/`run`/`teardown`) when `kind` is `lifecycle`.
+    pub script_type: Option<String>,
 }
 
-impl TerminalManager {
-    pub fn new(app: tauri::AppHandle) -> Self {
+impl<R: tauri::Runtime> TerminalManager<R> {
+    /// `R` is generic so tests can drive a mock Tauri runtime
+    /// (`tauri::test::mock_app`) without a webview.
+    pub fn new(app: tauri::AppHandle<R>) -> Self {
         Self {
             pty: PortablePtyManager,
             app,
@@ -133,9 +164,11 @@ impl TerminalManager {
             tmux,
             program,
             args,
+            env,
             cwd,
             rows,
             cols,
+            lifecycle,
         } = spec;
         let tmux_binary = tmux
             .then(ade_core::pty::tmux::resolve_tmux_binary)
@@ -170,7 +203,7 @@ impl TerminalManager {
                     if tmux {
                         tracing::debug!(task_id, "tmux enabled but no binary — plain spawn");
                     }
-                    (program.to_string(), args.to_vec(), Vec::new())
+                    (program.to_string(), args.to_vec(), env.to_vec())
                 }
             };
         let spawn_result = self.pty.spawn(
@@ -207,6 +240,8 @@ impl TerminalManager {
             task_id: task_id.to_string(),
             agent: agent.map(str::to_string),
             tmux_session_id,
+            lifecycle_type: lifecycle.map(|t| t.as_str().to_string()),
+            exited: AtomicBool::new(false),
             handle: Mutex::new(handle),
             tail: Mutex::new(Vec::new()),
         });
@@ -258,6 +293,7 @@ impl TerminalManager {
                     handle.try_wait_exit().ok().flatten()
                 };
                 if let Some(exit) = exited {
+                    entry.exited.store(true, Ordering::Relaxed);
                     use tauri::Emitter as _;
                     let _ = app.emit(
                         "terminal:exited",
@@ -266,7 +302,12 @@ impl TerminalManager {
                             exit_code: exit.exit_code,
                         },
                     );
-                    terminals.lock().remove(&pump_id);
+                    // Lifecycle script terminals are retained after exit so
+                    // a later tab attach still finds the entry and replays
+                    // the output tail (E1-06). Plain terminals drop.
+                    if entry.lifecycle_type.is_none() {
+                        terminals.lock().remove(&pump_id);
+                    }
                     break;
                 }
                 std::thread::sleep(PUMP_INTERVAL);
@@ -316,18 +357,44 @@ impl TerminalManager {
             .count()
     }
 
-    /// Live terminals of a task with their agent tags (the diff selection
-    /// prompt routes to the agent terminal when one exists).
+    /// Terminals of a task (the diff selection prompt routes to the agent
+    /// terminal when one exists). Lifecycle script terminals are listed
+    /// even after the script exited (their entry is retained) so a task
+    /// open can surface the finished run's tab.
     pub fn list_for_task(&self, task_id: &str) -> Vec<TerminalInfo> {
         self.terminals
             .lock()
             .iter()
             .filter(|(_, e)| e.task_id == task_id)
-            .map(|(id, e)| TerminalInfo {
-                id: id.clone(),
-                agent: e.agent.clone(),
+            .map(|(id, e)| {
+                let (kind, script_type) = match &e.lifecycle_type {
+                    Some(t) => ("lifecycle".to_string(), Some(t.clone())),
+                    None if e.agent.is_some() => ("agent".to_string(), None),
+                    None => ("shell".to_string(), None),
+                };
+                TerminalInfo {
+                    id: id.clone(),
+                    agent: e.agent.clone(),
+                    kind,
+                    script_type,
+                }
             })
             .collect()
+    }
+
+    /// Id of the task's IN-FLIGHT lifecycle terminal of `script_type`, if
+    /// any (E1-06 dedupe — a rerun while one is running reattaches instead
+    /// of spawning a second script).
+    pub fn find_running_lifecycle(&self, task_id: &str, script_type: &str) -> Option<String> {
+        self.terminals
+            .lock()
+            .iter()
+            .find(|(_, e)| {
+                e.task_id == task_id
+                    && e.lifecycle_type.as_deref() == Some(script_type)
+                    && !e.exited.load(Ordering::Relaxed)
+            })
+            .map(|(id, _)| id.clone())
     }
 
     /// Base64 scrollback tail for reattach replay (frontend reload), or

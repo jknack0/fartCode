@@ -8,7 +8,7 @@ pub mod acp_runtime;
 pub mod app;
 pub mod commands;
 mod indexer;
-mod terminals;
+pub mod terminals;
 mod watchers;
 
 use std::sync::Arc;
@@ -157,6 +157,7 @@ pub fn run() {
             commands::provider_accounts::list_providers,
             commands::terminals::terminal_open,
             commands::terminals::terminal_open_agent,
+            commands::lifecycle::terminal_open_lifecycle,
             commands::terminals::terminal_write,
             commands::terminals::terminal_resize,
             commands::terminals::terminal_close,

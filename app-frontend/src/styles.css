@@ -1281,6 +1281,13 @@ button.danger:hover {
   padding: 0 8px;
 }
 
+.tab-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 8px;
+}
+
 .tab-dirty {
   color: var(--status-in-progress);
   font-size: 9px;
@@ -1317,6 +1324,31 @@ button.danger:hover {
   padding: 0;
   border-radius: var(--radius-sm);
   color: var(--foreground-passive);
+}
+
+/* Lifecycle script launchers (E1-06): one small button per configured
+ * script, next to the changes toggle. */
+.script-run {
+  padding: 2px 7px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+  color: var(--foreground-passive);
+  background: var(--background-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+.script-run:hover {
+  background: var(--surface-elevated-hover);
+  color: var(--foreground);
+  border-color: var(--border-strong);
+}
+
+.script-run:active {
+  background: var(--background-tertiary-2);
 }
 
 .changes-toggle:hover {

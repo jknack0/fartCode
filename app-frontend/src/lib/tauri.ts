@@ -256,15 +256,31 @@ export function terminalSurviving(taskId: string): Promise<number> {
   return invoke("terminal_surviving", { taskId });
 }
 
-/** A live terminal with its agent tag (`null` = plain shell). */
+/** A task terminal: `kind` is `shell` | `agent` | `lifecycle` (script
+ * terminals stay listed after the script exits so their tab can reattach
+ * the output tail — E1-06). */
 export interface TaskTerminalDto {
   id: string;
   agent: string | null;
+  kind: string;
+  scriptType: string | null;
 }
 
-/** Lists the task's live terminals (diff selection routing). */
+/** Lists the task's terminals (diff selection routing + restore). */
 export function terminalListForTask(taskId: string): Promise<TaskTerminalDto[]> {
   return invoke("terminal_list_for_task", { taskId });
+}
+
+/** Runs the task's lifecycle script (`setup`/`run`/`teardown`) as a
+ * terminal in the task worktree (env contract included); reattaches an
+ * in-flight run of the same type. Returns the terminal id. */
+export function terminalOpenLifecycle(
+  taskId: string,
+  scriptType: string,
+  rows: number,
+  cols: number,
+): Promise<string> {
+  return invoke("terminal_open_lifecycle", { taskId, scriptType, rows, cols });
 }
 
 /** Base64 scrollback tail replayed when reattaching to a live terminal

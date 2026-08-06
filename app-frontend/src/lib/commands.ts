@@ -7,7 +7,8 @@
 import { CommandId, createRegistry, registerCommand } from "./registry";
 import { ensureAcpConversation, focusConversationTab } from "./acp-conversation";
 import { useSidebar, visibleTaskOrder } from "../store/sidebar";
-import { terminalOpen, terminalOpenAgent } from "./tauri";
+import { terminalOpen, terminalOpenAgent, terminalOpenLifecycle } from "./tauri";
+import { scriptTabTitle } from "./tab-registry";
 import { useConversations } from "../store/conversations";
 import { useTabs, type PaneId } from "../store/tabs";
 import { useUi } from "../store/ui";
@@ -21,6 +22,33 @@ async function openTerminalTab(taskId: string, pane: PaneId): Promise<void> {
     id: terminalId,
     kind: "terminal",
     title: "Terminal",
+  });
+}
+
+/** Opens (or focuses) the task's lifecycle script tab (`setup`/`run`/
+ * `teardown`, E1-06): a terminal running the script with the ADE_* env
+ * contract. An in-flight run reattaches (backend dedupe); a finished run's
+ * tab stays with its output tail. */
+export async function openLifecycleScriptTab(
+  taskId: string,
+  pane: PaneId,
+  scriptType: string,
+): Promise<void> {
+  const title = scriptTabTitle(scriptType);
+  const tabs = useTabs.getState();
+  const paneState = tabs.panesByTask[taskId]?.[pane];
+  const existing = paneState?.tabs.find(
+    (t) => t.kind === "lifecycle-script" && t.title === title,
+  );
+  if (existing) {
+    tabs.setActiveTab(taskId, pane, existing.id);
+    return;
+  }
+  const terminalId = await terminalOpenLifecycle(taskId, scriptType, 24, 80);
+  useTabs.getState().addTab(taskId, pane, {
+    id: terminalId,
+    kind: "lifecycle-script",
+    title,
   });
 }
 
