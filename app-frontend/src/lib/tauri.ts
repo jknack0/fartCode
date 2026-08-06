@@ -35,7 +35,9 @@ export type AdeEvent =
   | { type: "task:deleted"; taskId: string }
   | { type: "task:status_changed"; taskId: string; status: string }
   | { type: "git:changed"; projectId: string; workspaceId: string }
-  | { type: "files:changed"; workspaceId: string; paths: string[] };
+  | { type: "files:changed"; workspaceId: string; paths: string[] }
+  | { type: "comment:created"; id: string; taskId: string; filePath: string; lineNumber: number }
+  | { type: "comment:resolved"; id: string };
 
 export function listProjects(): Promise<ProjectDto[]> {
   return invoke("list_projects");
@@ -730,4 +732,63 @@ export function writeWorkspaceFile(
   content: string,
 ): Promise<void> {
   return invoke("write_workspace_file", { workspaceId, path, content });
+}
+
+// -- E4-10 line comments (ARCHITECTURE.md §14) ----------------------------------
+
+export interface LineCommentDto {
+  id: string;
+  taskId: string;
+  filePath: string;
+  lineNumber: number;
+  lineEnd: number | null;
+  sourceSide: "before" | "after";
+  lineContent: string | null;
+  content: string;
+  resolved: boolean;
+  resolvedAt: string | null;
+  createdBy: string;
+  linkedTaskId: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export function addLineComment(args: {
+  taskId: string;
+  filePath: string;
+  lineNumber: number;
+  lineEnd: number | null;
+  sourceSide: "before" | "after";
+  lineContent: string | null;
+  content: string;
+}): Promise<LineCommentDto> {
+  return invoke("add_line_comment", { request: args });
+}
+
+export function listLineComments(taskId: string, filePath?: string): Promise<LineCommentDto[]> {
+  return invoke("list_line_comments", { taskId, filePath: filePath ?? null });
+}
+
+export function resolveLineComment(commentId: string): Promise<LineCommentDto> {
+  return invoke("resolve_line_comment", { commentId });
+}
+
+export function deleteLineComment(commentId: string): Promise<void> {
+  return invoke("delete_line_comment", { commentId });
+}
+
+/** §14 "Create Task": provisioned task + the constructed initial prompt. */
+export interface CreateTaskFromCommentResult {
+  task: TaskDto;
+  prompt: string;
+}
+
+export function createTaskFromComment(args: {
+  projectId: string;
+  name: string;
+  commentId: string;
+  selectedCode: string;
+  enclosingFunction: string | null;
+}): Promise<CreateTaskFromCommentResult> {
+  return invoke("create_task_from_comment", args);
 }

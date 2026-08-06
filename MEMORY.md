@@ -4,6 +4,48 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## Current state (2026-08-06, E4-10 line comments)
+
+- **E4-10 Line comments (#50) shipped — ARCHITECTURE §14 end-to-end.**
+  Migration 0001_line_comments (journal when=1800000000001 + sql_for_tag
+  arm; ALTERs: source_side/line_end/linked_task_id/resolved/resolved_at/
+  created_by + tasks.source_comment_id). Migration-count tests
+  (db_integration + migrations.rs) hardcode the journal length — bump
+  them with every new migration. Domain: `ade_core::line_comments`
+  (LineCommentStore CRUD + link_task both-directions in one tx +
+  build_comment_prompt pinned EXACTLY to the §14 template; guard
+  failures degrade, never fail state reads). Events CommentCreated/
+  CommentResolved → `comment:created`/`comment:resolved` envelopes.
+  Commands: add_line_comment (takes ONE `request` struct — clippy
+  too_many_arguments forced it; frontend wraps `{request: args}`),
+  list/resolve/delete_line_comment, create_task_from_comment (core split
+  out as `create_task_from_comment_core(&App, ...)` for tests; ade-app
+  lib now exposes `pub mod app; pub mod commands;`). create_task's param
+  building extracted to `create_task_params` (shared with the comment
+  flow, which layers an InitialConversationConfig whose initial_prompt =
+  §14 template → conversations.config carries it raw, NOT
+  versioned-enveloped). Worktree pool comes from app-level
+  `localProject.defaultWorktreeDirectory` — per-project
+  worktree_directory is NOT consulted by worktree_pool_path.
+  Frontend: store/line-comments.ts (byTask, `__lineCommentsStore` seam,
+  wireLineCommentEvents in App.tsx); DiffSelectionPopover FAB renamed
+  "+ Comment", actions now Add Note / Create Task ⚡ / Send to agent —
+  both comment paths go THROUGH the store (markLinked needs the row in
+  byTask); QuickTaskDialog (ui.quickTaskTarget) prefills name/provider,
+  calls create_task_from_comment then terminal_open_agent + bracketed-
+  paste of the prompt; DiffView comment gutters per side (before→a,
+  after→b, unified→after only) in Compartments reconfigured by a
+  comments effect — markers survive rebuilds via markerMountsRef;
+  CommentThread panel (resolve ✓ manual per §14, linked-task badge reads
+  live status from sidebar tasksByProject, click → switchToTask).
+  Browser-smoke lessons: CM6 ignores re-selecting the SAME range
+  (collapse elsewhere first); syntax highlighting splits text nodes
+  (select whole .cm-line via TreeWalker); `.diff-sel-actions
+  button:nth-child(3)` counts the destination span — use `$$(...
+  button)[i]`.
+- Next: **#47** E4-07 PR section (L, GitHub client) — last E4 frontier
+  with #49(⇐47), #51(⇐50 done now).
+
 ## Current state (2026-08-06, E4-08 footer git actions)
 
 - **E4-08 Footer git actions (#48) shipped:** GitFooter under the commit

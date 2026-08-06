@@ -16,14 +16,15 @@
 // Hidden tabs (display:none) never build: the view is only constructed
 // while the tab is active.
 import { useEffect, useRef, useState } from "react";
-import { EditorState, type Extension } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
+import { Compartment, EditorState, RangeSet, type Extension, type Range } from "@codemirror/state";
+import { EditorView, GutterMarker, gutter, keymap } from "@codemirror/view";
 import { MergeView, unifiedMergeView } from "@codemirror/merge";
 import { LanguageDescription } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { basicSetup } from "codemirror";
 import DiffSelectionPopover from "./DiffSelectionPopover";
+import CommentThread from "./CommentThread";
 import { parseDiffTabId } from "../lib/diff-tabs";
 import {
   diffViewDocs,
@@ -31,6 +32,8 @@ import {
   unregisterDiffView,
 } from "../lib/diff-views";
 import { useDiffs, type DiffParams } from "../store/diffs";
+import { useLineComments } from "../store/line-comments";
+import type { LineCommentDto } from "../lib/tauri";
 
 function formatSize(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -92,6 +95,60 @@ function selectionExtensions(tabId: string, side: "a" | "b" | "single"): Extensi
   ];
 }
 
+// -- E4-10 comment markers (§14 gutter) ----------------------------------------
+
+class CommentMarker extends GutterMarker {
+  constructor(
+    private resolved: boolean,
+    private openThread: () => void,
+  ) {
+    super();
+  }
+  toDOM() {
+    const span = document.createElement("span");
+    span.className = this.resolved ? "comment-marker resolved" : "comment-marker";
+    span.textContent = this.resolved ? "✓" : "💬";
+    span.title = this.resolved ? "Resolved comment" : "Comment";
+    span.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.openThread();
+    });
+    return span;
+  }
+}
+
+/** Gutter extension showing one marker per comment's anchor line on the
+ * given side. Reconfigured via its Compartment when comments change. */
+function commentGutter(
+  comments: LineCommentDto[],
+  side: "before" | "after",
+  openThread: () => void,
+): Extension {
+  return gutter({
+    class: "cm-comment-gutter",
+    markers: (view) => {
+      const ranges: Range<GutterMarker>[] = [];
+      for (const c of comments) {
+        if (c.sourceSide !== side) continue;
+        if (c.lineNumber < 1 || c.lineNumber > view.state.doc.lines) continue;
+        ranges.push(
+          new CommentMarker(c.resolved, openThread).range(
+            view.state.doc.line(c.lineNumber).from,
+          ),
+        );
+      }
+      return RangeSet.of(ranges);
+    },
+  });
+}
+
+/** One mounted editor + the compartment owning its comment markers. */
+interface MarkerMount {
+  editor: EditorView;
+  compartment: Compartment;
+  side: "before" | "after";
+}
+
 export default function DiffView({
   tabId,
   title,
@@ -115,7 +172,41 @@ export default function DiffView({
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | MergeView | null>(null);
+  const markerMountsRef = useRef<MarkerMount[]>([]);
   const [buildError, setBuildError] = useState<string | null>(null);
+  const [thread, setThread] = useState<"before" | "after" | null>(null);
+
+  // E4-10: load this task's comments (restart persistence — the gutter
+  // rehydrates from SQLite every time a diff opens).
+  const comments = useLineComments((s) => (taskId ? s.byTask[taskId] : undefined)) ?? [];
+  useEffect(() => {
+    void useLineComments.getState().ensure(taskId);
+  }, [taskId]);
+
+  // Reconfigure mounted gutters whenever the comment list changes.
+  useEffect(() => {
+    for (const mount of markerMountsRef.current) {
+      mount.editor.dispatch({
+        effects: mount.compartment.reconfigure(
+          commentGutter(comments, mount.side, () => setThread(mount.side)),
+        ),
+      });
+    }
+  }, [comments]);
+
+  // The popover's "Add Note" / "Create Task" flows raise the thread.
+  useEffect(() => {
+    const onShow = (e: Event) => {
+      const detail = (e as CustomEvent).detail as
+        | { taskId: string; filePath: string; side: "before" | "after" }
+        | undefined;
+      if (detail && detail.taskId === taskId && detail.filePath === params?.path) {
+        setThread(detail.side);
+      }
+    };
+    window.addEventListener("ade:show-comments", onShow);
+    return () => window.removeEventListener("ade:show-comments", onShow);
+  }, [taskId, params?.path]);
 
   // Restored tabs: register id-parsed params so event refresh finds them.
   useEffect(() => {
@@ -170,6 +261,12 @@ export default function DiffView({
     }
 
     let cancelled = false;
+    // E4-10: each editor gets a comment-marker gutter in its own
+    // compartment; the comments effect reconfigures on change.
+    const aCompartment = new Compartment();
+    const bCompartment = new Compartment();
+    const singleCompartment = new Compartment();
+    const openThreadFor = (side: "before" | "after") => () => setThread(side);
 
     const build = async () => {
       let lang: Extension[] = [];
@@ -204,6 +301,7 @@ export default function DiffView({
                 ...baseExtensions(lang),
                 ...readOnlyExtensions(),
                 ...selectionExtensions(tabId, "a"),
+                aCompartment.of(commentGutter(comments, "before", openThreadFor("before"))),
               ],
             },
             b: {
@@ -212,6 +310,7 @@ export default function DiffView({
                 ...baseExtensions(lang),
                 ...(editable ? editableExtensions(tabId) : readOnlyExtensions()),
                 ...selectionExtensions(tabId, "b"),
+                bCompartment.of(commentGutter(comments, "after", openThreadFor("after"))),
               ],
             },
             parent: container,
@@ -226,6 +325,7 @@ export default function DiffView({
               ...baseExtensions(lang),
               ...(editable ? editableExtensions(tabId) : readOnlyExtensions()),
               ...selectionExtensions(tabId, "single"),
+              singleCompartment.of(commentGutter(comments, "after", openThreadFor("after"))),
               unifiedMergeView({
                 original: oldDoc,
                 highlightChanges: true,
@@ -243,6 +343,7 @@ export default function DiffView({
               ...baseExtensions(lang),
               ...(editable ? editableExtensions(tabId) : readOnlyExtensions()),
               ...selectionExtensions(tabId, "single"),
+              singleCompartment.of(commentGutter(comments, "after", openThreadFor("after"))),
             ],
             parent: container,
           });
@@ -252,6 +353,19 @@ export default function DiffView({
         if (previous) unregisterDiffView(tabId, previous);
         viewRef.current = view;
         registerDiffView(tabId, view);
+
+        // Register comment-gutter mounts so the comments effect can
+        // reconfigure them without a rebuild.
+        if (view instanceof MergeView) {
+          markerMountsRef.current = [
+            { editor: view.a, compartment: aCompartment, side: "before" },
+            { editor: view.b, compartment: bCompartment, side: "after" },
+          ];
+        } else {
+          markerMountsRef.current = [
+            { editor: view, compartment: singleCompartment, side: "after" },
+          ];
+        }
 
         const editor = view instanceof MergeView ? view.b : view;
         editor.scrollDOM.scrollTop = scrollTop;
@@ -267,6 +381,7 @@ export default function DiffView({
     void build();
     return () => {
       cancelled = true;
+      markerMountsRef.current = [];
     };
   }, [tabId, active, payload, mode, editable]);
 
@@ -280,6 +395,7 @@ export default function DiffView({
         view.destroy();
         viewRef.current = null;
       }
+      markerMountsRef.current = [];
     },
     [tabId],
   );
@@ -355,6 +471,14 @@ export default function DiffView({
             taskId={taskId}
             containerRef={containerRef}
           />
+          {thread && params && (
+            <CommentThread
+              taskId={taskId}
+              filePath={params.path}
+              side={thread}
+              onClose={() => setThread(null)}
+            />
+          )}
         </div>
       ) : (
         <p className="diff-notice">Loading diff…</p>

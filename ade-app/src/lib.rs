@@ -5,8 +5,8 @@
 
 mod acp_events;
 pub mod acp_runtime;
-mod app;
-mod commands;
+pub mod app;
+pub mod commands;
 mod indexer;
 mod terminals;
 mod watchers;
@@ -135,6 +135,11 @@ pub fn run() {
             commands::git::git_pull,
             commands::git::git_publish,
             commands::git::git_add_remote,
+            commands::line_comments::add_line_comment,
+            commands::line_comments::list_line_comments,
+            commands::line_comments::resolve_line_comment,
+            commands::line_comments::delete_line_comment,
+            commands::line_comments::create_task_from_comment,
             commands::files::write_workspace_file,
             commands::conversations::create_conversation,
             commands::conversations::list_conversations,

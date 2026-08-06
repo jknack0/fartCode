@@ -16,6 +16,7 @@ import { wireDiffsEvents } from "./store/diffs";
 import { useSidebar, wireSidebarEvents } from "./store/sidebar";
 import { useConversations, wireConversationEvents } from "./store/conversations";
 import { wireTabsEvents } from "./store/tabs";
+import { wireLineCommentEvents } from "./store/line-comments";
 
 function App() {
   const load = useSidebar((s) => s.load);
@@ -30,12 +31,14 @@ function App() {
     const unlistenConversations = wireConversationEvents();
     const unlistenChanges = wireChangesEvents();
     const unlistenDiffs = wireDiffsEvents();
+    const unlistenComments = wireLineCommentEvents();
     return () => {
       unlisten();
       unlistenTabs();
       unlistenConversations();
       unlistenChanges();
       unlistenDiffs();
+      unlistenComments();
     };
   }, [load]);
   const ensureConversations = useConversations((s) => s.ensure);

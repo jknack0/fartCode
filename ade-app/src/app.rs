@@ -46,6 +46,8 @@ pub struct App {
     pub provider_accounts: Arc<ProviderAccountStore>,
     /// E4-01 workspace file+git watcher (registered via `watchers.rs`).
     pub fs_watch: Arc<FsWatchService>,
+    /// E4-10 diff line comments (§14).
+    pub line_comments: Arc<ade_core::line_comments::LineCommentStore>,
 }
 
 impl App {
@@ -120,6 +122,12 @@ impl App {
                 .map_err(|e| e.to_string())?,
         );
 
+        // E4-10: diff line comments (§14) — CRUD + bidirectional task link.
+        let line_comments = Arc::new(ade_core::line_comments::LineCommentStore::new(
+            db.clone(),
+            event_bus.clone() as Arc<dyn EventBus>,
+        ));
+
         Ok(Arc::new(Self {
             db,
             settings,
@@ -132,6 +140,7 @@ impl App {
             task_creation,
             provider_accounts,
             fs_watch,
+            line_comments,
         }))
     }
 }
@@ -181,6 +190,18 @@ pub fn event_to_value(event: &InternalEvent) -> Option<serde_json::Value> {
         } => Some(json!({
             "type": "files:changed", "workspaceId": workspace_id, "paths": paths,
         })),
+        InternalEvent::CommentCreated {
+            id,
+            task_id,
+            file_path,
+            line_number,
+        } => Some(json!({
+            "type": "comment:created", "id": id, "taskId": task_id,
+            "filePath": file_path, "lineNumber": line_number,
+        })),
+        InternalEvent::CommentResolved { id } => {
+            Some(json!({ "type": "comment:resolved", "id": id }))
+        }
         _ => None,
     }
 }
@@ -250,6 +271,24 @@ mod tests {
         let v = event_to_value(&ev).unwrap();
         assert_eq!(v["type"], "files:changed");
         assert_eq!(v["paths"][0], "src/main.rs");
+
+        // E4-10 line-comment events reach the frontend envelope.
+        let ev = InternalEvent::CommentCreated {
+            id: "lc_1".into(),
+            task_id: "t1".into(),
+            file_path: "src/main.rs".into(),
+            line_number: 42,
+        };
+        let v = event_to_value(&ev).unwrap();
+        assert_eq!(v["type"], "comment:created");
+        assert_eq!(v["taskId"], "t1");
+        assert_eq!(v["filePath"], "src/main.rs");
+        assert_eq!(v["lineNumber"], 42);
+
+        let ev = InternalEvent::CommentResolved { id: "lc_1".into() };
+        let v = event_to_value(&ev).unwrap();
+        assert_eq!(v["type"], "comment:resolved");
+        assert_eq!(v["id"], "lc_1");
 
         // Events the UI doesn't consume are skipped, not panicked on.
         assert!(event_to_value(&InternalEvent::AppStarted).is_none());

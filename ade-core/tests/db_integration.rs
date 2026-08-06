@@ -67,8 +67,8 @@ fn test_migration_runner_idempotent() {
         .query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))
         .unwrap();
     assert_eq!(
-        migrations, 1,
-        "exactly one migration should have been applied"
+        migrations, 2,
+        "both journal migrations (0000 + 0001) should have been applied"
     );
 
     // Running init again on the same file is a no-op.
@@ -79,7 +79,7 @@ fn test_migration_runner_idempotent() {
         .unwrap()
         .query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(migrations2, 1, "re-init must not re-apply migrations");
+    assert_eq!(migrations2, 2, "re-init must not re-apply migrations");
 }
 
 #[test]

@@ -16,6 +16,18 @@ export interface DiscardTarget {
   hasUntracked: boolean;
 }
 
+/** Pending "Create Task from comment" dialog (E4-10, §14): everything the
+ * quick-task modal needs to call create_task_from_comment + hand the prompt
+ * to the spawned agent terminal. */
+export interface QuickTaskTarget {
+  projectId: string;
+  commentId: string;
+  selectedCode: string;
+  enclosingFunction: string | null;
+  /** Pre-filled task name (first line of the comment, truncated). */
+  prefillName: string;
+}
+
 interface UiState {
   paletteOpen: boolean;
   createProjectOpen: boolean;
@@ -30,6 +42,7 @@ interface UiState {
   deleteTaskTarget: DeleteTaskTarget | null;
   deleteProjectTarget: string | null;
   discardTarget: DiscardTarget | null;
+  quickTaskTarget: QuickTaskTarget | null;
   onboardingOpen: boolean;
   /** Bumped when keybindings change so hint renderers re-read the registry
    * (registry lives outside zustand). */
@@ -46,6 +59,7 @@ interface UiState {
   setDeleteTaskTarget: (target: DeleteTaskTarget | null) => void;
   setDeleteProjectTarget: (id: string | null) => void;
   setDiscardTarget: (target: DiscardTarget | null) => void;
+  setQuickTaskTarget: (target: QuickTaskTarget | null) => void;
   setOnboardingOpen: (open: boolean) => void;
   bumpBindings: () => void;
   /** Esc handling (modal scope): close the topmost modal. */
@@ -64,6 +78,7 @@ export const useUi = create<UiState>((set, get) => ({
   deleteTaskTarget: null,
   deleteProjectTarget: null,
   discardTarget: null,
+  quickTaskTarget: null,
   onboardingOpen: false,
   bindingsVersion: 0,
 
@@ -78,6 +93,7 @@ export const useUi = create<UiState>((set, get) => ({
   setDeleteTaskTarget: (deleteTaskTarget) => set({ deleteTaskTarget }),
   setDeleteProjectTarget: (deleteProjectTarget) => set({ deleteProjectTarget }),
   setDiscardTarget: (discardTarget) => set({ discardTarget }),
+  setQuickTaskTarget: (quickTaskTarget) => set({ quickTaskTarget }),
   setOnboardingOpen: (onboardingOpen) => set({ onboardingOpen }),
   bumpBindings: () => set((s) => ({ bindingsVersion: s.bindingsVersion + 1 })),
 
@@ -85,6 +101,7 @@ export const useUi = create<UiState>((set, get) => ({
     const s = get();
     if (s.paletteOpen) return set({ paletteOpen: false });
     if (s.discardTarget) return set({ discardTarget: null });
+    if (s.quickTaskTarget) return set({ quickTaskTarget: null });
     if (s.deleteTaskTarget) return set({ deleteTaskTarget: null });
     if (s.deleteProjectTarget) return set({ deleteProjectTarget: null });
     if (s.projectSettingsOpen) return set({ projectSettingsOpen: false });
@@ -102,6 +119,7 @@ export const useUi = create<UiState>((set, get) => ({
       s.deleteTaskTarget !== null ||
       s.deleteProjectTarget !== null ||
       s.discardTarget !== null ||
+      s.quickTaskTarget !== null ||
       s.onboardingOpen
     );
   },

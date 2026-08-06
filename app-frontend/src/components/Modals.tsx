@@ -1,11 +1,19 @@
 // App-level modals (E14-01 modal scope): every dialog renders here, driven
 // by the ui store, so the Esc keybinding (close-modal) can reach the
 // topmost one via `closeTopModal`.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import ProjectSettings from "./ProjectSettings";
 import SettingsModal from "./SettingsModal";
+import {
+  createTaskFromComment,
+  listProviders,
+  terminalOpenAgent,
+  terminalWrite,
+} from "../lib/tauri";
 import { useChanges } from "../store/changes";
+import { useLineComments } from "../store/line-comments";
+
 import { useSidebar } from "../store/sidebar";
 import { useUi } from "../store/ui";
 
@@ -102,6 +110,99 @@ export function ConfirmDelete({
   );
 }
 
+/** Quick-task dialog (§14 "Create Task"): pre-filled name + provider pick;
+ * submit creates the provisioned task linked to the comment, spawns the
+ * agent terminal in it, and pastes the §14 prompt. */
+export function QuickTaskDialog({ onClose }: { onClose: () => void }) {
+  const target = useUi((s) => s.quickTaskTarget);
+  const [name, setName] = useState(target?.prefillName ?? "");
+  const [provider, setProvider] = useState("");
+  const [providers, setProviders] = useState<{ id: string; name: string }[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const switchToTask = useSidebar((s) => s.switchToTask);
+
+  useEffect(() => {
+    listProviders()
+      .then((ps) => {
+        setProviders(ps);
+        const preferred = ps.find((p) => p.id === "claude") ?? ps[0];
+        if (preferred) setProvider(preferred.id);
+      })
+      .catch(() => {});
+  }, []);
+
+  if (!target) return null;
+
+  const submit = async () => {
+    if (!name.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await createTaskFromComment({
+        projectId: target.projectId,
+        name: name.trim(),
+        commentId: target.commentId,
+        selectedCode: target.selectedCode,
+        enclosingFunction: target.enclosingFunction,
+      });
+      useLineComments.getState().markLinked(target.commentId, result.task.id);
+      // Spawn the agent in the new task's worktree and hand it the prompt
+      // (bracketed paste so the multi-line template lands as one block).
+      if (provider) {
+        try {
+          const terminalId = await terminalOpenAgent(result.task.id, provider, 24, 80);
+          await terminalWrite(terminalId, `\u001b[200~${result.prompt}\u001b[201~\r`);
+        } catch {
+          // No agent available — the task + link still stand; the user can
+          // start the agent from the task view.
+        }
+      }
+      switchToTask(result.task);
+      onClose();
+    } catch (e) {
+      setError(String(e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h2>Create task from comment</h2>
+        <label>
+          Task name
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
+        </label>
+        <label>
+          Agent provider
+          <select value={provider} onChange={(e) => setProvider(e.target.value)}>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {error && <p className="error">{error}</p>}
+        <div className="modal-actions">
+          <button onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button className="primary" disabled={!name.trim() || busy} onClick={submit}>
+            {busy ? "Creating…" : "Create task"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Modals() {
   const createProjectOpen = useUi((s) => s.createProjectOpen);
   const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
@@ -115,6 +216,8 @@ export default function Modals() {
   const setDeleteTaskTarget = useUi((s) => s.setDeleteTaskTarget);
   const discardTarget = useUi((s) => s.discardTarget);
   const setDiscardTarget = useUi((s) => s.setDiscardTarget);
+  const quickTaskTarget = useUi((s) => s.quickTaskTarget);
+  const setQuickTaskTarget = useUi((s) => s.setQuickTaskTarget);
 
   const { projects, tasksByProject, selectedProjectId, deleteProject, deleteTask } =
     useSidebar();
@@ -199,6 +302,7 @@ export default function Modals() {
           </div>
         </div>
       )}
+      {quickTaskTarget && <QuickTaskDialog onClose={() => setQuickTaskTarget(null)} />}
     </>
   );
 }

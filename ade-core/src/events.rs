@@ -50,6 +50,17 @@ pub enum InternalEvent {
         id: String,
     },
 
+    // Line comments (E4-10, ARCHITECTURE.md §14)
+    CommentCreated {
+        id: String,
+        task_id: String,
+        file_path: String,
+        line_number: i64,
+    },
+    CommentResolved {
+        id: String,
+    },
+
     // Conversations
     ConversationCreated {
         id: String,

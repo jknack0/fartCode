@@ -24,9 +24,35 @@ pub fn create_task(
     project_id: String,
     name: String,
 ) -> Result<TaskDto, String> {
+    let params = create_task_params(
+        &app,
+        &project_id,
+        &name,
+        TaskConfigParams {
+            name: name.clone(),
+            initial_status: None,
+            linked_issue: None,
+            initial_conversation: None,
+        },
+    )?;
+    app.task_creation
+        .create_with_provision(params)
+        .map(|r| TaskDto::from(&r.task))
+        .map_err(|e| e.to_string())
+}
+
+/// Builds [`CreateTaskParams`] for the standard flow (E2-04 naming +
+/// project base ref), shared by `create_task` and E4-10's
+/// `create_task_from_comment` (which layers an initial conversation).
+pub(crate) fn create_task_params(
+    app: &App,
+    project_id: &str,
+    name: &str,
+    task_config: TaskConfigParams,
+) -> Result<CreateTaskParams, String> {
     let project = app
         .projects
-        .get(&project_id)
+        .get(project_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("project not found: {project_id}"))?;
 
@@ -35,7 +61,7 @@ pub fn create_task(
         .get(&ade_core::settings::registry::PROJECT)
         .map_err(|e| e.to_string())?;
 
-    let raw_branch = generate_task_name(Some(&name), None, true);
+    let raw_branch = generate_task_name(Some(name), None, true);
     let branch_name = resolve_task_branch_name(&BranchNameOptions {
         raw_branch: &raw_branch,
         branch_prefix: Some(&group.branch_prefix),
@@ -52,26 +78,18 @@ pub fn create_task(
         None => SourceBranchRef::local(base_ref),
     };
 
-    app.task_creation
-        .create_with_provision(CreateTaskParams {
-            id: None,
-            project_id,
-            task_config: TaskConfigParams {
-                name,
-                initial_status: None,
-                linked_issue: None,
-                initial_conversation: None,
-            },
-            git: GitSetup::CreateBranch {
-                branch_name,
-                from_branch,
-                push_branch: group.push_on_create,
-            },
-            workspace: WorkspaceTarget::NewWorktree,
-            automation_run_id: None,
-        })
-        .map(|r| TaskDto::from(&r.task))
-        .map_err(|e| e.to_string())
+    Ok(CreateTaskParams {
+        id: None,
+        project_id: project_id.to_string(),
+        task_config,
+        git: GitSetup::CreateBranch {
+            branch_name,
+            from_branch,
+            push_branch: group.push_on_create,
+        },
+        workspace: WorkspaceTarget::NewWorktree,
+        automation_run_id: None,
+    })
 }
 
 /// Idempotent re-provision (E2-04 provision): materializes the task's
