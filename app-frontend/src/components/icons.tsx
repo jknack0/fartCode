@@ -123,7 +123,7 @@ export function IconChat({ size }: IconProps) {
   // Speech bubble: the project chat panel toggle.
   return (
     <svg {...base(size)}>
-      <path d="M2.4 2h7.2a1.9 1.9 0 0 1 1.9 1.9v4.2a1.9 1.9 0 0 1-1.9 1.9H5L2.4 11.3V2.4A.4.4 0 0 1 2.4 2z" />
+      <path d="M10.5 7.5a1 1 0 0 1-1 1H3.5l-2 2V2.5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1z" />
     </svg>
   );
 }

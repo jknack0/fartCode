@@ -37,10 +37,13 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
+  /* Beat the global button padding (6px 12px) — it crushes the 24px
+     content box to zero width and the icon collapses. */
+  padding: 0;
   border-radius: 6px;
-  color: var(--passive, #929192);
+  color: var(--muted, #b8b7b8);
 }
 
 .project-action:hover {

@@ -26,12 +26,17 @@ const GLYPH: Record<GitChangeDto["status"], string> = {
 export default function ChangesSidebar() {
   const open = useUi((s) => s.changesOpen);
   const setOpen = useUi((s) => s.setChangesOpen);
-  const { tasksByProject, selectedProjectId, selectedTaskId } = useSidebar();
+  const { projects, tasksByProject, selectedProjectId, selectedTaskId } = useSidebar();
   const task = selectedProjectId
     ? (tasksByProject[selectedProjectId] ?? []).find((t) => t.id === selectedTaskId)
     : undefined;
   const taskId = task?.id ?? null;
-  const workspaceId = task?.workspaceId ?? null;
+  // Project view (no task): the sidesheet shows the project ROOT checkout
+  // via the repository workspace (E17 dogfood: GitHub icon opens this).
+  const project = selectedProjectId
+    ? projects.find((p) => p.id === selectedProjectId)
+    : undefined;
+  const workspaceId = task?.workspaceId ?? project?.repositoryWorkspaceId ?? null;
   const entry = useChanges((s) => (workspaceId ? s.byWorkspace[workspaceId] : undefined));
   const [provisioning, setProvisioning] = useState(false);
 
@@ -42,7 +47,7 @@ export default function ChangesSidebar() {
     }
   }, [open, workspaceId]);
 
-  if (!open || !taskId) return null;
+  if (!open || (!taskId && !workspaceId)) return null;
 
   const snapshot = entry?.snapshot ?? null;
   const changeCount = snapshot ? snapshot.staged.length + snapshot.unstaged.length : 0;
@@ -78,7 +83,7 @@ export default function ChangesSidebar() {
         <p className="changes-empty muted">
           This task has no workspace yet — changes appear once it's provisioned.
         </p>
-      ) : entry?.error && entry.error.includes("workspace has no local path") ? (
+      ) : taskId && entry?.error && entry.error.includes("workspace has no local path") ? (
         <div className="changes-empty">
           <p className="muted">This task's workspace isn't on disk yet.</p>
           <button
@@ -165,7 +170,9 @@ function ChangeSection({
   title: string;
   side: DiffSide;
   changes: GitChangeDto[];
-  taskId: string;
+  /** Null at project scope (no task) — rows render without diff-tab
+   * opening, which needs a task's tab surface. */
+  taskId: string | null;
   workspaceId: string;
 }) {
   return (
@@ -199,16 +206,17 @@ function ChangeRow({
 }: {
   change: GitChangeDto;
   side: DiffSide;
-  taskId: string;
+  taskId: string | null;
   workspaceId: string;
 }) {
   const setDiscardTarget = useUi((s) => s.setDiscardTarget);
 
   return (
     <li
-      className={`change-row status-${change.status}`}
-      title={change.path}
-      onClick={(e) =>
+      className={`change-row status-${change.status}${taskId ? "" : " no-diff"}`}
+      title={taskId ? change.path : `${change.path} — diff opens in the task view`}
+      onClick={(e) => {
+        if (!taskId) return;
         openDiffTab({
           taskId,
           workspaceId,
@@ -216,8 +224,8 @@ function ChangeRow({
           origPath: change.origPath,
           side,
           preview: e.detail < 2,
-        })
-      }
+        });
+      }}
     >
       <span className="change-glyph" aria-label={change.status}>
         {GLYPH[change.status]}
