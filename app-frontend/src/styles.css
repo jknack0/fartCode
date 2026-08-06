@@ -153,7 +153,33 @@ body {
   min-height: 0;
   background: var(--background-tertiary);
   border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+
+/* The scrollable changes region yields to the docked chat (E17). */
+.changes-scroll {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Nested in the sheet (project scope): no second border/width. */
+.changes-panel .project-chat {
+  width: auto;
+  min-width: 0;
+  border-left: none;
+  border-top: 1px solid var(--border);
+  flex: 0 0 42%;
+  min-height: 120px;
+}
+
+.changes-panel .card-detail {
+  width: auto;
+  min-width: 0;
+  border-left: none;
+  flex: 1;
 }
 
 .changes-header {

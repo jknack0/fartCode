@@ -13,6 +13,8 @@ import { hint } from "../lib/useCommands";
 import { provisionTask, type DiffSide, type GitChangeDto } from "../lib/tauri";
 import CommitCard from "./CommitCard";
 import GitFooter from "./GitFooter";
+import CardDetail from "./board/CardDetail";
+import ProjectChatPanel from "./projectChat/ProjectChatPanel";
 import { IconBranch, IconClose, IconDiscard, IconMinus, IconPlus } from "./icons";
 
 const GLYPH: Record<GitChangeDto["status"], string> = {
@@ -26,6 +28,8 @@ const GLYPH: Record<GitChangeDto["status"], string> = {
 export default function ChangesSidebar() {
   const open = useUi((s) => s.changesOpen);
   const setOpen = useUi((s) => s.setChangesOpen);
+  const detailIssueId = useUi((s) => s.boardDetailIssueId);
+  const projectChatOpen = useUi((s) => s.projectChatOpen);
   const { projects, tasksByProject, selectedProjectId, selectedTaskId } = useSidebar();
   const task = selectedProjectId
     ? (tasksByProject[selectedProjectId] ?? []).find((t) => t.id === selectedTaskId)
@@ -49,12 +53,22 @@ export default function ChangesSidebar() {
 
   if (!open || (!taskId && !workspaceId)) return null;
 
+  // E17 project scope: the sheet hosts the PM chat docked at the bottom,
+  // and a board card click swaps the whole sheet to card detail.
+  const showDetail = !taskId && detailIssueId !== null;
+  const showChat = !taskId && projectChatOpen && selectedProjectId !== null;
+
   const snapshot = entry?.snapshot ?? null;
   const changeCount = snapshot ? snapshot.staged.length + snapshot.unstaged.length : 0;
 
   return (
     <aside className="changes-panel">
-      <div className="changes-header">
+      {showDetail ? (
+        <CardDetail projectId={selectedProjectId!} issueId={detailIssueId} />
+      ) : (
+        <>
+          <div className="changes-scroll">
+            <div className="changes-header">
         <IconBranch size={12} />
         <span className="changes-title">Changes</span>
         {snapshot && !snapshot.truncated && (
@@ -154,6 +168,10 @@ export default function ChangesSidebar() {
         <>
           <CommitCard workspaceId={workspaceId} />
           <GitFooter workspaceId={workspaceId} />
+        </>
+      )}
+          </div>
+          {showChat && <ProjectChatPanel projectId={selectedProjectId} />}
         </>
       )}
     </aside>

@@ -147,7 +147,11 @@ export function registerAllCommands(): void {
     scope: "project-view",
     run: () => {
       const ui = useUi.getState();
-      ui.setProjectChatOpen(!ui.projectChatOpen);
+      const next = !ui.projectChatOpen;
+      ui.setProjectChatOpen(next);
+      // The chat docks at the bottom of the changes sheet — showing it
+      // opens the sheet too.
+      if (next) ui.setChangesOpen(true);
     },
   });
   registerCommand(registry, {
