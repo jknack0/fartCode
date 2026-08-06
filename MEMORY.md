@@ -6,6 +6,13 @@ one exists).
 
 ## E17-02 + E17-04 landed (2026-08-06)
 
+- **Dogfood fixes (6532b9b):** AcpRuntime::resolve_cwd hard-errored on
+  project-scoped conversations ("no workspace yet") — now resolves to the
+  project root (regression tests in acp_runtime.rs). Project view header:
+  project name + GitHub icon (`project_github_url` command — base remote
+  normalized scp/ssh/https → https; non-GitHub hides the icon) + chat
+  toggle; PM panel has a minimize button (⌘⇧2 toggles back).
+
 - **#56 board UI** (f47b3e6): 5-lane board with native HTML5 DnD →
   `issue_move` (midpoint drop index, within-lane reorder correction),
   blocked→In-Progress confirm modal, provider/linked-task badges, blocked
