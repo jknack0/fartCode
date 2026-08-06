@@ -1,10 +1,20 @@
-// Issue board (E17-02, #56): the project view's primary surface. This is
-// the read path — lanes render from issue_list in board order, blocked
-// badges included. Drag/drop, card detail, and the blocked-dispatch
-// confirm dialog build on top of this component.
+// Issue board (E17-02, #56): the project view's primary surface. Five
+// lanes render from issue_list in board order; native HTML5 drag/drop
+// persists moves via issue_move. Dragging a blocked card into In Progress
+// gates on a confirm modal (ADR-0032: confirm, never a hard stop); the
+// actual task spawn is E17-03. Card click swaps the right region to the
+// card detail. All state reconciles by refetching on issue events (blocked
+// badges are derived — one move can flip OTHER cards).
 
 import { useEffect, useState } from "react";
-import { issueList, onAdeEvent, type IssueDto, type Lane } from "../../lib/tauri";
+import {
+  issueList,
+  issueMove,
+  onAdeEvent,
+  type IssueDto,
+  type Lane,
+} from "../../lib/tauri";
+import { useUi } from "../../store/ui";
 
 const LANES: { id: Lane; label: string }[] = [
   { id: "backlog", label: "Backlog" },
@@ -14,9 +24,26 @@ const LANES: { id: Lane; label: string }[] = [
   { id: "done", label: "Done" },
 ];
 
+const LANE_LABEL: Record<Lane, string> = {
+  backlog: "Backlog",
+  ready: "Ready",
+  in_progress: "In Progress",
+  in_review: "In Review",
+  done: "Done",
+};
+
+/** A blocked drop awaiting the user's confirm (issue + where it lands). */
+interface PendingBlockedDrop {
+  issue: IssueDto;
+  lane: Lane;
+  position: number;
+}
+
 export default function BoardView({ projectId }: { projectId: string }) {
   const [issues, setIssues] = useState<IssueDto[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingBlockedDrop | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -25,8 +52,6 @@ export default function BoardView({ projectId }: { projectId: string }) {
         .then((list) => !cancelled && setIssues(list))
         .catch((e) => !cancelled && setError(String(e)));
     void reload();
-    // Any issue event can flip derived blocked badges on OTHER cards —
-    // always refetch the project list (ADR-0032).
     const unlisten = onAdeEvent((ev) => {
       if (
         (ev.type === "issue:created" ||
@@ -43,6 +68,44 @@ export default function BoardView({ projectId }: { projectId: string }) {
     };
   }, [projectId]);
 
+  const move = (issueId: string, lane: Lane, position: number) =>
+    issueMove(issueId, lane, position).catch((e) => setError(String(e)));
+
+  /** Index among the lane's cards where the cursor is (midpoint rule). */
+  const dropIndex = (clientY: number, listEl: HTMLElement): number => {
+    const cards = Array.from(listEl.querySelectorAll<HTMLElement>(".board-card"));
+    for (let i = 0; i < cards.length; i++) {
+      const r = cards[i].getBoundingClientRect();
+      if (clientY < r.top + r.height / 2) return i;
+    }
+    return cards.length;
+  };
+
+  const handleDrop = (e: React.DragEvent, lane: Lane) => {
+    e.preventDefault();
+    setDragId(null);
+    const issueId = e.dataTransfer.getData("text/ade-issue");
+    const issue = issues.find((i) => i.id === issueId);
+    if (!issue) return;
+    const position = dropIndex(e.clientY, e.currentTarget as HTMLElement);
+
+    if (issue.lane === lane) {
+      // Within-lane reorder: removing the card shifts later indices down.
+      const siblings = issues.filter((i) => i.lane === lane);
+      const from = siblings.findIndex((i) => i.id === issueId);
+      const to = position > from ? position - 1 : position;
+      if (to === from) return; // dropped back on itself
+      void move(issueId, lane, to);
+      return;
+    }
+    // Cross-lane: blocked cards entering In Progress confirm first.
+    if (issue.blocked && lane === "in_progress") {
+      setPending({ issue, lane, position });
+      return;
+    }
+    void move(issueId, lane, position);
+  };
+
   return (
     <div className="board">
       {error && <p className="error">{error}</p>}
@@ -54,24 +117,91 @@ export default function BoardView({ projectId }: { projectId: string }) {
               {label}
               <span className="board-lane-count">{cards.length}</span>
             </header>
-            <div className="board-lane-cards">
+            <div
+              className="board-lane-cards"
+              onDragOver={(e) => {
+                if (dragId) e.preventDefault();
+              }}
+              onDrop={(e) => handleDrop(e, id)}
+            >
               {cards.map((issue) => (
-                <article key={issue.id} className="board-card" data-issue-id={issue.id}>
+                <article
+                  key={issue.id}
+                  className={`board-card${dragId === issue.id ? " dragging" : ""}`}
+                  data-issue-id={issue.id}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData("text/ade-issue", issue.id);
+                    e.dataTransfer.effectAllowed = "move";
+                    setDragId(issue.id);
+                  }}
+                  onDragEnd={() => setDragId(null)}
+                  onClick={() => useUi.getState().setBoardDetailIssueId(issue.id)}
+                >
                   <span className="board-card-title">{issue.title}</span>
-                  {issue.blocked && (
-                    <span
-                      className="board-card-blocked"
-                      title={`Blocked by ${issue.blockers.map((b) => b.title).join(", ")}`}
-                    >
-                      blocked
-                    </span>
-                  )}
+                  <span className="board-card-badges">
+                    {issue.provider && (
+                      <span className="board-card-provider">{issue.provider}</span>
+                    )}
+                    {issue.linkedTaskId && (
+                      <span className="board-card-dot" title="task linked" />
+                    )}
+                    {issue.blocked && (
+                      <span className="board-card-blocked" tabIndex={0}>
+                        blocked
+                        <span className="blocked-popover" role="tooltip">
+                          {issue.blockers.map((b) => (
+                            <span key={b.id} className="blocked-popover-row">
+                              {b.title}
+                              <em>{LANE_LABEL[b.lane] ?? b.lane}</em>
+                            </span>
+                          ))}
+                        </span>
+                      </span>
+                    )}
+                  </span>
                 </article>
               ))}
             </div>
           </section>
         );
       })}
+
+      {pending && (
+        <div className="modal-backdrop" onClick={() => setPending(null)}>
+          <div
+            className="modal"
+            role="dialog"
+            aria-label="Dispatch blocked issue"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2>Dispatch blocked issue?</h2>
+            <p>
+              <strong>{pending.issue.title}</strong> is blocked by:
+            </p>
+            <ul className="blocked-confirm-list">
+              {pending.issue.blockers.map((b) => (
+                <li key={b.id}>
+                  {b.title} <em>({LANE_LABEL[b.lane] ?? b.lane})</em>
+                </li>
+              ))}
+            </ul>
+            <div className="modal-actions">
+              <button onClick={() => setPending(null)}>Cancel</button>
+              <button
+                className="primary"
+                onClick={() => {
+                  const { issue, lane, position } = pending;
+                  setPending(null);
+                  void move(issue.id, lane, position);
+                }}
+              >
+                Dispatch anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
