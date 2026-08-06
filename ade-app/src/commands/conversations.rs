@@ -121,7 +121,8 @@ pub fn list_project_conversations(
     app.conversations
         .list_by_project(&project_id)
         .map(|convs| {
-            convs.iter()
+            convs
+                .iter()
                 .filter(|c| c.scope == ade_core::conversations::model::ConversationScope::Project)
                 .map(conversation_dto)
                 .collect()
