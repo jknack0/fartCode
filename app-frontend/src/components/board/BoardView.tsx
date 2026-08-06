@@ -8,12 +8,16 @@
 
 import { useEffect, useState } from "react";
 import {
+  issueDispatch,
   issueList,
   issueMove,
   onAdeEvent,
+  terminalOpenAgent,
+  terminalWrite,
   type IssueDto,
   type Lane,
 } from "../../lib/tauri";
+import { useSidebar } from "../../store/sidebar";
 import { useUi } from "../../store/ui";
 
 const LANES: { id: Lane; label: string }[] = [
@@ -44,6 +48,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingBlockedDrop | null>(null);
+  const projectTasks = useSidebar((s) => s.tasksByProject[projectId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -61,6 +66,11 @@ export default function BoardView({ projectId }: { projectId: string }) {
       ) {
         void reload();
       }
+      // Task lifecycle affects cards: deletion unlinks (SET NULL), status
+      // changes recolor the linked-task dot.
+      if (ev.type === "task:deleted" || ev.type === "task:status_changed") {
+        void reload();
+      }
     });
     return () => {
       cancelled = true;
@@ -70,6 +80,32 @@ export default function BoardView({ projectId }: { projectId: string }) {
 
   const move = (issueId: string, lane: Lane, position: number) =>
     issueMove(issueId, lane, position).catch((e) => setError(String(e)));
+
+  /** Focuses the card's linked task (reattach never spawns a second
+   * worktree — ADR-0032). */
+  const focusLinkedTask = (taskId: string) => {
+    const task = (useSidebar.getState().tasksByProject[projectId] ?? []).find(
+      (t) => t.id === taskId,
+    );
+    if (task) useSidebar.getState().switchToTask(task);
+  };
+
+  /** E17-03: dispatch an unlinked card — backend creates the task, then
+   * the agent terminal opens with the prompt packet bracket-pasted in. */
+  const dispatch = async (issue: IssueDto) => {
+    try {
+      const outcome = await issueDispatch(issue.id);
+      if (outcome.reattached) {
+        useSidebar.getState().switchToTask(outcome.task);
+        return;
+      }
+      const terminalId = await terminalOpenAgent(outcome.task.id, outcome.provider, 24, 80);
+      await terminalWrite(terminalId, `\u001b[200~${outcome.prompt}\u001b[201~\r`);
+      useSidebar.getState().switchToTask(outcome.task);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   /** Index among the lane's cards where the cursor is (midpoint rule). */
   const dropIndex = (clientY: number, listEl: HTMLElement): number => {
@@ -98,9 +134,20 @@ export default function BoardView({ projectId }: { projectId: string }) {
       void move(issueId, lane, to);
       return;
     }
-    // Cross-lane: blocked cards entering In Progress confirm first.
-    if (issue.blocked && lane === "in_progress") {
-      setPending({ issue, lane, position });
+    if (lane === "in_progress") {
+      // Reattach: a live linked task gets a status move + focus, never a
+      // second spawn (ADR-0032).
+      if (issue.linkedTaskId) {
+        void move(issueId, lane, position);
+        focusLinkedTask(issue.linkedTaskId);
+        return;
+      }
+      // Dispatch spawns a real agent — blocked cards confirm first.
+      if (issue.blocked) {
+        setPending({ issue, lane, position });
+        return;
+      }
+      void dispatch(issue);
       return;
     }
     void move(issueId, lane, position);
@@ -143,9 +190,18 @@ export default function BoardView({ projectId }: { projectId: string }) {
                     {issue.provider && (
                       <span className="board-card-provider">{issue.provider}</span>
                     )}
-                    {issue.linkedTaskId && (
-                      <span className="board-card-dot" title="task linked" />
-                    )}
+                    {issue.linkedTaskId &&
+                      (() => {
+                        const task = (projectTasks ?? []).find(
+                          (t) => t.id === issue.linkedTaskId,
+                        );
+                        return (
+                          <span
+                            className={`board-card-dot${task ? ` status-${task.status}` : ""}`}
+                            title={task ? `task ${task.status}` : "task linked"}
+                          />
+                        );
+                      })()}
                     {issue.blocked && (
                       <span className="board-card-blocked" tabIndex={0}>
                         blocked
@@ -193,7 +249,11 @@ export default function BoardView({ projectId }: { projectId: string }) {
                 onClick={() => {
                   const { issue, lane, position } = pending;
                   setPending(null);
-                  void move(issue.id, lane, position);
+                  if (issue.linkedTaskId) {
+                    void move(issue.id, lane, position);
+                  } else {
+                    void dispatch(issue);
+                  }
                 }}
               >
                 Dispatch anyway

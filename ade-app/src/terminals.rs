@@ -302,6 +302,11 @@ impl<R: tauri::Runtime> TerminalManager<R> {
                             exit_code: exit.exit_code,
                         },
                     );
+                    // E17-03 auto-flip: an agent terminal exiting flips its
+                    // task's linked issues In Progress → In Review.
+                    if entry.agent.is_some() {
+                        crate::dispatch::flip_for_exited_agent(&app, &entry.task_id);
+                    }
                     // Lifecycle script terminals are retained after exit so
                     // a later tab attach still finds the entry and replays
                     // the output tail (E1-06). Plain terminals drop.

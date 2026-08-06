@@ -20,10 +20,22 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::Emitter as _;
+use tauri::{Emitter as _, Manager as _};
 
 use ade_acp::client::SessionUpdateEvent;
 use ade_acp::session::{LiveModels, PermissionRequestedEvent, SessionEvents};
+use ade_acp::transcript::TranscriptTurnOutcome;
+
+/// E17-03: the id of a turn that just settled Done (last committed turn,
+/// nothing in flight). Edge detection per conversation lives in
+/// TauriAcpEvents::flipped_turns.
+fn newly_done_turn(models: &LiveModels) -> Option<String> {
+    if models.active_turn.is_some() || models.session_state.is_generating {
+        return None;
+    }
+    let last = models.committed.last()?;
+    matches!(last.outcome, Some(TranscriptTurnOutcome::Done { .. })).then(|| last.id.clone())
+}
 
 /// `acp:update` payload — one routed raw `session/update`.
 #[derive(Debug, Clone, Serialize)]
@@ -88,11 +100,17 @@ pub fn permission_payload(
 /// managed as state; #32 passes it into `StartInput::events`.
 pub struct TauriAcpEvents {
     app: tauri::AppHandle,
+    /// E17-03: conversation_id → last turn id that flipped its linked
+    /// issue, so repeated snapshots of a settled turn flip exactly once.
+    flipped_turns: parking_lot::Mutex<std::collections::HashMap<String, String>>,
 }
 
 impl TauriAcpEvents {
     pub fn new(app: tauri::AppHandle) -> Arc<Self> {
-        Arc::new(Self { app })
+        Arc::new(Self {
+            app,
+            flipped_turns: parking_lot::Mutex::new(std::collections::HashMap::new()),
+        })
     }
 }
 
@@ -108,6 +126,18 @@ impl SessionEvents for TauriAcpEvents {
             "acp:transcript",
             transcript_payload(conversation_id, models),
         );
+        // E17-03 auto-flip: a turn settling Done flips the task's linked
+        // issues In Progress → In Review (once per turn).
+        if let Some(turn_id) = newly_done_turn(models) {
+            let mut flipped = self.flipped_turns.lock();
+            if flipped.get(conversation_id) != Some(&turn_id) {
+                flipped.insert(conversation_id.to_string(), turn_id);
+                drop(flipped);
+                if let Some(app) = self.app.try_state::<std::sync::Arc<crate::app::App>>() {
+                    crate::dispatch::flip_issues_for_conversation(&app, conversation_id);
+                }
+            }
+        }
     }
 
     fn permission_requested(&self, conversation_id: &str, event: &PermissionRequestedEvent) {

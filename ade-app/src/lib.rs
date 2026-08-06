@@ -7,6 +7,7 @@ mod acp_events;
 pub mod acp_runtime;
 pub mod app;
 pub mod commands;
+pub mod dispatch;
 mod indexer;
 pub mod terminals;
 mod watchers;
@@ -151,6 +152,7 @@ pub fn run() {
             commands::issues::issue_unlink,
             commands::issue_proposals::issue_parse_proposal,
             commands::issue_proposals::issue_apply_proposal,
+            commands::issues::issue_dispatch,
             commands::files::write_workspace_file,
             commands::conversations::create_conversation,
             commands::conversations::list_conversations,

@@ -141,6 +141,62 @@ pub struct IssuePatch {
     pub prd_section: Option<Option<String>>,
 }
 
+/// Builds the dispatch prompt packet (E17-03, #57; ADR-0032) — issue
+/// title, body, acceptance criteria, PRD by reference (the agent reads the
+/// file), one-line Done-blocker notes, and the branch/worktree footer.
+/// Empty sections are omitted entirely.
+pub fn build_dispatch_prompt(issue: &Issue, done_blocker_titles: &[String]) -> String {
+    let mut out = String::from(
+        "You are implementing an issue from the project board.\n\n\
+         # Issue\n",
+    );
+    out.push_str(&issue.title);
+    out.push('\n');
+    if let Some(body) = issue
+        .body
+        .as_deref()
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+    {
+        out.push('\n');
+        out.push_str(body);
+        out.push('\n');
+    }
+    if !issue.acceptance.is_empty() {
+        out.push_str("\n# Acceptance criteria\n");
+        for ac in &issue.acceptance {
+            out.push_str("- ");
+            out.push_str(ac);
+            out.push('\n');
+        }
+    }
+    let has_prd = issue.prd_path.is_some();
+    if has_prd || !done_blocker_titles.is_empty() {
+        out.push_str("\n# Context\n");
+        if let Some(path) = &issue.prd_path {
+            out.push_str("- PRD: ");
+            out.push_str(path);
+            if let Some(section) = &issue.prd_section {
+                out.push_str(" (section: ");
+                out.push_str(section);
+                out.push(')');
+            }
+            out.push_str(" — read it before starting.\n");
+        }
+        for title in done_blocker_titles {
+            out.push_str("- Dependency \"");
+            out.push_str(title);
+            out.push_str("\" is done — its work is in the default branch.\n");
+        }
+    }
+    out.push_str(
+        "\n# Conventions\n\
+         - You are on a dedicated branch in a git worktree of the project — stay on it.\n\
+         - Commit your changes as you go; leave the worktree clean when finished.\n",
+    );
+    out
+}
+
 pub struct IssueStore {
     db: Arc<dyn Db>,
     event_bus: Arc<dyn EventBus>,
@@ -217,6 +273,19 @@ impl IssueStore {
             .conn()
             .lock()
             .map_err(|e| Error::Internal(format!("db mutex poisoned: {e}")))
+    }
+
+    /// Issues whose dispatch link points at this task (E17-03 auto-flip).
+    pub fn list_by_linked_task(&self, task_id: &str) -> Result<Vec<Issue>, Error> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {COLUMNS}, {BLOCKED_SQL} FROM issues WHERE linked_task_id = ?1"
+        ))?;
+        let mut issues = stmt
+            .query_map([task_id], issue_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        attach_blockers(&conn, &mut issues)?;
+        Ok(issues)
     }
 
     /// Creates an issue appended to the end of its lane. Emits `IssueCreated`.
@@ -949,5 +1018,37 @@ mod tests {
             rx.try_recv().unwrap(),
             InternalEvent::IssueDeleted { ref id, .. } if id == &a.id
         ));
+    }
+
+    #[test]
+    fn dispatch_prompt_packets_sections_and_references() {
+        let store = fixture();
+        let mut issue = store
+            .create(NewIssue {
+                body: Some("Store tokens encrypted.".into()),
+                acceptance: vec!["round-trips a token".into()],
+                prd_path: Some("docs/prds/oauth.md".into()),
+                prd_section: Some("## Flow".into()),
+                ..new_issue("Token storage")
+            })
+            .unwrap();
+        let blockers = vec!["Design schema".to_string()];
+        let prompt = build_dispatch_prompt(&issue, &blockers);
+        assert!(prompt.contains("# Issue\nToken storage"));
+        assert!(prompt.contains("Store tokens encrypted."));
+        assert!(prompt.contains("- round-trips a token"));
+        assert!(prompt.contains("PRD: docs/prds/oauth.md (section: ## Flow)"));
+        assert!(prompt.contains("Dependency \"Design schema\" is done"));
+        assert!(prompt.contains("dedicated branch in a git worktree"));
+
+        // Empty sections are omitted, never rendered blank.
+        issue.body = None;
+        issue.acceptance = vec![];
+        issue.prd_path = None;
+        issue.prd_section = None;
+        let minimal = build_dispatch_prompt(&issue, &[]);
+        assert!(!minimal.contains("# Acceptance criteria"));
+        assert!(!minimal.contains("# Context"));
+        assert!(minimal.contains("# Conventions"));
     }
 }

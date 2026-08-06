@@ -915,6 +915,23 @@ export function issueUnlink(issueId: string, blockedById: string): Promise<Issue
   return invoke("issue_unlink", { issueId, blockedById });
 }
 
+/** Result of a board dispatch (E17-03): the linked task + prompt packet
+ * for the frontend to launch the agent with. `reattached` = the card's
+ * task is already live — focus it, never spawn a second. */
+export interface DispatchOutcomeDto {
+  task: TaskDto;
+  issue: IssueDto;
+  prompt: string;
+  provider: string;
+  reattached: boolean;
+}
+
+/** Drag-into-In-Progress: creates the linked task (worktree + prompt) or
+ * reattaches to the live one. */
+export function issueDispatch(issueId: string): Promise<DispatchOutcomeDto> {
+  return invoke("issue_dispatch", { issueId });
+}
+
 /** Project-scoped (PM chat) conversations (E17-04). */
 export function listProjectConversations(projectId: string): Promise<ConversationDto[]> {
   return invoke("list_project_conversations", { projectId });

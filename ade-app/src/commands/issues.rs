@@ -142,3 +142,14 @@ pub fn issue_unlink(
         .remove_dependency(&issue_id, &blocked_by_id)
         .map_err(String::from)
 }
+
+/// Drag-into-In-Progress (E17-03, #57): creates the linked task (worktree
+/// + issue-derived name + prompt packet) or reattaches to the live linked
+/// one. The frontend launches the agent terminal with the returned prompt.
+#[tauri::command]
+pub fn issue_dispatch(
+    app: State<'_, Arc<App>>,
+    issue_id: String,
+) -> Result<crate::dispatch::DispatchOutcome, String> {
+    crate::dispatch::issue_dispatch_core(&app, &issue_id)
+}

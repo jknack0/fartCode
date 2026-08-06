@@ -136,6 +136,18 @@
   background: var(--passive, #929192);
 }
 
+.board-card-dot.status-in_progress {
+  background: var(--status-in-progress, #dbae50);
+}
+
+.board-card-dot.status-done {
+  background: var(--status-review, #59b358);
+}
+
+.board-card-dot.status-review {
+  background: var(--info, #82baff);
+}
+
 .board-card-blocked {
   position: relative;
   font-size: 11px;
