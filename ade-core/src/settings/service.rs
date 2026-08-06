@@ -217,6 +217,7 @@ impl DbSettingsStore {
             tmux: base.tmux,
             auto_run_setup_script_on_task_creation: base.auto_run_setup_script_on_task_creation,
             auto_run_run_script_on_task_creation: base.auto_run_run_script_on_task_creation,
+            task_startup_command: base.task_startup_command,
             workspace_provider: base.workspace_provider,
             preserve_patterns: shareable.preserve_patterns,
             shell_setup: shareable.shell_setup,

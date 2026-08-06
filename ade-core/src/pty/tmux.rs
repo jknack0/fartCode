@@ -79,6 +79,28 @@ pub fn build_terminal_session_command(cwd: &std::path::Path, shell: &str) -> Str
     )
 }
 
+/// Variant of [`build_terminal_session_command`] that appends `args`
+/// (E2-13, #52): `cd '<cwd>' && exec '<program>' '<arg1>' '<arg2>'`. Needed
+/// for task startup commands, which spawn as `sh -c '<command>'` — the
+/// plain builder cannot carry the `-c` argument. Every token goes through
+/// the shared `shell_escape` (never ad-hoc quoting).
+pub fn build_terminal_session_command_args(
+    cwd: &std::path::Path,
+    program: &str,
+    args: &[String],
+) -> String {
+    let mut cmd = format!(
+        "cd {} && exec {}",
+        crate::shell_escape::single_quote(&cwd.to_string_lossy()),
+        crate::shell_escape::single_quote(program),
+    );
+    for arg in args {
+        cmd.push(' ');
+        cmd.push_str(&crate::shell_escape::single_quote(arg));
+    }
+    cmd
+}
+
 /// `tmux kill-session -t <name>` — the teardown side of the durability path
 /// (conversation delete / task stop / terminal task teardown). Best-effort:
 /// a session that already died is not an error.
@@ -346,6 +368,55 @@ mod tests {
     fn terminal_session_command_cds_and_execs() {
         let cmd = build_terminal_session_command(std::path::Path::new("/tmp/wt-1"), "/bin/zsh");
         assert_eq!(cmd, "cd '/tmp/wt-1' && exec '/bin/zsh'");
+    }
+
+    #[test]
+    fn terminal_session_command_args_carries_startup_command() {
+        // E2-13 (#52): startup commands spawn as `sh -c '<cmd>'` — the args
+        // variant must append each arg single-quoted (never ad-hoc quoting).
+        let dir = tempfile::tempdir().unwrap();
+        let cmd = build_terminal_session_command_args(
+            dir.path(),
+            "/bin/sh",
+            &["-c".to_string(), "printf %s startup-ok".to_string()],
+        );
+        assert_eq!(
+            cmd,
+            format!(
+                "cd '{}' && exec '/bin/sh' '-c' 'printf %s startup-ok'",
+                dir.path().to_string_lossy()
+            )
+        );
+        // The whole line round-trips through sh: the exec'd `sh -c` receives
+        // the command verbatim.
+        let output = std::process::Command::new("sh")
+            .args(["-c", &cmd])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(0));
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "startup-ok");
+
+        // A hostile command (embedded quotes, $ expansion, spaces) must reach
+        // the inner shell intact — single_quote each arg, no re-expansion.
+        // The script itself uses the canonical `'it'\''s'` quote-escape idiom
+        // and double-quoted $HOME (inner expansion must still happen).
+        let hostile = "printf '%s\\n' 'it'\\''s' \"fine\" \"$HOME\"";
+        let cmd = build_terminal_session_command_args(
+            dir.path(),
+            "/bin/sh",
+            &["-c".to_string(), hostile.to_string()],
+        );
+        let output = std::process::Command::new("sh")
+            .args(["-c", &cmd])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(0));
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            format!("it's\nfine\n{home}\n"),
+            "inner sh -c must receive the command verbatim (no outer expansion)"
+        );
     }
 
     #[test]

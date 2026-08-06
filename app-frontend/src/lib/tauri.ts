@@ -113,6 +113,7 @@ export interface ProjectSettingsDto {
   tmux?: boolean | null;
   autoRunSetupScriptOnTaskCreation?: boolean | null;
   autoRunRunScriptOnTaskCreation?: boolean | null;
+  taskStartupCommand?: string | null;
   workspaceProvider?: WorkspaceProviderDto | null;
   preservePatterns?: string[] | null;
   shellSetup?: string | null;

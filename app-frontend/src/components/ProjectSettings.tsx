@@ -162,6 +162,18 @@ export default function ProjectSettings({
           />
           Auto-run run script on task creation
         </label>
+        <label>
+          Task startup command
+          <input
+            value={s.taskStartupCommand ?? ""}
+            placeholder="e.g. omp"
+            onChange={(e) => set({ taskStartupCommand: e.target.value || null })}
+          />
+        </label>
+        <p className="hint">
+          Runs instead of a blank shell when a task terminal opens (in the
+          task worktree). Leave blank for a normal shell.
+        </p>
 
         <h3>Lifecycle scripts</h3>
         {(["setup", "run", "teardown"] as const).map((k) => (

@@ -328,6 +328,10 @@ pub struct BaseProjectSettings {
     pub tmux: Option<bool>,
     pub auto_run_setup_script_on_task_creation: Option<bool>,
     pub auto_run_run_script_on_task_creation: Option<bool>,
+    /// Command run INSTEAD of a blank shell when a task terminal opens
+    /// (E2-13, #52). `None`/blank = current behavior (`$SHELL`). Local
+    /// preference, so deliberately NOT in the shareable subset.
+    pub task_startup_command: Option<String>,
     pub workspace_provider: Option<WorkspaceProvider>,
 }
 
@@ -384,6 +388,9 @@ pub struct ProjectSettings {
     pub tmux: Option<bool>,
     pub auto_run_setup_script_on_task_creation: Option<bool>,
     pub auto_run_run_script_on_task_creation: Option<bool>,
+    /// Command run instead of a blank shell when a task terminal opens
+    /// (E2-13, #52).
+    pub task_startup_command: Option<String>,
     pub workspace_provider: Option<WorkspaceProvider>,
     // -- shareable (.ade.json-synced) --
     pub preserve_patterns: Option<Vec<String>>,
@@ -403,6 +410,7 @@ impl ProjectSettings {
             tmux: self.tmux,
             auto_run_setup_script_on_task_creation: self.auto_run_setup_script_on_task_creation,
             auto_run_run_script_on_task_creation: self.auto_run_run_script_on_task_creation,
+            task_startup_command: self.task_startup_command.clone(),
             workspace_provider: self.workspace_provider.clone(),
         }
     }

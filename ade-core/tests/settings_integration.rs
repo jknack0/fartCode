@@ -268,6 +268,72 @@ fn test_unparseable_ade_json_falls_back() {
 }
 
 #[test]
+fn test_task_startup_command_round_trip_and_not_shareable() {
+    let fx = Fixture::new();
+
+    // Unset → None (blank-shell behavior).
+    let settings = fx
+        .settings
+        .get_project_settings(&fx.project_id, &fx.repo)
+        .unwrap();
+    assert_eq!(settings.task_startup_command, None);
+
+    // Set → round-trips through the DB (base field).
+    let local = ProjectSettings {
+        task_startup_command: Some("omp".into()),
+        ..Default::default()
+    };
+    fx.settings
+        .update_project_settings(&fx.project_id, &fx.repo, &local)
+        .unwrap();
+    let settings = fx
+        .settings
+        .get_project_settings(&fx.project_id, &fx.repo)
+        .unwrap();
+    assert_eq!(settings.task_startup_command.as_deref(), Some("omp"));
+
+    // Clearing restores None.
+    fx.settings
+        .update_project_settings(&fx.project_id, &fx.repo, &ProjectSettings::default())
+        .unwrap();
+    let settings = fx
+        .settings
+        .get_project_settings(&fx.project_id, &fx.repo)
+        .unwrap();
+    assert_eq!(settings.task_startup_command, None);
+
+    // Base, not shareable: when the file IS written (a shareable field
+    // forces it), taskStartupCommand must not leak into .ade.json.
+    let local = ProjectSettings {
+        task_startup_command: Some("omp --task".into()),
+        shell_setup: Some("source .envrc".into()),
+        ..Default::default()
+    };
+    fx.settings
+        .update_project_settings(&fx.project_id, &fx.repo, &local)
+        .unwrap();
+    assert!(fx.settings.share_with_team(&fx.project_id).unwrap());
+    let config = read_json(&fx.ade_json());
+    assert_eq!(
+        config["shellSetup"],
+        serde_json::json!("source .envrc"),
+        "shareable field must be written"
+    );
+    assert!(
+        !config
+            .as_object()
+            .unwrap()
+            .contains_key("taskStartupCommand"),
+        "taskStartupCommand is a local preference and must not be shared"
+    );
+    let settings = fx
+        .settings
+        .get_project_settings(&fx.project_id, &fx.repo)
+        .unwrap();
+    assert_eq!(settings.task_startup_command.as_deref(), Some("omp --task"));
+}
+
+#[test]
 fn test_ade_json_filtered_from_preserve_patterns() {
     let fx = Fixture::new();
     fx.write_ade_json(r#"{"preservePatterns": [".env", ".ade.json", "keep.txt"]}"#);

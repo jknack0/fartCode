@@ -48,11 +48,32 @@ fn resolve_task_context(db: &Arc<dyn Db>, task_id: &str) -> Result<TaskContext, 
     .ok_or_else(|| format!("task not found: {task_id}"))
 }
 
+/// Program + args for a task's terminal (E2-13, #52): the project's
+/// `taskStartupCommand` replaces the blank shell when set, run via
+/// `sh -c '<command>'` so flags and compound commands work; `None`/blank
+/// keeps today's behavior (`$SHELL`). The command is trimmed for the
+/// blank check and execution.
+fn terminal_program(
+    settings: &ade_core::settings::ProjectSettings,
+    shell: &str,
+) -> (String, Vec<String>) {
+    match settings.task_startup_command.as_deref() {
+        Some(cmd) if !cmd.trim().is_empty() => (
+            "/bin/sh".to_string(),
+            vec!["-c".to_string(), cmd.trim().to_string()],
+        ),
+        _ => (shell.to_string(), Vec::new()),
+    }
+}
+
 /// Opens a shell in the task's workspace. Returns the terminal id.
 ///
-/// The shell runs under tmux when the project's `tmux` setting is on AND a
-/// tmux binary resolves (ADR-0025): the session survives an app crash and
-/// the next open reattaches it.
+/// With the project's `taskStartupCommand` set (E2-13, #52), the terminal
+/// runs that command instead of a blank shell — e.g. `omp` to start the
+/// agent CLI in the task worktree on open. The shell runs under tmux when
+/// the project's `tmux` setting is on AND a tmux binary resolves
+/// (ADR-0025): the session survives an app crash and the next open
+/// reattaches it.
 #[tauri::command]
 pub fn terminal_open(
     terminals: State<'_, Arc<TerminalManager>>,
@@ -62,21 +83,23 @@ pub fn terminal_open(
     cols: u16,
 ) -> Result<String, String> {
     let ctx = resolve_task_context(&app.db, &task_id)?;
-    // Effective tmux flag: defaults < .ade.json < DB (settings precedence).
-    let tmux = app
+    // Effective project settings: defaults < .ade.json < DB (precedence).
+    // A failed read keeps today's behavior (no tmux, blank shell).
+    let settings = app
         .settings
         .get_project_settings(&ctx.project_id, std::path::Path::new(&ctx.project_path))
-        .map(|s| s.tmux.unwrap_or(false))
-        .unwrap_or(false);
+        .unwrap_or_default();
+    let tmux = settings.tmux.unwrap_or(false);
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    let (program, args) = terminal_program(&settings, &shell);
     terminals
         .open(TerminalSpec {
             task_id: &task_id,
             project_id: &ctx.project_id,
             agent: None,
             tmux,
-            program: &shell,
-            args: &[],
+            program: &program,
+            args: &args,
             cwd: std::path::Path::new(&ctx.cwd),
             rows,
             cols,
@@ -195,4 +218,51 @@ pub fn terminal_surviving(
         return Ok(0);
     }
     Ok(terminals.surviving_session_count(&ctx.project_id, &task_id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::terminal_program;
+    use ade_core::settings::ProjectSettings;
+
+    #[test]
+    fn blank_settings_run_the_shell() {
+        let (program, args) = terminal_program(&ProjectSettings::default(), "/bin/zsh");
+        assert_eq!(program, "/bin/zsh");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn startup_command_replaces_the_shell_via_sh_c() {
+        let settings = ProjectSettings {
+            task_startup_command: Some("omp --task".into()),
+            ..Default::default()
+        };
+        let (program, args) = terminal_program(&settings, "/bin/zsh");
+        assert_eq!(program, "/bin/sh");
+        assert_eq!(args, vec!["-c".to_string(), "omp --task".to_string()]);
+    }
+
+    #[test]
+    fn blank_or_whitespace_command_keeps_the_shell() {
+        for cmd in [Some(String::new()), Some("   ".to_string()), None] {
+            let settings = ProjectSettings {
+                task_startup_command: cmd.clone(),
+                ..Default::default()
+            };
+            let (program, args) = terminal_program(&settings, "/bin/zsh");
+            assert_eq!(program, "/bin/zsh", "cmd={cmd:?}");
+            assert!(args.is_empty(), "cmd={cmd:?}");
+        }
+    }
+
+    #[test]
+    fn command_is_trimmed_before_run() {
+        let settings = ProjectSettings {
+            task_startup_command: Some("  omp  ".into()),
+            ..Default::default()
+        };
+        let (_, args) = terminal_program(&settings, "/bin/zsh");
+        assert_eq!(args, vec!["-c".to_string(), "omp".to_string()]);
+    }
 }

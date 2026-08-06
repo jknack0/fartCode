@@ -4,6 +4,31 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## Current state (2026-08-06, E2-13 task startup command)
+
+- **Per-project `taskStartupCommand` (#52) shipped.** Project settings gain a
+  BASE (non-shareable, DB-only) `taskStartupCommand` — `share_with_team`
+  never writes it to `.ade.json`. `terminal_open` now does ONE effective
+  settings read (tmux flag + startup command), and when the command is set
+  spawns `sh -c '<cmd>'` INSTEAD of `$SHELL` (replace-the-shell semantics —
+  terminal exits when the command exits, like agent terminals). Both paths
+  covered: plain PTY (program+args already flowed) and tmux durability
+  (new `build_terminal_session_command_args` in `ade-core::pty::tmux` —
+  args were previously documented as not passed into sessions; the plain
+  `build_terminal_session_command` is unchanged). Pure decision fn
+  `terminal_program(&ProjectSettings, shell)` in
+  `ade-app/src/commands/terminals.rs` (trim, blank→shell). UI: "Task startup
+  command" input in ProjectSettings.tsx (placeholder `e.g. omp`), DTO field
+  `taskStartupCommand`. Tests: terminal_program unit tests, tmux args
+  builder round-trip through real sh (hostile quotes + $HOME), settings
+  round-trip incl. not-shareable assert, and a real PTY smoke in
+  ade-terminal (spawn `sh -c` in task cwd — macOS /private realpath trap
+  on cwd compare, canonicalize). Browser-smoke verified save→reopen
+  persistence. ⌘⇧O `terminal_open_agent('omp')` unchanged — explicit agent
+  tab composes with the default.
+- Next: **#47** E4-07 PR section (L, GitHub client) — last E4 frontier
+  with #49(⇐47), #51(⇐50).
+
 ## Project-level pull (2026-08-06, left nav)
 
 - **Sidebar project rows carry a pull action** — `project_git_pull(project_id)`

@@ -121,7 +121,8 @@ impl TerminalManager {
     /// With `spec.tmux` on AND a resolvable tmux binary (ADR-0025) the PTY
     /// runs the create-or-attach shell line for slot `{project}:{task}:
     /// terminal:{slot}` with `spec.program` as the session's foreground
-    /// command (`spec.args` are not passed into a tmux session) — the tmux
+    /// command; non-empty `spec.args` are appended to the session command
+    /// (E2-13, #52 — startup commands spawn as `sh -c '<cmd>'`). The tmux
     /// server owns it, so it survives an app crash; the next `open`
     /// reattaches.
     pub fn open(&self, spec: TerminalSpec<'_>) -> Result<String, ade_core::Error> {
@@ -146,7 +147,14 @@ impl TerminalManager {
                     let slot = self.pick_slot(project_id, task_id);
                     let session_id = format!("{project_id}:{task_id}:terminal:{slot}");
                     let name = ade_core::pty::tmux::make_tmux_session_name(&session_id);
-                    let inner = ade_core::pty::tmux::build_terminal_session_command(cwd, program);
+                    // E2-13 (#52): startup commands spawn as `sh -c '<cmd>'`,
+                    // which the plain builder cannot carry — args go into the
+                    // session command too.
+                    let inner = if args.is_empty() {
+                        ade_core::pty::tmux::build_terminal_session_command(cwd, program)
+                    } else {
+                        ade_core::pty::tmux::build_terminal_session_command_args(cwd, program, args)
+                    };
                     let line = ade_core::pty::tmux::build_tmux_shell_line(&name, &inner);
                     // tmux needs TERM; portable-pty sets none and Dock-launched
                     // apps may inherit no TERM either. PATH overlay covers the

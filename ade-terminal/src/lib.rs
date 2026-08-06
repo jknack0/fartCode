@@ -348,6 +348,52 @@ mod tests {
         assert!(out.contains("hello-from-pty"), "got output: {out:?}");
     }
 
+    /// E2-13 (#52) smoke: the exact spawn shape `terminal_open` builds for a
+    /// configured task startup command — `/bin/sh -c '<command>'` in the
+    /// task cwd, inherited env, no args otherwise. The command must run in
+    /// the cwd, its output must arrive through the PTY, and the terminal
+    /// exits when the command exits (replace-the-shell semantics).
+    #[test]
+    fn spawns_startup_command_via_sh_c() {
+        let mgr = PortablePtyManager;
+        let tmp = tempfile::tempdir().unwrap();
+        let mut handle = mgr
+            .spawn(
+                "/bin/sh",
+                &[
+                    "-c".to_string(),
+                    "pwd > startup-cwd.txt && echo startup-ran".to_string(),
+                ],
+                tmp.path(),
+                &[],
+                PtySize::default(),
+                EnvPolicy::Inherit,
+            )
+            .unwrap();
+        let exit = handle
+            .wait_exit(Duration::from_secs(10))
+            .expect("startup command exits");
+        assert!(exit.is_success(), "{exit:?}");
+        let _ = handle.flush();
+
+        // macOS /tmp is a symlink to /private/tmp — compare realpaths.
+        let expected_cwd = std::fs::canonicalize(tmp.path()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("startup-cwd.txt"))
+                .unwrap()
+                .trim(),
+            expected_cwd.to_string_lossy(),
+            "startup command must run in the task workspace"
+        );
+        let mut buf = Vec::new();
+        let mut out = String::new();
+        while handle.try_read(&mut buf).unwrap_or(false) {
+            out.push_str(&String::from_utf8_lossy(&buf));
+            buf.clear();
+        }
+        assert!(out.contains("startup-ran"), "got output: {out:?}");
+    }
+
     #[test]
     fn env_reaches_the_child() {
         let mgr = PortablePtyManager;
