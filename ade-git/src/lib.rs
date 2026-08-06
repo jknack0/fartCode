@@ -8,6 +8,7 @@
 //! violating the leaf rule; this crate provides the implementations and
 //! re-exports the trait.
 
+pub mod commit;
 pub mod diff;
 pub mod git2ops;
 pub mod stage;
@@ -35,7 +36,7 @@ const NON_INTERACTIVE_ENV: &[(&str, &str)] = &[
     ("SSH_ASKPASS", ""),
 ];
 
-fn git_cmd(path: Option<&Path>) -> Command {
+pub(crate) fn git_cmd(path: Option<&Path>) -> Command {
     let mut cmd = Command::new("git");
     for (k, v) in NON_INTERACTIVE_ENV {
         cmd.env(k, v);

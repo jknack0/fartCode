@@ -4,6 +4,45 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## Current state (2026-08-05, E4-06 commit card)
+
+- **E4-06 Commit card (#46) shipped:** bottom-of-Changes-sidebar card —
+  message input + Commit / Commit & Push / Commit & Create PR.
+  Backend: new `ade_git::commit` module (free fns like stage.rs — NOT
+  GitOps trait methods; commit/push are UI mutations, stage.rs precedent).
+  `commit()` = `commit -m` + rev-parse HEAD, empty msg rejected pre-spawn;
+  `push()` = upstream-configured → plain `git push`, else `push -u
+  <remote> <branch>` (reference publishBranch), returns combined
+  stdout+stderr (PR URLs live on stderr); `state()` = CommitState DTO
+  (branch/remote/hasRemote/published/prOpen/canCreatePr) with pushRemote
+  resolved workspace→task→project settings `effective_push_remote()`;
+  `create_pr()` = Phase 0 stub-level integration: guard → push-if-
+  unpublished → GitHub compare URL (`/compare/<branch>?expand=1`, ssh +
+  https remotes) opened in the browser via @tauri-apps/plugin-shell
+  (JS dep added; Rust plugin + `shell:allow-open` capability already
+  registered). **PrLookup trait + StubPrLookup** = the PR-open guard seam
+  (always None until E4-07/E8); guard failures degrade to "proceed",
+  never fail the state read. Commands: git_commit_state/git_commit/
+  git_push/git_create_pr.
+  Frontend: `store/commit-state.ts` (per-workspace, `__commitStateStore`
+  seam; refetch rides the changes.ts 150ms event debounce — ONE
+  subscription, timer body refreshes both stores), `CommitCard.tsx` in
+  ChangesSidebar (rendered only when workspaceId && snapshot). Disabled
+  matrix: empty msg | nothing staged | detached HEAD disable Commit;
+  push additionally needs hasRemote; PR-open → Create PR button replaced
+  by "PR already open — push instead" note. Errors inline
+  (.commit-error), message kept for retry, cleared on success.
+  Deliberate reference deviations: no autoStage (card commits exactly
+  the staged set; Stage all lives in panel header), no description
+  field, explicit buttons instead of split button + remembered action.
+  Browser smoke (mocked backend, per-workspace state scenarios by id):
+  all 4 matrix rows + commit/push happy path + error surfacing verified.
+  13 ade-git tests (incl. bare-remote upstream fixture, mocked PrLookup
+  guard, offline-safe create_pr).
+- Next: **#48** E4-08 footer git actions (fetch/pull/push/publish/
+  add-remote — reuses commit.rs `push()` + `state()` patterns) or **#50**
+  E4-10 line comments; then #47(⇐#46) → #49 PR chain.
+
 ## Current state (2026-08-05, selection → agent)
 
 - **Terminal reattach on frontend reload (fd5956c):** vite HMR/webview

@@ -659,6 +659,45 @@ export function gitDiscard(workspaceId: string, paths: string[]): Promise<void> 
   return invoke("git_discard", { workspaceId, paths });
 }
 
+// -- E4-06 commit card --------------------------------------------------------
+
+/** Repo state driving the commit card's disabled matrix + PR-open guard. */
+export interface GitCommitStateDto {
+  branch: string | null;
+  remote: string | null;
+  hasRemote: boolean;
+  published: boolean;
+  prOpen: boolean;
+  canCreatePr: boolean;
+}
+export interface GitCommitResultDto {
+  hash: string;
+}
+export interface GitPushOutcomeDto {
+  branch: string;
+  remote: string;
+  setUpstream: boolean;
+  prUrl: string | null;
+}
+
+export function gitCommitState(workspaceId: string): Promise<GitCommitStateDto> {
+  return invoke("git_commit_state", { workspaceId });
+}
+export function gitCommit(workspaceId: string, message: string): Promise<GitCommitResultDto> {
+  return invoke("git_commit", { workspaceId, message });
+}
+export interface GitCreatePrOutcomeDto {
+  url: string;
+  pushed: boolean;
+}
+
+export function gitPush(workspaceId: string): Promise<GitPushOutcomeDto> {
+  return invoke("git_push", { workspaceId });
+}
+export function gitCreatePr(workspaceId: string): Promise<GitCreatePrOutcomeDto> {
+  return invoke("git_create_pr", { workspaceId });
+}
+
 /** Writes the worktree side of a diff back to disk (E4-05 ⌘S). */
 export function writeWorkspaceFile(
   workspaceId: string,

@@ -6,10 +6,12 @@
 import { useEffect, useState } from "react";
 import { openDiffTab } from "../lib/diff-tabs";
 import { useChanges } from "../store/changes";
+import { useCommitState } from "../store/commit-state";
 import { useSidebar } from "../store/sidebar";
 import { useUi } from "../store/ui";
 import { hint } from "../lib/useCommands";
 import { provisionTask, type DiffSide, type GitChangeDto } from "../lib/tauri";
+import CommitCard from "./CommitCard";
 import { IconBranch, IconClose, IconDiscard, IconMinus, IconPlus } from "./icons";
 
 const GLYPH: Record<GitChangeDto["status"], string> = {
@@ -33,7 +35,10 @@ export default function ChangesSidebar() {
   const [provisioning, setProvisioning] = useState(false);
 
   useEffect(() => {
-    if (open && workspaceId) void useChanges.getState().ensure(workspaceId);
+    if (open && workspaceId) {
+      void useChanges.getState().ensure(workspaceId);
+      void useCommitState.getState().ensure(workspaceId);
+    }
   }, [open, workspaceId]);
 
   if (!open || !taskId) return null;
@@ -138,6 +143,8 @@ export default function ChangesSidebar() {
           />
         </div>
       ) : null}
+
+      {workspaceId && snapshot && <CommitCard workspaceId={workspaceId} />}
     </aside>
   );
 }

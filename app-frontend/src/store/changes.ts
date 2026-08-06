@@ -3,6 +3,7 @@
 // (stage/unstage/discard) invoke the command and refetch immediately so the
 // UI feels synchronous; the watcher's event then confirms the same state.
 import { create } from "zustand";
+import { useCommitState } from "./commit-state";
 import {
   gitDiscard,
   gitStage,
@@ -124,6 +125,10 @@ export function wireChangesEvents(): () => void {
       setTimeout(() => {
         pendingRefetch.delete(workspaceId);
         void useChanges.getState().refetch(workspaceId);
+        // E4-06: the commit card's repo state rides the same debounce.
+        if (workspaceId in useCommitState.getState().byWorkspace) {
+          void useCommitState.getState().refetch(workspaceId);
+        }
       }, 150),
     );
   }).then((off) => {
