@@ -136,6 +136,7 @@ pub fn run() {
             commands::git::git_publish,
             commands::git::git_add_remote,
             commands::git::project_git_pull,
+            commands::git::project_github_url,
             commands::line_comments::add_line_comment,
             commands::line_comments::list_line_comments,
             commands::line_comments::resolve_line_comment,

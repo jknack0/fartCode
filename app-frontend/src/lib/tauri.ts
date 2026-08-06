@@ -752,6 +752,12 @@ export function projectGitPull(projectId: string): Promise<void> {
   return invoke("project_git_pull", { projectId });
 }
 
+/** The project's browsable GitHub URL, or null when the base remote isn't
+ * GitHub (project view hides the icon). */
+export function projectGithubUrl(projectId: string): Promise<string | null> {
+  return invoke("project_github_url", { projectId });
+}
+
 /** Writes the worktree side of a diff back to disk (E4-05 ⌘S). */
 export function writeWorkspaceFile(
   workspaceId: string,

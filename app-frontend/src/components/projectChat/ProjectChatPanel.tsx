@@ -6,6 +6,8 @@
 import { useEffect, useState } from "react";
 import { acpStart, listProviders } from "../../lib/tauri";
 import { useConversations } from "../../store/conversations";
+import { useUi } from "../../store/ui";
+import { IconChevron } from "../icons";
 import ConversationView from "../ConversationView";
 
 export default function ProjectChatPanel({ projectId }: { projectId: string }) {
@@ -38,7 +40,17 @@ export default function ProjectChatPanel({ projectId }: { projectId: string }) {
 
   return (
     <aside className="project-chat">
-      <header className="project-chat-header">Project chat</header>
+      <header className="project-chat-header">
+        <span>Project chat</span>
+        <button
+          className="project-chat-minimize"
+          title="Hide project chat (⌘⇧2)"
+          aria-label="Hide project chat"
+          onClick={() => useUi.getState().setProjectChatOpen(false)}
+        >
+          <IconChevron />
+        </button>
+      </header>
       {error && <p className="error">{error}</p>}
       {conversationId ? (
         <ConversationView conversationId={conversationId} ownerKey={ownerKey} active />

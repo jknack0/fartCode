@@ -323,9 +323,9 @@ impl AcpRuntime {
             .map_err(core_err)?
             .ok_or_else(|| Error::ConversationNotFound(conversation_id.to_string()))?;
         let Some(task_id) = &conv.task_id else {
-            return Err(Error::InvalidState(
-                "project-scoped conversations have no workspace yet".into(),
-            ));
+            // Project-scoped conversation (E17-04 PM chat): the project
+            // root IS the workspace — no task, no worktree.
+            return self.project_path(&conv.project_id);
         };
         let task = self
             .tasks
@@ -352,20 +352,26 @@ impl AcpRuntime {
                 tracing::warn!(workspace = %workspace_id, "worktree missing on disk; falling back to project root");
             }
         }
-        let project_path: String = self
+        self.project_path(&task.project_id)
+    }
+
+    /// Project root path lookup — shared by the task fallback (no
+    /// materialized worktree) and the project-scoped conversation path.
+    fn project_path(&self, project_id: &str) -> Result<PathBuf, Error> {
+        let path: String = self
             .db
             .conn()
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .query_row(
                 "SELECT path FROM projects WHERE id = ?1",
-                [&task.project_id],
+                [project_id],
                 |row| row.get::<_, String>(0),
             )
             .optional()
             .map_err(|e| Error::InvalidState(e.to_string()))?
-            .ok_or_else(|| Error::InvalidState(format!("project {} not found", task.project_id)))?;
-        Ok(PathBuf::from(project_path))
+            .ok_or_else(|| Error::InvalidState(format!("project {project_id} not found")))?;
+        Ok(PathBuf::from(path))
     }
 
     /// Server-side provider env: keyring credentials for the default
@@ -387,5 +393,117 @@ impl AcpRuntime {
             .iter()
             .filter_map(|key| std::env::var(key).ok().map(|value| (key.clone(), value)))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ade_acp::session::{LiveModels, PermissionRequestedEvent, SessionEvents};
+    use ade_acp::SessionUpdateEvent;
+    use ade_core::conversations::model::{ConversationScope, ConversationType};
+    use ade_core::conversations::{
+        ConversationStore, CreateConversationParams, DbConversationStore,
+    };
+    use ade_core::db::{Db, SqliteDb};
+    use ade_core::events::BroadcastEventBus;
+    use ade_core::provider_accounts::ProviderAccountStore;
+    use ade_core::tasks::{DbTaskStore, TaskStore};
+
+    struct NoopEvents;
+    impl SessionEvents for NoopEvents {
+        fn update(&self, _conversation_id: &str, _event: &SessionUpdateEvent) {}
+        fn transcript_changed(&self, _conversation_id: &str, _models: &LiveModels) {}
+        fn permission_requested(&self, _conversation_id: &str, _event: &PermissionRequestedEvent) {}
+    }
+
+    fn fixture() -> (Arc<AcpRuntime>, Arc<dyn Db>) {
+        let db: Arc<dyn Db> = SqliteDb::init(Some(":memory:")).unwrap();
+        let bus = Arc::new(BroadcastEventBus::new(16));
+        let conversations: Arc<dyn ConversationStore> =
+            Arc::new(DbConversationStore::new(db.clone(), bus.clone()));
+        let tasks: Arc<dyn TaskStore> = Arc::new(DbTaskStore::new(db.clone(), bus.clone()));
+        let provider_accounts = Arc::new(ProviderAccountStore::new(db.clone()));
+        let runtime = AcpRuntime::new(
+            conversations,
+            tasks,
+            db.clone(),
+            provider_accounts,
+            Arc::new(NoopEvents),
+            Arc::new(|id| Err(Error::InvalidState(format!("no adapter in tests: {id}")))),
+        );
+        (runtime, db)
+    }
+
+    fn seed_project(db: &Arc<dyn Db>) {
+        db.conn()
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO projects (id, name, path) VALUES ('p1', 'proj', '/tmp/proj')",
+                [],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn project_scoped_conversation_resolves_to_project_root() {
+        let (runtime, db) = fixture();
+        seed_project(&db);
+        // The E17-04 regression: task_id NULL used to hard-error with
+        // "project-scoped conversations have no workspace yet".
+        let conv = runtime
+            .conversations
+            .create(CreateConversationParams {
+                id: None,
+                project_id: "p1".into(),
+                task_id: None,
+                scope: Some(ConversationScope::Project),
+                provider: Some("claude".into()),
+                title: "Project chat".into(),
+                auto_approve: None,
+                model: None,
+                initial_prompt: None,
+                initial_queue: None,
+                is_initial_conversation: false,
+                r#type: Some(ConversationType::Acp),
+            })
+            .unwrap();
+        let cwd = runtime.resolve_cwd(&conv.id).unwrap();
+        assert_eq!(cwd, PathBuf::from("/tmp/proj"));
+    }
+
+    #[test]
+    fn task_without_worktree_falls_back_to_project_root() {
+        let (runtime, db) = fixture();
+        seed_project(&db);
+        db.conn()
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO tasks (id, project_id, name, status)
+                 VALUES ('t1', 'p1', 'task', 'in_progress')",
+                [],
+            )
+            .unwrap();
+        let conv = runtime
+            .conversations
+            .create(CreateConversationParams {
+                id: None,
+                project_id: "p1".into(),
+                task_id: Some("t1".into()),
+                scope: None,
+                provider: Some("claude".into()),
+                title: "Task chat".into(),
+                auto_approve: None,
+                model: None,
+                initial_prompt: None,
+                initial_queue: None,
+                is_initial_conversation: false,
+                r#type: Some(ConversationType::Acp),
+            })
+            .unwrap();
+        let cwd = runtime.resolve_cwd(&conv.id).unwrap();
+        assert_eq!(cwd, PathBuf::from("/tmp/proj"));
     }
 }

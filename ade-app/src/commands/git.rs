@@ -222,6 +222,27 @@ pub fn project_git_pull(app: State<'_, Arc<App>>, project_id: String) -> Result<
     ade_git::remote::pull(&project.path).map_err(String::from)
 }
 
+/// The project's browsable GitHub URL (project view's GitHub affordance):
+/// the effective base remote's URL normalized to https. `None` when there's
+/// no such remote or it isn't GitHub — the UI hides the icon.
+#[tauri::command]
+pub fn project_github_url(
+    app: State<'_, Arc<App>>,
+    project_id: String,
+) -> Result<Option<String>, String> {
+    let project = app
+        .projects
+        .get(&project_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("project not found: {project_id}"))?;
+    let settings = app
+        .settings
+        .get_project_settings(&project_id, &project.path)
+        .map_err(|e| e.to_string())?;
+    let url = ade_git::remote::remote_url(&project.path, settings.effective_base_remote());
+    Ok(url.as_deref().and_then(ade_git::remote::github_https_url))
+}
+
 /// Effective `pushRemote` of the project owning `workspace_id` (reference
 /// `getPushRemote`: pushRemote ?? baseRemote ?? "origin"). Resolves
 /// workspace → task → project; falls back to "origin" for workspaces not

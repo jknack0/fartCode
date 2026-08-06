@@ -24,6 +24,35 @@ pub fn fetch(worktree: &Path, remote: &str) -> Result<(), Error> {
     run(worktree, &["fetch", "-q", remote]).map(|_| ())
 }
 
+/// `git remote get-url <remote>` — `Ok(None)` when the remote doesn't
+/// exist (nonzero exit), never an error for a missing remote.
+pub fn remote_url(worktree: &Path, remote: &str) -> Option<String> {
+    let out = git_stdout_ok(worktree, &["remote", "get-url", remote])?;
+    let url = String::from_utf8_lossy(&out).trim().to_string();
+    if url.is_empty() {
+        None
+    } else {
+        Some(url)
+    }
+}
+
+/// Normalizes a git remote URL to a browsable GitHub URL — scp-style
+/// (`git@github.com:owner/repo.git`), ssh://, and https:// inputs all map
+/// to `https://github.com/owner/repo`. Non-GitHub hosts yield `None`
+/// (the UI hides the affordance entirely).
+pub fn github_https_url(remote_url: &str) -> Option<String> {
+    let path = remote_url
+        .strip_prefix("git@github.com:")
+        .or_else(|| remote_url.strip_prefix("https://github.com/"))
+        .or_else(|| remote_url.strip_prefix("http://github.com/"))
+        .or_else(|| remote_url.strip_prefix("ssh://git@github.com/"))?;
+    let path = path.trim_end_matches('/').trim_end_matches(".git");
+    if path.is_empty() {
+        return None;
+    }
+    Some(format!("https://github.com/{path}"))
+}
+
 /// `git pull --ff-only` (ticket: "ff-only default; surface non-ff as
 /// error"). Refuses to merge diverged history — the footer shows git's
 /// stderr verbatim ("Not possible to fast-forward, ...").
@@ -260,5 +289,35 @@ mod tests {
         git(repo.path(), &["checkout", "--detach", head.as_str()]);
         let err = publish(repo.path(), "origin").unwrap_err();
         assert!(err.to_string().contains("detached"));
+    }
+
+    #[test]
+    fn github_https_url_normalizes_remote_shapes() {
+        assert_eq!(
+            github_https_url("git@github.com:jknack0/ade.git"),
+            Some("https://github.com/jknack0/ade".to_string())
+        );
+        assert_eq!(
+            github_https_url("https://github.com/jknack0/ade.git"),
+            Some("https://github.com/jknack0/ade".to_string())
+        );
+        assert_eq!(
+            github_https_url("ssh://git@github.com/jknack0/ade"),
+            Some("https://github.com/jknack0/ade".to_string())
+        );
+        assert_eq!(
+            github_https_url("https://github.com/jknack0/ade/"),
+            Some("https://github.com/jknack0/ade".to_string())
+        );
+        // Non-GitHub hosts hide the affordance.
+        assert_eq!(github_https_url("git@gitlab.com:jknack0/ade.git"), None);
+        assert_eq!(github_https_url("https://example.com/x/y"), None);
+    }
+
+    #[test]
+    fn remote_url_missing_remote_is_none() {
+        let (repo, _bare) = remote_fixture();
+        assert!(remote_url(repo.path(), "no-such-remote").is_none());
+        assert!(remote_url(repo.path(), "origin").is_some());
     }
 }

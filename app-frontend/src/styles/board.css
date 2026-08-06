@@ -6,6 +6,53 @@
   min-width: 0;
 }
 
+.project-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.project-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--background-secondary-3);
+}
+
+.project-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted, #b8b7b8);
+}
+
+.project-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.project-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--passive, #929192);
+}
+
+.project-action:hover {
+  background: var(--background-2);
+  color: var(--foreground, #e9e8e8);
+}
+
+.project-action.active {
+  color: var(--foreground, #e9e8e8);
+  background: var(--background-2);
+}
+
 .board {
   display: grid;
   grid-template-columns: repeat(5, minmax(180px, 1fr));

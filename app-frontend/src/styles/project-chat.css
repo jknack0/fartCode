@@ -11,11 +11,29 @@
 }
 
 .project-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 8px 12px;
   font-size: 12px;
   font-weight: 600;
   color: var(--muted, #b8b7b8);
   border-bottom: 1px solid var(--background-secondary-3);
+}
+
+.project-chat-minimize {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--passive, #929192);
+}
+
+.project-chat-minimize:hover {
+  background: var(--background-2);
+  color: var(--foreground, #e9e8e8);
 }
 
 /* -- E17-04 proposal approval card -- */
