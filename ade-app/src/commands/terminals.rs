@@ -14,13 +14,13 @@ use crate::terminals::{TerminalManager, TerminalSpec};
 /// Resolves the task's terminal context: owning project (id + path, for
 /// project-settings reads) and working directory (worktree path when the
 /// task has a workspace with a materialized path, else the project path).
-struct TaskContext {
-    project_id: String,
-    project_path: String,
-    cwd: String,
+pub(crate) struct TaskContext {
+    pub(crate) project_id: String,
+    pub(crate) project_path: String,
+    pub(crate) cwd: String,
 }
 
-fn resolve_task_context(db: &Arc<dyn Db>, task_id: &str) -> Result<TaskContext, String> {
+pub(crate) fn resolve_task_context(db: &Arc<dyn Db>, task_id: &str) -> Result<TaskContext, String> {
     let conn = db
         .conn()
         .lock()
@@ -100,9 +100,11 @@ pub fn terminal_open(
             tmux,
             program: &program,
             args: &args,
+            env: &[],
             cwd: std::path::Path::new(&ctx.cwd),
             rows,
             cols,
+            lifecycle: None,
         })
         .map_err(|e| e.to_string())
 }
@@ -135,9 +137,11 @@ pub fn terminal_open_agent(
             tmux: false,
             program: &binary.to_string_lossy(),
             args: &[],
+            env: &[],
             cwd: std::path::Path::new(&ctx.cwd),
             rows,
             cols,
+            lifecycle: None,
         })
         .map_err(|e| e.to_string())
 }

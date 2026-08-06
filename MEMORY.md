@@ -4,6 +4,40 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## E1-06 lifecycle scripts wired into the app (2026-08-06)
+
+- **The E1-06 runner was unwired**: settings UI + core `LifecycleScriptService`
+  existed, but nothing in ade-app ever ran a script — "set a script, create a
+  task, it just opened the terminal". Now lifecycle scripts are REAL task
+  terminals: `terminal_open_lifecycle(task_id, script_type)` spawns
+  `sh -c '<script>'` (shellSetup prepended) in the worktree with the ADE_*
+  env contract (port seed = worktree path), via TerminalManager so output
+  streams to the tab like any shell.
+- **Retention:** lifecycle entries are RETAINED after exit (pump sets
+  `Entry.exited` and skips the map removal only for lifecycle terminals) —
+  the finished run's tab reattaches and replays the tail (64 KiB). Plain
+  shells/agents keep drop-on-exit. Dedupe: `find_running_lifecycle(task,
+  type)` — a rerun while one is in flight reattaches.
+- **Auto-run:** `create_task` + `create_task_from_comment_core` call
+  `run_auto_lifecycle_scripts` (best-effort) when
+  `autoRunSetupScriptOnTaskCreation`/`autoRunRunScriptOnTaskCreation` +
+  a non-blank script are set; the task view surfaces backend lifecycle
+  terminals as `lifecycle-script` tabs on open (ensureTabs discovery from
+  `terminal_list_for_task` kind/scriptType fields). Dead lifecycle tabs in
+  persisted view-state are DROPPED on restore (never respawn as a shell).
+- **UI:** TabKind `lifecycle-script` (glyph SCR, TerminalView), titles
+  "Setup script"/"Run script"/"Teardown script" (`scriptTabTitle` in
+  tab-registry), per-configured-script `Run <type>` buttons in the TaskView
+  tab-bar trailing slot (next to the Changes toggle), fetched via
+  getProjectSettings per project open. ⌘-free; the tab bar is the surface.
+- **Testing:** `TerminalManager` is now `TerminalManager<R: Runtime = Wry>`
+  + `tauri = { features = ["test"] }` in ade-app — integration tests drive
+  the REAL PTY layer via `tauri::test::mock_app()` (retain/dedupe/kind,
+  plain-shell drop, tail survival). Pure fns (`lifecycle_script_text`,
+  `auto_run_enabled`) unit-tested in commands/lifecycle.rs. Browser smoke
+  (mocked backend): button render + click-through, auto-run discovery
+  (tab without spawn), dead-tab drop, double-click focus dedupe.
+
 ## Current state (2026-08-06, E2-13 task startup command)
 
 - **Per-project `taskStartupCommand` (#52) shipped.** Project settings gain a

@@ -13,7 +13,9 @@ use ade_core::tasks::operations::{InitialConversationConfig, TaskConfigParams};
 use tauri::State;
 
 use crate::app::App;
+use crate::commands::lifecycle::run_auto_lifecycle_scripts;
 use crate::commands::tasks::create_task_params;
+use crate::terminals::TerminalManager;
 
 /// Request body for [`add_line_comment`] (frontend sends one object).
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -94,6 +96,7 @@ pub struct CreateTaskFromCommentResult {
 #[tauri::command]
 pub fn create_task_from_comment(
     app: State<'_, Arc<App>>,
+    terminals: State<'_, Arc<TerminalManager>>,
     project_id: String,
     name: String,
     comment_id: String,
@@ -102,6 +105,7 @@ pub fn create_task_from_comment(
 ) -> Result<CreateTaskFromCommentResult, String> {
     create_task_from_comment_core(
         &app,
+        &terminals,
         &project_id,
         &name,
         &comment_id,
@@ -112,8 +116,9 @@ pub fn create_task_from_comment(
 
 /// Command core (testable without a Tauri `State`): prompt construction +
 /// provisioned task creation + bidirectional comment link.
-pub fn create_task_from_comment_core(
+pub fn create_task_from_comment_core<R: tauri::Runtime>(
     app: &App,
+    terminals: &TerminalManager<R>,
     project_id: &str,
     name: &str,
     comment_id: &str,
@@ -168,6 +173,9 @@ pub fn create_task_from_comment_core(
     app.line_comments
         .link_task(comment_id, &success.task.id)
         .map_err(String::from)?;
+
+    // E1-06: auto-run setup/run scripts on task creation when enabled.
+    run_auto_lifecycle_scripts(terminals, app, &success.task.id);
 
     Ok(CreateTaskFromCommentResult {
         task: ade_core::tasks::TaskDto::from(&success.task),

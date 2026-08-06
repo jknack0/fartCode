@@ -13,6 +13,8 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::App;
+use crate::commands::lifecycle::run_auto_lifecycle_scripts;
+use crate::terminals::TerminalManager;
 
 /// Creates a task AND provisions its workspace (worktree + branch) in one
 /// shot — the E2-04 create_with_provision flow. The branch name follows the
@@ -21,6 +23,7 @@ use crate::app::App;
 #[tauri::command]
 pub fn create_task(
     app: State<'_, Arc<App>>,
+    terminals: State<'_, Arc<TerminalManager>>,
     project_id: String,
     name: String,
 ) -> Result<TaskDto, String> {
@@ -35,10 +38,14 @@ pub fn create_task(
             initial_conversation: None,
         },
     )?;
-    app.task_creation
+    let created = app
+        .task_creation
         .create_with_provision(params)
-        .map(|r| TaskDto::from(&r.task))
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // E1-06: auto-run setup/run scripts on task creation when the project
+    // configured them. Best-effort — the task stands either way.
+    run_auto_lifecycle_scripts(&terminals, &app, &created.task.id);
+    Ok(TaskDto::from(&created.task))
 }
 
 /// Builds [`CreateTaskParams`] for the standard flow (E2-04 naming +

@@ -22,7 +22,7 @@ export interface Tab {
   title: string;
 }
 
-export type TabKind = "terminal" | "conversation" | "diff";
+export type TabKind = "terminal" | "conversation" | "diff" | "lifecycle-script";
 
 export interface TabRenderProps {
   taskId: string;
@@ -71,8 +71,32 @@ export const TAB_KINDS: Record<TabKind, TabKindDef> = {
       <DiffView tabId={tab.id} title={tab.title} taskId={taskId} active={active} />
     ),
   },
+
+  "lifecycle-script": {
+    label: "Script",
+    glyph: "SCR",
+    // The tab id IS the PTY id minted by terminal_open_lifecycle. The
+    // terminal runs the script with the ADE_* env contract; when the script
+    // exits the tab stays (the backend retains the entry) and the tail is
+    // replayed on reattach (E1-06).
+    render: ({ tab, active }) => (
+      <TerminalView terminalId={tab.id} active={active} />
+    ),
+  },
 };
 
 export function isTabKind(kind: string): kind is TabKind {
   return kind in TAB_KINDS;
+}
+
+/** Tab title for a lifecycle script terminal (E1-06). The script type is
+ * the backend's `scriptType` (`setup`/`run`/`teardown`). */
+const SCRIPT_TITLES: Record<string, string> = {
+  setup: "Setup script",
+  run: "Run script",
+  teardown: "Teardown script",
+};
+
+export function scriptTabTitle(scriptType: string): string {
+  return SCRIPT_TITLES[scriptType] ?? "Script";
 }

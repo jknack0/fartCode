@@ -11,8 +11,13 @@ use std::process::Command;
 
 use ade_app_lib::app::App;
 use ade_app_lib::commands::line_comments::create_task_from_comment_core;
+use ade_app_lib::terminals::TerminalManager;
 use ade_core::projects::ProjectStore;
 use ade_core::settings::SettingsStore;
+
+fn terminal_manager() -> TerminalManager<tauri::test::MockRuntime> {
+    TerminalManager::new(tauri::test::mock_app().handle().clone())
+}
 
 fn git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")
@@ -106,6 +111,7 @@ fn create_task_from_comment_links_and_builds_prompt() {
     // §14 "Create Task".
     let result = create_task_from_comment_core(
         &app,
+        &terminal_manager(),
         &project.id,
         "fix-validate",
         &comment.id,
@@ -192,7 +198,15 @@ fn create_task_from_comment_missing_comment_errors() {
         .create_local(repo.path(), false)
         .expect("create project");
 
-    let err = create_task_from_comment_core(&app, &project.id, "x", "lc_missing", "code", None)
-        .expect_err("must fail");
+    let err = create_task_from_comment_core(
+        &app,
+        &terminal_manager(),
+        &project.id,
+        "x",
+        "lc_missing",
+        "code",
+        None,
+    )
+    .expect_err("must fail");
     assert!(err.contains("line comment not found"));
 }
