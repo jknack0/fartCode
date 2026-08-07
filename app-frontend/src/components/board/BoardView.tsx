@@ -186,7 +186,13 @@ export default function BoardView({ projectId }: { projectId: string }) {
                     setDragId(issue.id);
                   }}
                   onDragEnd={() => setDragId(null)}
-                  onClick={() => useUi.getState().setBoardDetailIssueId(issue.id)}
+                  onClick={() => {
+                    const ui = useUi.getState();
+                    ui.setBoardDetailIssueId(issue.id);
+                    // The detail swaps into the right sheet — make sure it's
+                    // visible regardless of the changes/chat mode.
+                    ui.setChangesOpen(true);
+                  }}
                 >
                   <span className="board-card-title">{issue.title}</span>
                   <span className="board-card-badges">
