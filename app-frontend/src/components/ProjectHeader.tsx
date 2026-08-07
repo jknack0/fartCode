@@ -1,9 +1,12 @@
 // Project header (E17 dogfood): spans the shell's full width above the
-// board AND the changes/chat sheet, so the right sheet never covers it.
-// Hosts the sheet controls: changes (git) and PM chat alternate inside the
-// one right sheet — opening one replaces the other, never both at once.
+// board AND the changes/chat sheet. Hosts the sheet controls (changes ⇄
+// chat alternate in the one right sheet) and "Sync from GitHub" — looks up
+// the project's open GitHub issues and creates a native board card for
+// each one not already imported (deduped by URL).
 
-import { IconChat, IconGitHub } from "./icons";
+import { useState } from "react";
+import { projectGithubIssues, issueImportGithub, issueList } from "../lib/tauri";
+import { IconBranch, IconChat, IconGitHub } from "./icons";
 import { hint } from "../lib/useCommands";
 import { useSidebar } from "../store/sidebar";
 import { useUi } from "../store/ui";
@@ -14,6 +17,42 @@ export default function ProjectHeader({ projectId }: { projectId: string }) {
   const projectName = useSidebar(
     (s) => s.projects.find((p) => p.id === projectId)?.name ?? null,
   );
+  const [syncing, setSyncing] = useState(false);
+  const [syncNote, setSyncNote] = useState<string | null>(null);
+
+  const syncGithub = async () => {
+    setSyncing(true);
+    setSyncNote(null);
+    try {
+      const [ghIssues, board] = await Promise.all([
+        projectGithubIssues(projectId),
+        issueList(projectId),
+      ]);
+      const imported = new Set(
+        board.filter((i) => i.externalRef).map((i) => i.externalRef),
+      );
+      const fresh = ghIssues.filter((g) => !imported.has(g.url));
+      for (const g of fresh) {
+        await issueImportGithub({
+          projectId,
+          number: g.number,
+          title: g.title,
+          url: g.url,
+          labels: g.labels,
+        });
+      }
+      setSyncNote(
+        fresh.length > 0
+          ? `Imported ${fresh.length} GitHub ${fresh.length === 1 ? "issue" : "issues"}`
+          : "Already synced",
+      );
+    } catch (e) {
+      setSyncNote(String(e));
+    } finally {
+      setSyncing(false);
+      setTimeout(() => setSyncNote(null), 4000);
+    }
+  };
 
   return (
     <header className="app-header">
@@ -33,6 +72,15 @@ export default function ProjectHeader({ projectId }: { projectId: string }) {
               ui.setChangesOpen(false); // changes mode → close the sheet
             }
           }}
+        >
+          <IconBranch size={14} />
+        </button>
+        {syncNote && <span className="project-sync-note">{syncNote}</span>}
+        <button
+          className="project-action"
+          title="Sync open GitHub issues onto the board"
+          disabled={syncing}
+          onClick={() => void syncGithub()}
         >
           <IconGitHub size={14} />
         </button>

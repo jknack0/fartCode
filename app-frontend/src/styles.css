@@ -171,6 +171,15 @@ body {
   gap: 4px;
 }
 
+.project-sync-note {
+  font-size: 11px;
+  color: var(--muted, #b8b7b8);
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 
 .main {
   grid-area: main;
