@@ -17,13 +17,13 @@ install runners, full model option lists).
 
 ## Decision
 
-- **`ade-providers` crate** (pure data — only `serde` for the DTO; no
-  dependency on `ade-core`, respecting the leaf rule). Empty scaffold was
+- **`fartcode-providers` crate** (pure data — only `serde` for the DTO; no
+  dependency on `fartcode-core`, respecting the leaf rule). Empty scaffold was
   filled with `types.rs` (pure types), `lib.rs` (registry API + DTO + tests),
   and `providers_data.rs` (the 35-entry table).
 - **Data extraction**: 5 parallel read-only subagents extracted each
   provider's fields from the reference impl files into strict JSON under
-  `ade-providers/extracted/t1..t5/`; `ade-providers/tools/generate_providers.py`
+  `fartcode-providers/extracted/t1..t5/`; `fartcode-providers/tools/generate_providers.py`
   regenerates `providers_data.rs` from them. The extraction JSONs + generator
   are committed as the data source of record (like E2-03's word lists), so
   **adding a provider = one JSON + regenerate** (acceptance 3).

@@ -7,7 +7,7 @@ import { create } from "zustand";
 import {
   getViewState,
   gitFileDiff,
-  onAdeEvent,
+  onFartcodeEvent,
   setViewState,
   writeWorkspaceFile,
   type DiffSide,
@@ -228,7 +228,7 @@ export const useDiffs = create<DiffsState>((set, get) => {
 export function wireDiffsEvents(): () => void {
   let unlisten: (() => void) | null = null;
   let disposed = false;
-  void onAdeEvent((event) => {
+  void onFartcodeEvent((event) => {
     const workspaceId =
       event.type === "git:changed" || event.type === "files:changed"
         ? event.workspaceId

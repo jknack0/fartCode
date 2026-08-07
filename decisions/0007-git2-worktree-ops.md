@@ -14,7 +14,7 @@ to the `CliGit` CLI implementation. git2 must behave like `git worktree`.
 
 ## Decision
 
-- **`Git2Ops` in `ade-git`** implements the full `GitOps` trait; the five
+- **`Git2Ops` in `fartcode-git`** implements the full `GitOps` trait; the five
   worktree methods use git2 directly, the remaining ~18 methods delegate to
   the embedded `CliGit` (per the ticket's "fall back to the CLI").
 - **Mutex serialization:** `worktree_list`/`add`/`prune`/`remove` all take a

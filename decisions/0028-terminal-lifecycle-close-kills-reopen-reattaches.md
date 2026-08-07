@@ -30,7 +30,7 @@ Three lifecycle changes (all behind the existing project `tmux` setting):
    teardown — nothing survives to reattach. Plain-PTY terminals are
    unchanged (they had nothing to survive into).
 2. **Open reattaches survivors instead of minting slots.** `pick_slot` →
-   `ade_core::pty::tmux::choose_terminal_slot` (pure, unit-tested): reuse the
+   `fartcode_core::pty::tmux::choose_terminal_slot` (pure, unit-tested): reuse the
    smallest live DETACHED session of the task that this process doesn't
    already own; else the first slot unused locally AND on the tmux server
    (never double-attach a session another client holds). Crash/restart

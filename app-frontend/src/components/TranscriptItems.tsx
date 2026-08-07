@@ -79,7 +79,7 @@ function MessageRow({
 }: {
   item: MessageItem;
   /** E17-04: set only for the PM chat (project: owner) — assistant text is
-   * scanned for ade-proposal blocks, each rendered as an approval card. */
+   * scanned for fartCode-proposal blocks, each rendered as an approval card. */
   proposalProjectId?: string | null;
 }) {
   if (item.role === "user") {

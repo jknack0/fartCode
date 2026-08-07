@@ -1,5 +1,5 @@
 // Proposal approval card (E17-04, #58; ADR-0032). Renders a parsed
-// ade-proposal block from the PM agent's message: editable issue rows
+// fartCode-proposal block from the PM agent's message: editable issue rows
 // (title, provider/model), droppable rows, Approve/Dismiss. Parse failure
 // renders the raw block as plain code text — the card NEVER throws on bad
 // input. Approve writes via issue_apply_proposal (all-or-nothing backend).

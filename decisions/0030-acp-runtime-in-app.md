@@ -7,11 +7,11 @@ Status: accepted (issue #32)
 E2-11-5 must connect the conversation path to a session implementation.
 Two existed, unconnected, after E2-11-2/3:
 
-1. `ade_runtime::SessionHost` — drives the `ade-acp-runtime` worker
+1. `fartcode_runtime::SessionHost` — drives the `fartcode-acp-runtime` worker
    process over a bespoke JSON-RPC protocol with its own session
    lifecycle (start/prompt/cancel/stop/permissions). No history, no
    live streaming, no queue/drafts.
-2. `ade_acp::session::SessionManager` + `SessionCell` — the full
+2. `fartcode_acp::session::SessionManager` + `SessionCell` — the full
    reference-shaped runtime (state machine, queue, drafts, history,
    transcript parser, live-model events), driven by an `AcpClient`.
 
@@ -20,7 +20,7 @@ host"), but the worker's bespoke protocol never became an `AcpClient`.
 
 ## Decision
 
-1. **The in-app runtime wins (user decision).** `ade-app::acp_runtime::
+1. **The in-app runtime wins (user decision).** `fartcode-app::acp_runtime::
    AcpRuntime` owns the `SessionManager`; each conversation's adapter
    binary is spawned as a direct child process via `AcpClient::spawn`
    (env server-resolved — keyring `resolve_env` with the launcher's
@@ -28,7 +28,7 @@ host"), but the worker's bespoke protocol never became an `AcpClient`.
    E2-11-4's wiring (reducer, live models, `acp:*` events) works
    unchanged.
 
-2. **The `ade-acp-runtime` worker stays dormant.** Its env-injection
+2. **The `fartcode-acp-runtime` worker stays dormant.** Its env-injection
    invariant is preserved by construction (renderer input never touches
    launch env here either — there IS no renderer env input). Retiring or
    repurposing it gets its own ticket if the out-of-process isolation
@@ -48,7 +48,7 @@ host"), but the worker's bespoke protocol never became an `AcpClient`.
    calls `AcpRuntime::stop_task` BEFORE the domain deletion (the FK
    cascade removes conversation rows), mirroring the PTY reap ordering.
 
-5. **Test seams, dev-only:** `ADE_ACP_ADAPTER` overrides the adapter
+5. **Test seams, dev-only:** `FARTCODE_ACP_ADAPTER` overrides the adapter
    binary (the E2E suite points it at `fake_acp_adapter`); the frontend
    store exposes `window.__conversationsStore` for mocked-backend browser
    verification (the repo has no frontend test runner).
@@ -57,9 +57,9 @@ host"), but the worker's bespoke protocol never became an `AcpClient`.
 
 - #33 builds the transcript UI on `acp_history` + `acp:transcript`
   (the `LiveModels` snapshot) and the permission prompts on
-  `acp:permission_request` — no further `ade-acp` changes needed.
+  `acp:permission_request` — no further `fartcode-acp` changes needed.
 - Boot rehydration of ACP sessions is NOT wired here (PTY rehydration
   stays byte-identical); an ACP rehydrate path is a follow-up when the
   chat UI lands.
-- `ade-app` now depends on `agent-client-protocol-schema` (SessionId
+- `fartcode-app` now depends on `agent-client-protocol-schema` (SessionId
   type on the runtime surface).

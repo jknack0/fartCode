@@ -23,17 +23,17 @@ as written cannot compile.
   default = reset). Reads deep-merge the stored delta with defaults. Values are
   validated by canonical round-trip (unknown keys stripped — zod-parse
   behavior), so deltas never carry junk.
-- **Effective project-settings precedence:** `defaults < .ade.json <
+- **Effective project-settings precedence:** `defaults < .fartCode.json <
   DB-shareable` (later source wins — the reference's
   `mergeShareableProjectSettings(defaults, file, local)`). A local UI value
   overrides the file; clearing it falls back to the file; clearing the file
   falls back to defaults.
 - `update_project_settings` is **full-replace** (reference `update()`); callers
-  read-modify-write. The repo `.ade.json` is only touched by `share_with_team`.
+  read-modify-write. The repo `.fartCode.json` is only touched by `share_with_team`.
 - Legacy `.emdash.json` migration is a **one-shot at first access** (marked
   done even without a file; a single marker covers base+shareable). Shareable
   merge is unconditional — the reference gates it on git-tracking, which needs
-  `ade-git`.
+  `fartcode-git`.
 
 ## Consequences
 
@@ -42,4 +42,4 @@ as written cannot compile.
 - "Set to default deletes the row" makes defaults observable and resets trivial.
 - Full-replace update is a footgun for partial edits — documented on the method;
   a `patch`-style API may be needed when the settings UI lands (E1-05).
-- The `.ade.json` file is the shareable contract with teammates.
+- The `.fartCode.json` file is the shareable contract with teammates.

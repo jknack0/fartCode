@@ -13,7 +13,7 @@ import {
   issueDispatch,
   issueList,
   issueMove,
-  onAdeEvent,
+  onFartcodeEvent,
   terminalOpenAgent,
   terminalWrite,
   type IssueDto,
@@ -59,7 +59,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
         .then((list) => !cancelled && setIssues(list))
         .catch((e) => !cancelled && setError(String(e)));
     void reload();
-    const unlisten = onAdeEvent((ev) => {
+    const unlisten = onFartcodeEvent((ev) => {
       if (
         (ev.type === "issue:created" ||
           ev.type === "issue:updated" ||
@@ -123,7 +123,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
   const handleDrop = (e: React.DragEvent, lane: Lane) => {
     e.preventDefault();
     setDragId(null);
-    const issueId = e.dataTransfer.getData("text/ade-issue");
+    const issueId = e.dataTransfer.getData("text/fartCode-issue");
     const issue = issues.find((i) => i.id === issueId);
     if (!issue) return;
     const position = dropIndex(e.clientY, e.currentTarget as HTMLElement);
@@ -181,7 +181,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
                   data-issue-id={issue.id}
                   draggable
                   onDragStart={(e) => {
-                    e.dataTransfer.setData("text/ade-issue", issue.id);
+                    e.dataTransfer.setData("text/fartCode-issue", issue.id);
                     e.dataTransfer.effectAllowed = "move";
                     setDragId(issue.id);
                   }}

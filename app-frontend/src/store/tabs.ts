@@ -14,7 +14,7 @@
 import { create } from "zustand";
 import {
   getViewState,
-  onAdeEvent,
+  onFartcodeEvent,
   setViewState,
   terminalListForTask,
   terminalOpen,
@@ -190,7 +190,7 @@ export const useTabs = create<TabsState>((set, get) => ({
       if (left.tabs.length === 0) {
         // Terminal-first: a task's default surface is a shell in its
         // worktree; extra terminals are summoned explicitly (⌘T / ⌘D),
-        // never auto-opened. (E2-12: work inside ade.)
+        // never auto-opened. (E2-12: work inside fartCode.)
         try {
           const terminalId = await terminalOpen(taskId, 24, 80);
           left = {
@@ -430,7 +430,7 @@ if (typeof window !== "undefined") window.__tabsStore = useTabs;
  * backend's `task:<id>:tabs` view-state cleanup). */
 export function wireTabsEvents(): () => void {
   let unlisten: (() => void) | undefined;
-  void onAdeEvent((e) => {
+  void onFartcodeEvent((e) => {
     if (e.type === "task:deleted") useTabs.getState().dropTask(e.taskId);
   }).then((un) => {
     unlisten = un;

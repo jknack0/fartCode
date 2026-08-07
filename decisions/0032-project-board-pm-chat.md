@@ -18,14 +18,14 @@ into issues. Dragging a card into In Progress spawns an agent in a worktree
 that starts implementing; blocked-by edges between issues are first-class.
 
 The PRD's E7 model assumed issues live in external trackers (Linear/Jira/
-GitHub) with `tasks.linked_issue` pointing outward. ade now becomes the
+GitHub) with `tasks.linked_issue` pointing outward. fartCode now becomes the
 tracker: issues are local-first rows, and tracker connections (when E7/E8
 land) become sync/export adapters rather than the store.
 
 ## Decision
 
 1. **Local-first issue store.** New `issues` + `issue_dependencies` tables in
-   ade-core (append-only migration). Blocked status is **derived at read
+   fartcode-core (append-only migration). Blocked status is **derived at read
    time** (any blocker not in Done ⇒ blocked), never stored — unblocking is
    automatic when the blocker lands in Done. Cycles are rejected at edge
    creation (DFS over the adjacency map). Board drag is a user action, so
@@ -46,10 +46,10 @@ land) become sync/export adapters rather than the store.
    event) or terminal-agent PTY process exit. No idle-timeout heuristics;
    manual drag always works.
 5. **Chat writes via proposal blocks, not tools.** The PM agent's system
-   prompt defines a fenced ` ```ade-proposal ` JSON block (PRD summary +
+   prompt defines a fenced ` ```fartCode-proposal ` JSON block (PRD summary +
    issue list with titles/bodies/edges + optional per-issue provider/model).
    The transcript detects it and renders an interactive approval card
-   (edit titles, drop issues); Approve writes through normal ade-core
+   (edit titles, drop issues); Approve writes through normal fartcode-core
    commands. Provider-agnostic (any adapter that prints text works), no new
    processes, hard human gate. An MCP tool server is the E10-era upgrade.
 6. **PRD = markdown in the repo.** The PM agent (running in the project
@@ -58,7 +58,7 @@ land) become sync/export adapters rather than the store.
    the path + section. PRDs diff in git and sub-task agents read them with
    normal file access. No DB blob, no parent-issue cramming.
 7. **Dispatch packet by reference.** The spawned agent's initial prompt is
-   built by ade-core: issue title + body + acceptance criteria + PRD path +
+   built by fartcode-core: issue title + body + acceptance criteria + PRD path +
    one-line summaries of Done blockers + branch/worktree conventions footer.
    No inlined PRD copy to go stale. Provider defaults to the project's
    `defaultAgent`, with per-issue override carried on the issue from the
@@ -78,6 +78,6 @@ land) become sync/export adapters rather than the store.
 - The proposal-block contract is prompt-level, so it needs a golden-file
   parse test (malformed blocks must surface as plain transcript text, never
   throw) and a PM system prompt that is versioned with the parser.
-- ade dogfoods on itself: this repo's own GitHub issues remain its dev
-  tracker; the board's first real tenant is ade managing *other* projects.
+- fartCode dogfoods on itself: this repo's own GitHub issues remain its dev
+  tracker; the board's first real tenant is fartCode managing *other* projects.
   GitHub sync of local issues is explicitly out of scope for E17.

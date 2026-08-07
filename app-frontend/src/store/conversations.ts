@@ -20,7 +20,7 @@ import {
   onAcpPermissionRequest,
   onAcpTranscript,
   onAcpUpdate,
-  onAdeEvent,
+  onFartcodeEvent,
   type ConversationDto,
   type LiveModels,
   type PendingPermission,
@@ -239,7 +239,7 @@ export function wireConversationEvents(): () => void {
 
   // Task deletion drops the task's conversation state (the backend stops
   // the sessions during delete_task teardown).
-  void onAdeEvent((event) => {
+  void onFartcodeEvent((event) => {
     if (event.type === "task:deleted") {
       useConversations.getState().dropTask(event.taskId);
     }
@@ -251,7 +251,7 @@ export function wireConversationEvents(): () => void {
   };
 }
 
-// Browser test seam (ade-frontend-browser-smoke): the app has no frontend
+// Browser test seam (fartCode-frontend-browser-smoke): the app has no frontend
 // test runner, so mocked-backend verification asserts store mutations
 // through this global. Dev/build only — the production webview never
 // reads it.

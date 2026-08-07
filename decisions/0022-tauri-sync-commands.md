@@ -19,7 +19,7 @@ in §4 is incorrect. The mandated `block_on` pattern has two real costs:
 We stay **synchronous for Phase 0** for reasons that are correct even if
 §4's premise was wrong:
 
-1. **All of ade-core is synchronous.** Domain methods return
+1. **All of fartcode-core is synchronous.** Domain methods return
    `Result<T, Error>` — no `async`, no `spawn_blocking`, no
    `tokio::spawn`. A Tauri async command would only add `spawn_blocking`
    wrappers that don't exist yet. The real async boundary is E2-06's

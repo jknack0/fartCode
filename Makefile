@@ -7,10 +7,10 @@ PATH := $(HOME)/.cargo/bin:$(PATH)
 dev:
 	@echo "Starting Vite dev server on :1420 ..."
 	@(cd app-frontend && npm run dev -- --port 1420 --strictPort) &
-	@echo "Running ade-app (wait for window) ..."
-	cargo run -p ade-app
+	@echo "Running fartcode-app (wait for window) ..."
+	cargo run -p fartcode-app
 
-## build — compile the workspace (requires app-frontend/dist for ade-app)
+## build — compile the workspace (requires app-frontend/dist for fartcode-app)
 build:
 	@test -d app-frontend/dist || (echo "app-frontend/dist missing — run 'make frontend' first"; exit 1)
 	cargo build
@@ -19,12 +19,12 @@ build:
 frontend:
 	cd app-frontend && npm install && npm run build
 
-## test — run all workspace tests (requires app-frontend/dist for ade-app)
+## test — run all workspace tests (requires app-frontend/dist for fartcode-app)
 test:
 	@test -d app-frontend/dist || (echo "app-frontend/dist missing — run 'make frontend' first"; exit 1)
 	cargo test --workspace
 
-## lint — clippy with warnings-as-errors (requires app-frontend/dist for ade-app)
+## lint — clippy with warnings-as-errors (requires app-frontend/dist for fartcode-app)
 lint:
 	@test -d app-frontend/dist || (echo "app-frontend/dist missing — run 'make frontend' first"; exit 1)
 	cargo clippy --workspace --all-targets -- -D warnings

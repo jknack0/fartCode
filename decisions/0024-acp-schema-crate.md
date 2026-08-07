@@ -16,7 +16,7 @@ method/notification, generated alongside the spec itself.
 - **Wire types:** depend on `agent-client-protocol-schema` (default features,
   stable v1 module). It is the spec's own source of truth; hand-maintained
   serde structs would drift from protocol revisions.
-- **Transport + client:** our own (`ade-acp::transport` / `ade-acp::client`).
+- **Transport + client:** our own (`fartcode-acp::transport` / `fartcode-acp::client`).
   The spec ships no Rust client runtime; we need newline-delimited JSON-RPC
   over child-process stdio, our pending-request correlation, update-stream
   fan-out, and client-side `fs/*` + `terminal/*` request handlers.

@@ -181,7 +181,7 @@ export default function ConversationView({
   };
 
   // E17-04: the PM chat (project: owner key) sends the PM system prompt as
-  // hidden context on every prompt and renders ade-proposal blocks as
+  // hidden context on every prompt and renders fartCode-proposal blocks as
   // approval cards. Task conversations get neither.
   const proposalProjectId = ownerKey.startsWith("project:")
     ? ownerKey.slice("project:".length)

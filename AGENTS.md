@@ -1,6 +1,6 @@
-# AGENTS.md — ade
+# AGENTS.md — fartCode
 
-Rust + Tauri 2 implementation of ade, an Agentic Development Environment (ADE).
+Rust + Tauri 2 implementation of fartCode, an Agentic Development Environment (ADE).
 
 ## Before you start
 
@@ -11,7 +11,7 @@ Read these in order:
    this file wins (update the ticket).
 2. **`PRD.md`** — product spec and epic inventory.
 3. **GitHub issues** — the single source of truth for work
-   (`gh issue list -R jknack0/ade`; Phase 0 tickets use `phase:0`/`phase:2` +
+   (`gh issue list -R jknack0/fartCode`; Phase 0 tickets use `phase:0`/`phase:2` +
    `size:*` labels, milestone "Phase 0"). New work gets a new issue — no ticket
    docs. Cross-cutting Phase 0 checklists live in `phase0-checklists.md`.
 4. **`MEMORY.md`** — project-level working memory: current milestone state,
@@ -22,18 +22,18 @@ Read these in order:
 
 ```
 Cargo workspace (12 crates):
-  ade-core        domain modules (db, settings, projects, tasks, ...)
-  ade-git         git2 worktrees, status, diff, commit, push
-  ade-providers   provider registry (35 agents) + capability descriptors
-  ade-acp         ACP client (Phase 2)
-  ade-terminal    portable-pty, tmux
-  ade-ssh         russh (Phase 3)
-  ade-scheduler   cron (Phase 2)
-  ade-integrations issue trackers (Phase 2)
-  ade-telemetry   allowlisted events (Phase 2)
-  ade-server      remote workspace daemon (Phase 3)
-  ade-runtime     out-of-process workers (Phase 2)
-  ade-app         Tauri 2 shell (main window, command modules, events)
+  fartcode-core        domain modules (db, settings, projects, tasks, ...)
+  fartcode-git         git2 worktrees, status, diff, commit, push
+  fartcode-providers   provider registry (35 agents) + capability descriptors
+  fartcode-acp         ACP client (Phase 2)
+  fartcode-terminal    portable-pty, tmux
+  fartcode-ssh         russh (Phase 3)
+  fartcode-scheduler   cron (Phase 2)
+  fartcode-integrations issue trackers (Phase 2)
+  fartcode-telemetry   allowlisted events (Phase 2)
+  fartcode-server      remote workspace daemon (Phase 3)
+  fartcode-runtime     out-of-process workers (Phase 2)
+  fartcode-app         Tauri 2 shell (main window, command modules, events)
 app-frontend/        React + Vite webview UI
 .github/workflows/   CI (fmt + clippy + test; frontend typecheck)
 ```
@@ -63,7 +63,7 @@ make check       # full merge gate: fmt + clippy + test
 
 ## Conventions (short version — ARCHITECTURE.md is authoritative)
 
-- `Result<T, ade_core::Error>` everywhere. No panics across crate boundaries.
+- `Result<T, fartcode_core::Error>` everywhere. No panics across crate boundaries.
 - Versioned JSON for all JSON DB columns (`read_versioned`/`write_versioned`).
 - Services are `Arc<dyn Trait>`; wired once in the `App` struct (ARCHITECTURE.md §7).
 - Tauri commands are thin: call a domain fn, map error to `String`, return a DTO.

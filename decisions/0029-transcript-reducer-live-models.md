@@ -1,4 +1,4 @@
-# ADR-0029 — Transcript reducer + live models live in ade-acp; events bypass the internal bus
+# ADR-0029 — Transcript reducer + live models live in fartcode-acp; events bypass the internal bus
 
 Status: accepted (issue #31)
 
@@ -14,23 +14,23 @@ Three layering questions carried over from ADR-0027:
 
 1. Where do the reducer and live-model types live? They speak ACP wire
    types and only `SessionCell` consumes them.
-2. How do updates reach the frontend without pulling Tauri into `ade-acp`?
+2. How do updates reach the frontend without pulling Tauri into `fartcode-acp`?
 3. Should ACP events flow over the internal `InternalEvent` bus like git
    and task events?
 
 ## Decision
 
-1. **`ade-acp::transcript` owns the reducer** — pure
+1. **`fartcode-acp::transcript` owns the reducer** — pure
    `(ParserState, ReducerInput) → ParserState` fold (`reducer::reduce`),
    the stateful `TranscriptParser` wrapper, the `SessionUpdate →
    NormalizedEvent` decoder, id synthesis (reference string formats kept
    verbatim), and the serde-camelCase live-model structs. Same rationale as
-   ADR-0027: `ade-acp` is the leaf crate for everything ACP; `ade-core`
+   ADR-0027: `fartcode-acp` is the leaf crate for everything ACP; `fartcode-core`
    stays untouched.
 
-2. **Event seams are a trait; Tauri is the app layer.** `ade-acp` defines
+2. **Event seams are a trait; Tauri is the app layer.** `fartcode-acp` defines
    `SessionEvents` (`update` / `transcript_changed` /
-   `permission_requested`); `ade-app::acp_events::TauriAcpEvents`
+   `permission_requested`); `fartcode-app::acp_events::TauriAcpEvents`
    implements it over `AppHandle::emit`, producing `acp:update`,
    `acp:transcript`, `acp:permission_request` keyed by `conversationId`.
    The cell fires `transcript_changed` with a FULL `LiveModels` snapshot on
@@ -38,7 +38,7 @@ Three layering questions carried over from ADR-0027:
    throttling is #33's concern if Phase-2 traffic warrants it).
 
 3. **ACP events bypass the internal bus**, matching the `terminal:output`
-   precedent (also emitted directly from `ade-app`): ACP streams are
+   precedent (also emitted directly from `fartcode-app`): ACP streams are
    high-frequency per-conversation traffic with no domain-service
    consumers; routing them through `BroadcastEventBus` would add a hop and
    a serialization without a buyer. `InternalEvent` keeps the lifecycle
@@ -69,7 +69,7 @@ Three layering questions carried over from ADR-0027:
 - `StartInput` gained `provider_id` and `events`; `update_sink` was
   removed (its only consumer was the test rig passing `None`).
 - #32 wires `TauriAcpEvents` into the manager and adds the Tauri commands;
-  #33 renders the snapshot; neither needs further `ade-acp` changes.
+  #33 renders the snapshot; neither needs further `fartcode-acp` changes.
 - Acceptance pinned by `tests/reducer_golden.rs` (six deterministic golden
   folds) and `tests/acp_events_integration.rs` (in-order event delivery +
   live-model snapshot + replay settlement + raw-log export against the

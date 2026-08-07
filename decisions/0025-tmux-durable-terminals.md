@@ -6,7 +6,7 @@ wiring into the terminal UI")
 ## Context
 
 E2-12's interactive task terminals spawned `$SHELL` as a direct PTY child of
-the ade process: app crash/restart killed every shell and its scrollback.
+the fartCode process: app crash/restart killed every shell and its scrollback.
 ADR-0021 shipped the full tmux durability machinery for AGENT sessions
 (naming, create-or-attach shell line, kill, boot rehydration) but explicitly
 deferred wiring it into the interactive terminal UI — and the "Use tmux for
@@ -20,7 +20,7 @@ AND a tmux binary resolves; otherwise the plain-PTY spawn is unchanged.
 
 1. **Deterministic slot sessions:** session id
    `{project_id}:{task_id}:terminal:{slot}` → `make_tmux_session_name`
-   (`ade-` + base64url). Slots are process-local: after a boot/crash-restart
+   (`fartCode-` + base64url). Slots are process-local: after a boot/crash-restart
    the slot table is empty, so the task's first `terminal_open` claims slot
    0 and the create-if-missing shell line REATTACHES the surviving session.
    Each further ⌘⇧T allocates the next free slot. No DB rows or
@@ -61,6 +61,6 @@ AND a tmux binary resolves; otherwise the plain-PTY spawn is unchanged.
 - Verified live 2026-08-04: boot opened slot 0 (attached) → typed `cd /tmp`
   in the UI → `kill -9` the app → session survived detached → relaunch
   reattached → `pwd` returned `/tmp`. Pinned in
-  `ade-terminal/tests/tmux_durability_integration.rs` (real tmux binary,
+  `fartcode-terminal/tests/tmux_durability_integration.rs` (real tmux binary,
   skip-if-absent; both readiness and reattach-cwd proofs are file-based —
   output matching races the PTY's echo of the typed command).

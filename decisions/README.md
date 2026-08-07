@@ -1,6 +1,6 @@
-# ADR log — ade
+# ADR log — fartCode
 
-Lightweight Architecture Decision Records for **ade**. Every non-obvious
+Lightweight Architecture Decision Records for **fartCode**. Every non-obvious
 architectural choice a ticket makes gets a numbered ADR here — especially
 *deviations* from ARCHITECTURE.md or the reference implementation (those are
 the ones that bite later).

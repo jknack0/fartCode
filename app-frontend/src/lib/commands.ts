@@ -26,7 +26,7 @@ async function openTerminalTab(taskId: string, pane: PaneId): Promise<void> {
 }
 
 /** Opens (or focuses) the task's lifecycle script tab (`setup`/`run`/
- * `teardown`, E1-06): a terminal running the script with the ADE_* env
+ * `teardown`, E1-06): a terminal running the script with the FARTCODE_* env
  * contract. An in-flight run reattaches (backend dedupe); a finished run's
  * tab stays with its output tail. */
 export async function openLifecycleScriptTab(

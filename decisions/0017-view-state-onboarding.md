@@ -14,7 +14,7 @@ launch focuses the existing window instead of opening a new one.
 1. **View state lives in the `kv` table** under the `view-state:` namespace
    (`view-state:<scope>:<id>` — `task:*`, `task:*:tabs`, `project:*`, plus
    app-level keys like `view-state:app:sidebar`), matching the reference
-   `view-state-service.ts`. `ade_core::view_state::{save,get,delete}`
+   `view-state-service.ts`. `fartcode_core::view_state::{save,get,delete}`
    enforce the prefix; `prune_orphans()` is the reference's three DELETE
    statements (orphaned task/project/tabs rows) and runs once on app boot
    (non-fatal on error).

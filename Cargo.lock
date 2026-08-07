@@ -3,135 +3,6 @@
 version = 4
 
 [[package]]
-name = "ade-acp"
-version = "0.1.0"
-dependencies = [
- "agent-client-protocol-schema",
- "parking_lot",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "ade-app"
-version = "0.1.0"
-dependencies = [
- "ade-acp",
- "ade-core",
- "ade-git",
- "ade-providers",
- "ade-terminal",
- "agent-client-protocol-schema",
- "base64 0.22.1",
- "parking_lot",
- "rusqlite",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-os",
- "tauri-plugin-process",
- "tauri-plugin-shell",
- "tauri-plugin-single-instance",
- "tempfile",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "ade-core"
-version = "0.1.0"
-dependencies = [
- "ade-git",
- "ade-providers",
- "ade-terminal",
- "base64 0.22.1",
- "glob",
- "keyring",
- "notify",
- "parking_lot",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "sysinfo",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "ade-git"
-version = "0.1.0"
-dependencies = [
- "ade-core",
- "git2",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "ade-integrations"
-version = "0.1.0"
-
-[[package]]
-name = "ade-providers"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "ade-runtime"
-version = "0.1.0"
-dependencies = [
- "ade-acp",
- "agent-client-protocol-schema",
- "parking_lot",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "ade-scheduler"
-version = "0.1.0"
-
-[[package]]
-name = "ade-server"
-version = "0.1.0"
-
-[[package]]
-name = "ade-ssh"
-version = "0.1.0"
-
-[[package]]
-name = "ade-telemetry"
-version = "0.1.0"
-
-[[package]]
-name = "ade-terminal"
-version = "0.1.0"
-dependencies = [
- "ade-core",
- "portable-pty",
- "tempfile",
-]
-
-[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -190,9 +61,9 @@ dependencies = [
 
 [[package]]
 name = "android_system_properties"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "819e7219dbd41043ac279b19830f2efc897156490d7fd6ea916720117ee66311"
+checksum = "ae221649c9976a6f6c56ae1facf410f3ddb33cc661c4b7b61020a912d4237fbc"
 dependencies = [
  "libc",
 ]
@@ -1180,6 +1051,135 @@ name = "fallible-streaming-iterator"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
+
+[[package]]
+name = "fartcode-acp"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol-schema",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "fartcode-app"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol-schema",
+ "base64 0.22.1",
+ "fartcode-acp",
+ "fartcode-core",
+ "fartcode-git",
+ "fartcode-providers",
+ "fartcode-terminal",
+ "parking_lot",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-os",
+ "tauri-plugin-process",
+ "tauri-plugin-shell",
+ "tauri-plugin-single-instance",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "fartcode-core"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "fartcode-git",
+ "fartcode-providers",
+ "fartcode-terminal",
+ "glob",
+ "keyring",
+ "notify",
+ "parking_lot",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sysinfo",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "fartcode-git"
+version = "0.1.0"
+dependencies = [
+ "fartcode-core",
+ "git2",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "fartcode-integrations"
+version = "0.1.0"
+
+[[package]]
+name = "fartcode-providers"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "fartcode-runtime"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol-schema",
+ "fartcode-acp",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "fartcode-scheduler"
+version = "0.1.0"
+
+[[package]]
+name = "fartcode-server"
+version = "0.1.0"
+
+[[package]]
+name = "fartcode-ssh"
+version = "0.1.0"
+
+[[package]]
+name = "fartcode-telemetry"
+version = "0.1.0"
+
+[[package]]
+name = "fartcode-terminal"
+version = "0.1.0"
+dependencies = [
+ "fartcode-core",
+ "portable-pty",
+ "tempfile",
+]
 
 [[package]]
 name = "fastrand"
@@ -2745,9 +2745,9 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "open"
-version = "5.4.0"
+version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0b3d059e795d52b8a72fef45658620edd4d9c359b338564aa14391ffa511ed5"
+checksum = "f9cfef937e9c486488c7e3d949ae31c0f1d06bdacd75b99c086cb35356e30408"
 dependencies = [
  "dunce",
  "is-wsl",
@@ -3199,9 +3199,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.16"
+version = "0.4.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fcfdb36bda0c880c5931cdc7a2bcdc8ba4556847b9d912bca70bc94708711ad"
+checksum = "ad8553b9b26413251cbf30e620595c7a41b3887f03da04579c0e6b0d6a06b4b2"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -5751,18 +5751,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.55"
+version = "0.8.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5a105cd7b140f6eeec8acff2ea38135d3cab283ada58540f629fe51e46696eb"
+checksum = "556764e583adb45a9f8d413c2a147fa7e8d821e48e12b14fd560b607998b75eb"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.55"
+version = "0.8.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fe976fb70c78cd64cccfe3a6fc142244e8a77b70959b30faf9d0ac37ee228eb"
+checksum = "f2ab42fc20575779bd240faa45f94a74256f755c0fa9e89f0ede20d91d0cdfc1"
 dependencies = [
  "proc-macro2",
  "quote",

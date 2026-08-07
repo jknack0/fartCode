@@ -1,7 +1,7 @@
 # Phase 0 Cross-Cutting Checklists
 
 > Formerly the Appendix of `tickets-phase0.md` (retired 2026-08-04 — work is now
-> tracked as GitHub issues in `jknack0/ade`). Kept because it is process guidance,
+> tracked as GitHub issues in `jknack0/fartCode`). Kept because it is process guidance,
 > not ticket work.
 
 ## Restart-survival tests (required for E2-07, sanity for all)

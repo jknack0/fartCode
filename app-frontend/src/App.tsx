@@ -1,4 +1,4 @@
-// ade app shell (E1-04/E2-08/E2-10/E14-01): sidebar + task view with tabs.
+// fartCode app shell (E1-04/E2-08/E2-10/E14-01): sidebar + task view with tabs.
 // All keyboard shortcuts are registry commands (lib/commands.ts); the single
 // dispatch listener is installed by useCommands().
 

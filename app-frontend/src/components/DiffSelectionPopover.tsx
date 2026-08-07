@@ -150,7 +150,7 @@ export default function DiffSelectionPopover({
       setSavingNote(false);
       // Surface the thread for this file/side so the note is visible.
       window.dispatchEvent(
-        new CustomEvent("ade:show-comments", {
+        new CustomEvent("fartCode:show-comments", {
           detail: { taskId, filePath: params.path, side: sourceSide },
         }),
       );

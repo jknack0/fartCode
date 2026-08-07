@@ -17,9 +17,9 @@ app-frontend/.vite
 .env.*
 !.env.example
 
-# ── ade internals ───────────────────────────────────────────
-.ade/
-.ade.json
+# ── fartCode internals ───────────────────────────────────────────
+.fartCode/
+.fartCode.json
 
 # ── OS ──────────────────────────────────────────────────────
 .DS_Store
@@ -34,7 +34,7 @@ Thumbs.db
 /reference/
 
 # ── Tauri-generated schemas ────────────────────────────────
-ade-app/gen/
+fartcode-app/gen/
 .omp/extensions/emdash-hook.ts
 
 # ── Agent hook footprints (machine-local) ──────────────────

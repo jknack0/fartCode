@@ -1,8 +1,21 @@
-# MEMORY.md — ade
+# MEMORY.md — fartCode
 
 Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
+
+## Repo renamed ade → fartCode (2026-08-07)
+
+- User rename, everywhere: 12 crates `ade-*` → `fartcode-*` (dirs + Cargo
+  names + `fartcode_*` identifiers), lib crate `fartcode_app_lib`, runtime
+  bin `fartcode_acp_runtime`, event channel `fartcode:event` (JS types
+  `FartcodeEvent`/`onFartcodeEvent`), env contract `FARTCODE_*`
+  (incl. `FARTCODE_PORT`, `fartcode_port`), config file `.fartCode.json`,
+  Tauri productName `fartCode` + identifier `dev.fartcode.app`, branch
+  prefix setting, all docs/decisions. Product branding is **fartCode**;
+  crate/identifier spelling is lowercase `fartcode`.
+- GitHub repo `jknack0/ade` → `jknack0/fartCode` (renamed; old URL
+  redirects). Full gate green post-rename (fmt/clippy/test + tsc/eslint).
 
 ## E17-03 dispatch engine landed (2026-08-06, 5ecacf7) — E17 epic COMPLETE
 
@@ -12,7 +25,7 @@ one exists).
   the sheet (setChangesOpen(true) in the command); the GitHub icon toggles
   the sheet. Chat/detail mount inside ChangesSidebar, not ProjectView.
 
-- `issue_dispatch` (ade-app/src/dispatch.rs): reattach if linked task lives;
+- `issue_dispatch` (fartcode-app/src/dispatch.rs): reattach if linked task lives;
   else provider = issue.provider ?? defaultAgent setting, prompt packet
   (`build_dispatch_prompt` in issues module), create_with_provision with
   `linked_issue {provider:"local", identifier:issue_id}` (NO struct change —
@@ -42,7 +55,7 @@ one exists).
   hover popover, CardDetail in the project view's right region (edits via
   `issue_update`, edge add/remove, two-click delete). Card detail takes the
   right region over the PM chat via `ui.boardDetailIssueId`.
-- **#58 PM chat** (dad40b5): `ade_core::issue_proposal` (parse — never
+- **#58 PM chat** (dad40b5): `fartcode_core::issue_proposal` (parse — never
   panics; apply — all-or-nothing with compensating rollback) +
   `issue_parse_proposal`/`issue_apply_proposal` commands; frontend
   `ProposalCard` in the transcript (rename rewrites blockedBy refs; parse
@@ -63,12 +76,12 @@ one exists).
 - Re-grilled the §13 project-chat design; it was **stale** (predated the #39
   terminal-only pivot and the E2-11 ACP landing). Full re-design recorded in
   ARCHITECTURE.md §13 (rewritten) + `decisions/0032-project-board-pm-chat.md`.
-- Locked: local-first `issues`/`issue_dependencies` tables (ade IS the
+- Locked: local-first `issues`/`issue_dependencies` tables (fartCode IS the
   tracker; E7/E8 become sync adapters later); 5 lanes with drag-into-
   In-Progress spawning task+agent; board never kills (re-drag reattaches);
   blocked-by derived at read time + cycle rejection + confirm-on-dispatch;
   auto-flip to In Review on ACP turn-complete / PTY exit; chat writes via
-  fenced `ade-proposal` block → approval card (no MCP until E10 era); PRDs =
+  fenced `fartCode-proposal` block → approval card (no MCP until E10 era); PRDs =
   `docs/prds/*.md` in the repo; dispatch prompt packet by reference.
 - Tickets: epic #54; #55 (E17-01 issues module) → #56 board UI / #58 PM chat
   panel → #57 dispatch engine.
@@ -76,10 +89,10 @@ one exists).
 ## E1-06 lifecycle scripts wired into the app (2026-08-06)
 
 - **The E1-06 runner was unwired**: settings UI + core `LifecycleScriptService`
-  existed, but nothing in ade-app ever ran a script — "set a script, create a
+  existed, but nothing in fartcode-app ever ran a script — "set a script, create a
   task, it just opened the terminal". Now lifecycle scripts are REAL task
   terminals: `terminal_open_lifecycle(task_id, script_type)` spawns
-  `sh -c '<script>'` (shellSetup prepended) in the worktree with the ADE_*
+  `sh -c '<script>'` (shellSetup prepended) in the worktree with the FARTCODE_*
   env contract (port seed = worktree path), via TerminalManager so output
   streams to the tab like any shell.
 - **Retention:** lifecycle entries are RETAINED after exit (pump sets
@@ -100,7 +113,7 @@ one exists).
   tab-bar trailing slot (next to the Changes toggle), fetched via
   getProjectSettings per project open. ⌘-free; the tab bar is the surface.
 - **Testing:** `TerminalManager` is now `TerminalManager<R: Runtime = Wry>`
-  + `tauri = { features = ["test"] }` in ade-app — integration tests drive
+  + `tauri = { features = ["test"] }` in fartcode-app — integration tests drive
   the REAL PTY layer via `tauri::test::mock_app()` (retain/dedupe/kind,
   plain-shell drop, tail survival). Pure fns (`lifecycle_script_text`,
   `auto_run_enabled`) unit-tested in commands/lifecycle.rs. Browser smoke
@@ -111,21 +124,21 @@ one exists).
 
 - **Per-project `taskStartupCommand` (#52) shipped.** Project settings gain a
   BASE (non-shareable, DB-only) `taskStartupCommand` — `share_with_team`
-  never writes it to `.ade.json`. `terminal_open` now does ONE effective
+  never writes it to `.fartCode.json`. `terminal_open` now does ONE effective
   settings read (tmux flag + startup command), and when the command is set
   spawns `sh -c '<cmd>'` INSTEAD of `$SHELL` (replace-the-shell semantics —
   terminal exits when the command exits, like agent terminals). Both paths
   covered: plain PTY (program+args already flowed) and tmux durability
-  (new `build_terminal_session_command_args` in `ade-core::pty::tmux` —
+  (new `build_terminal_session_command_args` in `fartcode-core::pty::tmux` —
   args were previously documented as not passed into sessions; the plain
   `build_terminal_session_command` is unchanged). Pure decision fn
   `terminal_program(&ProjectSettings, shell)` in
-  `ade-app/src/commands/terminals.rs` (trim, blank→shell). UI: "Task startup
+  `fartcode-app/src/commands/terminals.rs` (trim, blank→shell). UI: "Task startup
   command" input in ProjectSettings.tsx (placeholder `e.g. omp`), DTO field
   `taskStartupCommand`. Tests: terminal_program unit tests, tmux args
   builder round-trip through real sh (hostile quotes + $HOME), settings
   round-trip incl. not-shareable assert, and a real PTY smoke in
-  ade-terminal (spawn `sh -c` in task cwd — macOS /private realpath trap
+  fartcode-terminal (spawn `sh -c` in task cwd — macOS /private realpath trap
   on cwd compare, canonicalize). Browser-smoke verified save→reopen
   persistence. ⌘⇧O `terminal_open_agent('omp')` unchanged — explicit agent
   tab composes with the default.
@@ -135,7 +148,7 @@ one exists).
 ## Project-level pull (2026-08-06, left nav)
 
 - **Sidebar project rows carry a pull action** — `project_git_pull(project_id)`
-  command resolves `app.projects.get(id)` → `ade_git::remote::pull` (ff-only,
+  command resolves `app.projects.get(id)` → `fartcode_git::remote::pull` (ff-only,
   same contract as the E4-08 footer) at the project ROOT checkout. Motivation:
   after a worktree branch lands on origin's default branch, the project
   checkout (often the branch the app itself runs from) had no in-app way to
@@ -151,7 +164,7 @@ one exists).
   arm; ALTERs: source_side/line_end/linked_task_id/resolved/resolved_at/
   created_by + tasks.source_comment_id). Migration-count tests
   (db_integration + migrations.rs) hardcode the journal length — bump
-  them with every new migration. Domain: `ade_core::line_comments`
+  them with every new migration. Domain: `fartcode_core::line_comments`
   (LineCommentStore CRUD + link_task both-directions in one tx +
   build_comment_prompt pinned EXACTLY to the §14 template; guard
   failures degrade, never fail state reads). Events CommentCreated/
@@ -159,7 +172,7 @@ one exists).
   Commands: add_line_comment (takes ONE `request` struct — clippy
   too_many_arguments forced it; frontend wraps `{request: args}`),
   list/resolve/delete_line_comment, create_task_from_comment (core split
-  out as `create_task_from_comment_core(&App, ...)` for tests; ade-app
+  out as `create_task_from_comment_core(&App, ...)` for tests; fartcode-app
   lib now exposes `pub mod app; pub mod commands;`). create_task's param
   building extracted to `create_task_params` (shared with the comment
   flow, which layers an InitialConversationConfig whose initial_prompt =
@@ -191,7 +204,7 @@ one exists).
 - **E4-08 Footer git actions (#48) shipped:** GitFooter under the commit
   card in the Changes sidebar — branch label + ↑ahead/↓behind badges +
   Fetch / Pull / Push / Publish, and an inline add-remote mini-form when
-  `remotes.length === 0`. Backend: new `ade_git::remote` module —
+  `remotes.length === 0`. Backend: new `fartcode_git::remote` module —
   `fetch` (-q), `pull` **--ff-only** (deliberate reference deviation per
   ticket; diverged history surfaces git's stderr, never a hidden merge),
   `publish` (push -u, refuses when upstream already set — that's
@@ -216,7 +229,7 @@ one exists).
 
 - **E4-06 Commit card (#46) shipped:** bottom-of-Changes-sidebar card —
   message input + Commit / Commit & Push / Commit & Create PR.
-  Backend: new `ade_git::commit` module (free fns like stage.rs — NOT
+  Backend: new `fartcode_git::commit` module (free fns like stage.rs — NOT
   GitOps trait methods; commit/push are UI mutations, stage.rs precedent).
   `commit()` = `commit -m` + rev-parse HEAD, empty msg rejected pre-spawn;
   `push()` = upstream-configured → plain `git push`, else `push -u
@@ -245,7 +258,7 @@ one exists).
   field, explicit buttons instead of split button + remembered action.
   Browser smoke (mocked backend, per-workspace state scenarios by id):
   all 4 matrix rows + commit/push happy path + error surfacing verified.
-  13 ade-git tests (incl. bare-remote upstream fixture, mocked PrLookup
+  13 fartcode-git tests (incl. bare-remote upstream fixture, mocked PrLookup
   guard, offline-safe create_pr).
 - Next: **#48** E4-08 footer git actions (fetch/pull/push/publish/
   add-remote — reuses commit.rs `push()` + `state()` patterns) or **#50**
@@ -285,7 +298,7 @@ one exists).
   text) leave the UI showing just the user card with no strong working
   signal for 20-60s. UX gap to close in the conversation view: an
   unmistakable working indicator (elapsed time + latest tool activity)
-  during silent stretches. Postmortem artifacts: `ade-app/tests/
+  during silent stretches. Postmortem artifacts: `fartcode-app/tests/
   acp_real_adapter_probe.rs` (ignored live probe — start → edit prompt →
   turn settle → file edited; run with --ignored) and a standalone stdio
   driver pattern (/tmp/acp-probe.mjs style: initialize/session/new/
@@ -327,7 +340,7 @@ one exists).
   of unstaged diffs is editable (split b-editor, unified view, Added
   single-doc); staged + baselines read-only. ⌘S bound via CM keymap IN
   the editable editor (no global-registry entry — E5 keeps its own path).
-  New `ade-core::files::write_file` (lexical + canonical containment;
+  New `fartcode-core::files::write_file` (lexical + canonical containment;
   `Error::PathEscape`) behind `write_workspace_file` (commands/files.rs;
   `workspace_path` in commands/git.rs is now pub(crate)). Refresh rules:
   content-identical payload (save echo) skips rebuild (cursor/scroll/undo
@@ -349,7 +362,7 @@ one exists).
   with `path=NULL` and terminals silently fell back to the project path
   (terminals.rs COALESCE). E4-03's `git_status` exposed it as "workspace
   has no local path". Fix: `create_task` routes through
-  `TaskCreationService` (now in App); branch = `ade/<slug>-<suffix>` from
+  `TaskCreationService` (now in App); branch = `fartCode/<slug>-<suffix>` from
   the typed `registry::PROJECT` group (**settings group key is "project"
   SINGULAR** — `get_json("projects")` throws InvalidSettingKey; typed
   `.get()` is a DbSettingsStore inherent method, the trait only has
@@ -359,7 +372,7 @@ one exists).
   Changes panel: not-ready state + Provision button (error match needs
   `.includes()` — frontend errors are "Error: <msg>" prefixed). Changes
   toggle moved to TabBar trailing slot (upper right; right pane's bar
-  when split). Flaky: `ade-runtime worker_integration
+  when split). Flaky: `fartcode-runtime worker_integration
   renderer_env_discarded_and_server_env_reaches_adapter` failed once,
   passed on rerun — timing-sensitive, watch it.
 
@@ -374,7 +387,7 @@ one exists).
   = 150 ms coalesced refetch on git:changed/files:changed for TRACKED
   workspaces only — no polling (smoke-verified flat call count). Discard
   confirm modal via ui `discardTarget` (untracked warns "deletes from
-  disk"). `ade-git::stage` — stage/stage_all/unstage (unborn-HEAD →
+  disk"). `fartcode-git::stage` — stage/stage_all/unstage (unborn-HEAD →
   `git rm --cached -r` fallback)/discard (tracked→restore, untracked→fs
   delete, missing→error); commands git_stage/git_stage_all/git_unstage/
   git_discard. Row click → `openDiffTab` (lib/diff-tabs.ts): single =
@@ -392,7 +405,7 @@ one exists).
   rename orig→new, stage/stage-all/unstage/discard flows, event refresh,
   preview replace + persistence, unified↔split + mode persistence across
   reload, notices, diff content refresh on git:changed, restart restore
-  from seeded view-state. Mock lessons: multiple `ade:event` listeners
+  from seeded view-state. Mock lessons: multiple `fartcode:event` listeners
   need handler ARRAYS; viewState must be seeded IN THE MOCK for reload
   tests (mock re-init wipes persisted state); scope assertions to the
   active `.tab-content` (hidden tabs stay mounted). Deps added:
@@ -402,7 +415,7 @@ one exists).
 
 ## Current state (2026-08-05, latest++++)
 
-- **#42 E4-02 Git status/diff engine (worktree-scoped):** `ade-git` grew
+- **#42 E4-02 Git status/diff engine (worktree-scoped):** `fartcode-git` grew
   `status.rs` + `diff.rs` (crate doc already claimed status/diff — now
   true). Status: one `git --no-optional-locks status --porcelain=v2 -z
   -uall` (no-optional-locks so status never writes the index → no E4-01
@@ -421,7 +434,7 @@ one exists).
   materialize), NUL-in-8KiB binary sniff; guarded payloads keep sizes,
   drop contents. Path inputs validated lexically (no abs, no `..`).
   Commands `git_status(workspaceId)` / `git_file_diff(workspaceId, path,
-  side: "staged"|"unstaged", origPath?)` in ade-app/src/commands/git.rs.
+  side: "staged"|"unstaged", origPath?)` in fartcode-app/src/commands/git.rs.
   22 new tests (fixture repos: conflict both-lists + :2: fallback, rename,
   spaces-in-paths, binary, oversize both paths, traversal rejection;
   synthetic parser/numstat vectors incl. rename `\0` framing). Next:
@@ -432,7 +445,7 @@ one exists).
 
 - **#41 E4-01 File+git event watcher → live refresh pipeline:** E4 series
   opened (epic #40, children #41–51, milestone "Phase 1", label phase:1).
-  New `ade-core::fs_watch`: notify-8 `FsWatchService` — one
+  New `fartcode-core::fs_watch`: notify-8 `FsWatchService` — one
   RecommendedWatcher, refcounted **canonical** watch roots (worktree +
   shared git common dir when it lives outside the worktree), std-thread
   dispatcher debouncing raw events into 100 ms batches → pure
@@ -444,12 +457,12 @@ one exists).
   bus: new `FilesChanged { workspace_id, paths (rel, ≤128) }` + existing
   `GitChanged`. `layout.rs` resolves gitdir/commondir by pure fs (no git
   binary; canonicalize everything — FSEvents reports realpaths, /tmp
-  symlink trap). Lifecycle in `ade-app/src/watchers.rs` (indexer.rs
+  symlink trap). Lifecycle in `fartcode-app/src/watchers.rs` (indexer.rs
   pattern): boot backfill (`boot_targets`: non-archived tasks w/ local
   workspace path), TaskProvisioned → `target_for` → register,
   TaskDeleted → unregister; workspaces shared by several tasks
   refcounted. Frontend receives git:changed / files:changed via the
-  established `ade:event` envelope (ticket's per-name Tauri events
+  established `fartcode:event` envelope (ticket's per-name Tauri events
   adjusted to the envelope convention). Service mutexes are parking_lot
   (rs-parking-lot rule; Db's std Mutex contract untouched). 19 fs_watch
   tests incl. real-FSEvents integration: burst→one batch, linked-worktree
@@ -477,7 +490,7 @@ one exists).
   (conversation tabs restore as-is; view hydrates via `acp_history` with
   in-flight guard). tauri.ts types tightened to the exact models.rs
   discriminated unions. No Rust changes. ADR-0031. Verified per
-  ade-frontend-browser-smoke (mock: /tmp/ade-mock-33.js pattern): full
+  fartCode-frontend-browser-smoke (mock: /tmp/fartCode-mock-33.js pattern): full
   streaming+permission round-trip, task switch+return, cold-restart
   history restore, closed/error states. Next: E2-11 parent #21 can close;
   remaining Phase-2 work per issue list.
@@ -485,11 +498,11 @@ one exists).
 ## Current state (2026-08-05, latest+)
 
 - **#32 E2-11-5 Commands + conversation-store wiring + provider decision:**
-  ACP conversations actually chat. `ade-app::acp_runtime::AcpRuntime`
+  ACP conversations actually chat. `fartcode-app::acp_runtime::AcpRuntime`
   owns the SessionManager and spawns the adapter binary as a direct child
   per conversation (env server-resolved via keyring `resolve_env` with
   launcher process-env fallback; renderer never supplies env — ADR-0030:
-  the E2-11-2 `ade-acp-runtime` worker stays DORMANT; the in-app runtime
+  the E2-11-2 `fartcode-acp-runtime` worker stays DORMANT; the in-app runtime
   won, keeping all E2-11-4 wiring live). Commands: `create_conversation`
   (runtime type decided SERVER-SIDE from capabilities.acp — renderer never
   picks it), `list_conversations` (DTO carries derived `runtime` field,
@@ -502,12 +515,12 @@ one exists).
   `send-context` command routes only when runtime==='acp' (TUI untouched).
   Boot ACP rehydration NOT wired (PTY stays byte-identical; follow-up with
   #33 chat UI). Tests: 3 E2E (fake adapter e2e, gate non-regression,
-  teardown) + browser smoke. Test seam: `ADE_ACP_ADAPTER` env override.
+  teardown) + browser smoke. Test seam: `FARTCODE_ACP_ADAPTER` env override.
   Next: **#33 E2-11-6** (transcript renderer + permission prompts).
 
 ## Current state (2026-08-05, latest)
 
-- **#31 E2-11-4 Transcript reducer + live models:** `ade-acp::transcript`
+- **#31 E2-11-4 Transcript reducer + live models:** `fartcode-acp::transcript`
   owns the full port of the reference reducer — pure
   `(ParserState, ReducerInput) → ParserState` fold (`reducer::reduce`),
   stateful `TranscriptParser` (push/settle_turn/begin_replay/end_replay/
@@ -517,7 +530,7 @@ one exists).
   agents, plan). `SessionCell` now owns parser + `RawAcpLog` (50k-entry
   in-memory raw-traffic export); raw `Turn.updates` is GONE — history is
   reduced turns, prompt text = synthetic user-message item. Event seams =
-  `SessionEvents` trait fired by the cell; `ade-app::acp_events::
+  `SessionEvents` trait fired by the cell; `fartcode-app::acp_events::
   TauriAcpEvents` emits `acp:update` / `acp:transcript` (full LiveModels
   snapshot) / `acp:permission_request` keyed by conversationId —
   bypassing the internal bus (terminal:output precedent). ADR-0029.
@@ -558,7 +571,7 @@ one exists).
   beyond the persisted tabs. Real-tmux integration test
   `list_by_prefix_reports_survivors_with_attach_state` pins the listing.
 
-- **#30 E2-11-3 SessionManager + SessionCell:** `ade-acp::session` owns the
+- **#30 E2-11-3 SessionManager + SessionCell:** `fartcode-acp::session` owns the
   runtime (cell = state machine starting→ready→working/cancelling→closed,
   prompt queue with drain-on-settle, permission broker, rev-guarded draft,
   raw update stream per turn; manager = cells keyed by conversationId,
@@ -566,13 +579,13 @@ one exists).
   session/new + `SessionIdStore` persistence, initial-queue dispatch).
   Persistence is a one-method trait — the real `DbConversationStore`
   adapter wires at #32. Provider decision hook =
-  `ade_core::conversations::resolve_session_path` (ACP needs config type
+  `fartcode_core::conversations::resolve_session_path` (ACP needs config type
   AND `capabilities.acp`; else TUI path, E2-06 launcher untouched).
   Deviations from reference in cell module docs (no quiesce timer, no
   background agents — both arrive with the E2-11-4 reducer). ADR-0027.
-  Tests: `ade-acp/tests/session_manager_integration.rs` (9 tests vs fake
+  Tests: `fartcode-acp/tests/session_manager_integration.rs` (9 tests vs fake
   adapter incl. restart-resume) + decision regression in
-  `ade-core/tests/conversations_integration.rs`. Next: **#31 E2-11-4**
+  `fartcode-core/tests/conversations_integration.rs`. Next: **#31 E2-11-4**
   (transcript reducer + live models + `acp:*` events).
 
 ## Current state (2026-08-04)
@@ -594,7 +607,7 @@ one exists).
   xterm theme re-tinted in `lib/terminals.ts` (bg `#0b0d10`, cursor amber).
   Old `--navy*` AND #39's signal-box `--board/--ivory/--aspect-*` tokens are
   gone — don't reintroduce.
-- **Work tracking is GitHub issues only** (`jknack0/ade`) — `tickets-phase0.md`
+- **Work tracking is GitHub issues only** (`jknack0/fartCode`) — `tickets-phase0.md`
   was retired 2026-08-04; its Appendix is preserved as `phase0-checklists.md`.
   New work = new issue (`phase:0`/`phase:2` + `size:*` labels, milestone "Phase 0").
 - **Terminal-only task view (2026-08-04):** chat surfaces fully removed —
@@ -602,7 +615,7 @@ one exists).
   the OMP agent terminal via new `terminal_open_agent` (provider-registry
   binary resolution through `find_on_path`). Frontend `conversation` tab
   kind, ConversationView, conversations store, palette branch, and backend
-  conversation commands/indexing/search are gone; `ade_core::conversations`
+  conversation commands/indexing/search are gone; `fartcode_core::conversations`
   stays (PTY launcher + boot rehydration depend on it). Scope precedence is
   now modal > editor > task-view > project-view > app-view > global.
 - **Terminal lifecycle (#37) kept under the terminal-only refactor:** xterm
@@ -619,14 +632,14 @@ one exists).
   broken into #28–#33; #28 (2827012), #34 (9041aad), #29 (2ca862a) done.
   **#35 E2-12 interactive task terminal done (713dfbd) + terminal-first
   default (5ea481d) + lifecycle fix (#37) + terminal-only refactor.**
-  Work-inside-ade path for agents like omp. Next E2-11:
+  Work-inside-fartCode path for agents like omp. Next E2-11:
   **#30 E2-11-3** (SessionManager + session-id persistence).
-- **HEAD (2827012, 2026-08-04):** E2-11-1 — ade-acp is a real ACP v1
+- **HEAD (2827012, 2026-08-04):** E2-11-1 — fartcode-acp is a real ACP v1
   client: stdio JSON-RPC transport + client lifecycle (initialize/new/load/
   prompt/cancel/set_mode/set_config_option) + scoped fs handlers +
   permission surfacing. Wire types from `agent-client-protocol-schema`
-  v1.6 (ADR-0024); test fixture `ade-acp/src/bin/fake_acp_adapter.rs`;
-  8 integration tests in `ade-acp/tests/protocol_integration.rs`.
+  v1.6 (ADR-0024); test fixture `fartcode-acp/src/bin/fake_acp_adapter.rs`;
+  8 integration tests in `fartcode-acp/tests/protocol_integration.rs`.
 - **E14-01 (16b8e8f):** keybinding registry — scope precedence
   modal > editor > task-view > project-view > app-view > global
   (conversation-view scope removed with the chat surfaces),
@@ -655,7 +668,7 @@ one exists).
   (ADR-0001).
 - **Settings** use layered precedence + KV store (ADR-0002).
 - **Tauri commands are thin and synchronous** where possible (ADR-0022); domain
-  fns return `Result<T, ade_core::Error>`, commands map errors to `String` and
+  fns return `Result<T, fartcode_core::Error>`, commands map errors to `String` and
   return DTOs.
 - **Terminal persistence** via tmux; resume across restarts (ADR-0021).
 - **Task deletion teardown** semantics in ADR-0023.
@@ -694,6 +707,6 @@ one exists).
 - `ARCHITECTURE.md` — authoritative reference: traits, error type, async
   boundaries, event bus, DB schema. Ticket contradicting it → ticket loses.
 - `PRD.md` — product spec + epic inventory.
-- GitHub issues — the only work list (`gh issue list -R jknack0/ade`).
+- GitHub issues — the only work list (`gh issue list -R jknack0/fartCode`).
 - `phase0-checklists.md` — cross-cutting Phase 0 process checklists (ex-Appendix).
 - `decisions/` — ADRs 0001–0023; record new ones before merge, not after.

@@ -2,7 +2,7 @@
 // task-switch ordering contract (visible tree order, skipping collapsed).
 import { create } from "zustand";
 import {
-  AdeEvent,
+  FartcodeEvent,
   ProjectDto,
   TaskDto,
   createTask as apiCreateTask,
@@ -11,7 +11,7 @@ import {
   deleteTask as apiDeleteTask,
   listProjects,
   listTasks,
-  onAdeEvent,
+  onFartcodeEvent,
   setViewState,
   togglePin as apiTogglePin,
 } from "../lib/tauri";
@@ -215,7 +215,7 @@ function persistSidebarView() {
 // Wire backend events into the store (project add/delete, task create/delete).
 export function wireSidebarEvents(): () => void {
   let unlisten: (() => void) | null = null;
-  onAdeEvent((event: AdeEvent) => {
+  onFartcodeEvent((event: FartcodeEvent) => {
     const s = useSidebar.getState();
     if (event.type === "project:deleted") {
       // The backend already deleted everything; remove locally so the
@@ -252,7 +252,7 @@ export function wireSidebarEvents(): () => void {
   }).then((fn) => {
     unlisten = fn;
   }).catch((e) => {
-    console.error("ade:event listen failed", e);
+    console.error("fartcode:event listen failed", e);
   });
   return () => unlisten?.();
 }

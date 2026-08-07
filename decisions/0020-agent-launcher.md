@@ -10,7 +10,7 @@ layer to a live agent process.
 
 ## Decision
 
-1. **`ade_core::pty::launcher::AgentLauncher`** owns the flow: resolve binary
+1. **`fartcode_core::pty::launcher::AgentLauncher`** owns the flow: resolve binary
    → build command (E3-03 `build_command_with_spill`, session args from
    E2-05) → env (E3-08 allowlist) → spawn → prompt delivery → wait → events →
    respawn.
@@ -19,7 +19,7 @@ layer to a live agent process.
    agent child sees ONLY the allowlist output (without this the parent env —
    secrets included — leaks through, which the E2-06 integration test
    caught). Lifecycle scripts keep `Inherit` (reference parity: they run the
-   user's shell env + `ADE_*`).
+   user's shell env + `FARTCODE_*`).
 3. **Respawn**: `MAX_RESPAWNS = 2` respawns AFTER the initial launch (3
    spawns total), 500 ms delay, gated on `respawn_resume` (supervisor
    decision) and disabled under tmux; events `AgentRunStarted` /

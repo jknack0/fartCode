@@ -4,7 +4,7 @@ Status: accepted (ticket E2-07)
 
 ## Context
 
-Quit and relaunch ade; tasks, terminals, and agent sessions come back
+Quit and relaunch fartCode; tasks, terminals, and agent sessions come back
 without losing work. The restart-survival contract.
 
 ## Decision
@@ -21,10 +21,10 @@ without losing work. The restart-survival contract.
    re-sent on resume, the model/auto-approve come from the stored config.
    The per-task → per-conversation boot loop is the app shell's job; the
    domain fn is testable.
-3. **Tmux durability** (`ade_core::pty::tmux`): session name =
-   `ade-` + base64url(sessionId) (UTF-8-safe, round-trips); shell line =
+3. **Tmux durability** (`fartcode_core::pty::tmux`): session name =
+   `fartCode-` + base64url(sessionId) (UTF-8-safe, round-trips); shell line =
    `(has-session || new-session -d) && (mouse on) && (history-limit 100000)
-   && attach` — create-if-missing so a hard kill of ade survives in the
+   && attach` — create-if-missing so a hard kill of fartCode survives in the
    tmux server. Respawn is already disabled when tmux is enabled (E2-06).
    Non-tmux fallback: best-effort rehydration (documented degradation).
 4. **Kill-restart acceptance** (`terminal_persistence_integration`): a fake
@@ -50,7 +50,7 @@ without losing work. The restart-survival contract.
 
 ## Addendum — boot orchestration (same ticket, later pass)
 
-- **`Rehydrator`** (ade-core::pty::launcher): walks projects → tasks → PTY
+- **`Rehydrator`** (fartcode-core::pty::launcher): walks projects → tasks → PTY
   conversations, rebuilds each launch context from the DB (worktree path
   from the workspace row; provider from the conversation), and resumes via
   `AgentLauncher::rehydrate` on per-conversation threads (blocking, joined
@@ -62,6 +62,6 @@ without losing work. The restart-survival contract.
   that id; in non-tmux mode it effectively restarts fresh).
 - **`RemoteRehydrate` trait + `NoopRemoteRehydrate`**: the Phase-3 SSH
   reconnect hook, invoked after each local resume (no-op today).
-- **App boot**: `ade-app` builds the Rehydrator in `App::init` and the
+- **App boot**: `fartcode-app` builds the Rehydrator in `App::init` and the
   setup hook spawns `rehydrate_all` on a background thread (after DB init,
   reference boot order; the window never blocks on agent spawns).

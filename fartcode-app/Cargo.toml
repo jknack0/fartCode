@@ -1,0 +1,38 @@
+[package]
+name = "fartcode-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+rusqlite = { workspace = true }
+base64 = { workspace = true }
+parking_lot = "0.12"
+uuid = { version = "1", features = ["v4"] }
+tauri = { workspace = true, features = ["test"] }
+fartcode-core = { path = "../fartcode-core" }
+fartcode-acp = { path = "../fartcode-acp" }
+agent-client-protocol-schema = { workspace = true }
+fartcode-providers = { path = "../fartcode-providers" }
+fartcode-git = { path = "../fartcode-git" }
+fartcode-terminal = { path = "../fartcode-terminal" }
+tauri-plugin-shell = { workspace = true }
+tauri-plugin-process = { workspace = true }
+tauri-plugin-dialog = { workspace = true }
+tauri-plugin-os = { workspace = true }
+tauri-plugin-single-instance = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lib]
+name = "fartcode_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]

@@ -1,5 +1,5 @@
 ---
-name: ade
+name: fartCode
 description: emdash's working surface — neutral charcoal chassis, emerald primary action, blue selection, status hues for agent state.
 colors:
   background: "#111111"
@@ -126,13 +126,13 @@ components:
     size: "8px"
 ---
 
-# Design System: ade
+# Design System: fartCode
 
 ## Overview
 
 **Creative North Star: "emdash's working surface"**
 
-ade wears the visual world of its reference implementation, emdash: a neutral
+fartCode wears the visual world of its reference implementation, emdash: a neutral
 charcoal chassis where surfaces step through background (main), secondary (tab
 bars, wells), and tertiary (the sidebar column); hairline borders do the
 separating; and color is strictly functional. Emerald is the one action color —
@@ -161,7 +161,7 @@ precede JetBrains Mono inside terminals so Powerline glyphs render.
 ## Colors
 
 ### Primary
-- **Emerald** (#00a67b): the primary button face (Add project, Save, Get started), hover #00b589, border #006c50, white text. Also the brand dot set into the "ade" wordmark. Never a background tint, never decoration.
+- **Emerald** (#00a67b): the primary button face (Add project, Save, Get started), hover #00b589, border #006c50, white text. Also the brand dot set into the "fartCode" wordmark. Never a background tint, never decoration.
 - **Info Blue** (#82baff): selection foreground, the focus lamp on the keyboard-active pane's tab, customized-shortcut marks and chords, info notice text. Selection wash is #173865 (and rgba(57,142,255,0.475) inside terminals).
 - **Destructive Red** (#f27470): delete hovers, danger buttons on a #2a1b1a face with #964441 border, error strips.
 

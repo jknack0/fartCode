@@ -15,7 +15,7 @@ fs-fallback removal, bounded prune), `task-session-manager.ts`
 
 ## Decision
 
-1. **`ade-core::tasks::deletion::TaskDeletionService`** — the operation
+1. **`fartcode-core::tasks::deletion::TaskDeletionService`** — the operation
    service wired once in `App` (ARCHITECTURE §7):
    `(db, tasks, conversations, projects, worktrees, sessions)`.
 2. **Order of operations** (reference-faithful):

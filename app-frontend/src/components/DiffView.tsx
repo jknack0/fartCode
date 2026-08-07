@@ -204,8 +204,8 @@ export default function DiffView({
         setThread(detail.side);
       }
     };
-    window.addEventListener("ade:show-comments", onShow);
-    return () => window.removeEventListener("ade:show-comments", onShow);
+    window.addEventListener("fartCode:show-comments", onShow);
+    return () => window.removeEventListener("fartCode:show-comments", onShow);
   }, [taskId, params?.path]);
 
   // Restored tabs: register id-parsed params so event refresh finds them.

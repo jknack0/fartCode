@@ -16,7 +16,7 @@ native-session-id set, and hydrates/dehydrates conversations across restarts.
 
 ## Decision
 
-- **`ade-core::conversations`** — `model.rs` (types + config + row mapper) and
+- **`fartcode-core::conversations`** — `model.rs` (types + config + row mapper) and
   `mod.rs` (store + session logic). Wired as `DbConversationStore(db,
   event_bus)` per ARCHITECTURE §7.
 - **Session-id persistence** (`set_session_id`): the reference's single

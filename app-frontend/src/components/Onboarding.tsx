@@ -51,9 +51,9 @@ export default function Onboarding() {
       <div className="modal onboarding">
         {step === "welcome" && (
           <>
-            <h2>Welcome to ade</h2>
+            <h2>Welcome to fartCode</h2>
             <p className="muted">
-              ade runs coding agents in isolated worktrees. Three quick steps
+              fartCode runs coding agents in isolated worktrees. Three quick steps
               — all optional, all skippable.
             </p>
             <div className="modal-actions">

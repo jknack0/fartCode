@@ -1,4 +1,4 @@
-// Thin typed wrappers over the ade Tauri commands + the event channel.
+// Thin typed wrappers over the fartCode Tauri commands + the event channel.
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -28,7 +28,7 @@ export interface TaskDto {
   type: string;
 }
 
-export type AdeEvent =
+export type FartcodeEvent =
   | { type: "project:added"; id: string; name: string; path: string }
   | { type: "project:deleted"; id: string }
   | { type: "task:created"; id: string; projectId: string; name: string }
@@ -86,8 +86,8 @@ export function deleteTask(
 }
 
 /** Subscribe to backend events; returns an unsubscribe fn. */
-export function onAdeEvent(cb: (event: AdeEvent) => void): Promise<() => void> {
-  return listen<AdeEvent>("ade:event", (e) => cb(e.payload));
+export function onFartcodeEvent(cb: (event: FartcodeEvent) => void): Promise<() => void> {
+  return listen<FartcodeEvent>("fartcode:event", (e) => cb(e.payload));
 }
 
 // -- Project settings (E1-05) ------------------------------------------------
@@ -339,7 +339,7 @@ export interface ConversationDto {
 }
 
 /** The reduced transcript + live models (`acp_history` / `acp:transcript`
- * payload). Serialized camelCase from `ade_acp::LiveModels`. */
+ * payload). Serialized camelCase from `fartcode_acp::LiveModels`. */
 export interface LiveModels {
   sessionState: {
     lifecycle: "starting" | "ready" | "working" | "cancelling" | "closed";
@@ -388,7 +388,7 @@ export interface PendingPermission {
 
 /** One reduced turn. Items are the serializer's untagged union — `kind`
  * discriminates ("message" | "thinking" | a tool-call kind | "tool-group");
- * shapes mirror `ade_acp::transcript::models` exactly. */
+ * shapes mirror `fartcode_acp::transcript::models` exactly. */
 export interface TranscriptTurn {
   id: string;
   seq: number;
@@ -619,7 +619,7 @@ export function onAcpPermissionRequest(
   }>("acp:permission_request", (e) => cb(e.payload));
 }
 
-// -- E4 Git & diff (shapes mirror ade-git status.rs / diff.rs exactly) --------
+// -- E4 Git & diff (shapes mirror fartcode-git status.rs / diff.rs exactly) --------
 
 export interface GitChangeDto {
   path: string;
@@ -963,7 +963,7 @@ export interface ProposalDto {
   issues: ProposalIssueDto[];
 }
 
-/** Validates a raw ade-proposal block payload. Rejects (throws) on
+/** Validates a raw fartCode-proposal block payload. Rejects (throws) on
  * malformed input — the caller renders the block as plain text instead. */
 export function issueParseProposal(text: string): Promise<ProposalDto> {
   return invoke("issue_parse_proposal", { text });

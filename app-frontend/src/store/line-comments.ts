@@ -7,7 +7,7 @@ import {
   addLineComment,
   deleteLineComment,
   listLineComments,
-  onAdeEvent,
+  onFartcodeEvent,
   resolveLineComment,
   type LineCommentDto,
 } from "../lib/tauri";
@@ -124,7 +124,7 @@ if (typeof window !== "undefined") window.__lineCommentsStore = useLineComments;
 export function wireLineCommentEvents(): () => void {
   let unlisten: (() => void) | null = null;
   let disposed = false;
-  void onAdeEvent((event) => {
+  void onFartcodeEvent((event) => {
     const s = useLineComments.getState();
     if (event.type === "comment:created") {
       // The adding side already patched its own list; other open diffs of

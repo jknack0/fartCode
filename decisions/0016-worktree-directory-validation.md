@@ -7,7 +7,7 @@ Status: accepted (ticket E1-05)
 E1-05 needs per-project settings editable in-app: worktree directory,
 branch/remotes, lifecycle scripts, preserve patterns, workspace provider,
 auto-run toggles, and share-with-team (write shareable fields to the repo
-`.ade.json`, clear local). The settings store and share-with-team already
+`.fartCode.json`, clear local). The settings store and share-with-team already
 existed (E1-02); what was missing was worktree-directory validation and the
 app surface (commands + panel).
 
@@ -28,7 +28,7 @@ app surface (commands + panel).
 3. **Commands**: `get_project_settings` / `update_project_settings`
    (full-replace, camelCase DTO) / `share_with_team` — thin, `String` errors.
 4. **Panel**: modal with every field, defaults shown as placeholders for
-   unset values (`~/ade/worktrees`, `main`, `origin`), save/validation
+   unset values (`~/fartCode/worktrees`, `main`, `origin`), save/validation
    errors, and a share-with-team button. The `defaultBranch` untagged union
    (`"main"` | `{ name, remote }`) is edited as name + remote checkbox in
    the UI.
@@ -37,7 +37,7 @@ app surface (commands + panel).
 
 - Invalid worktree directories are rejected with a clear, typed error at
   the command boundary; `~` works everywhere (write + read).
-- Share-with-team moves shareable fields into `.ade.json` and clears them
+- Share-with-team moves shareable fields into `.fartCode.json` and clears them
   locally (existing E1-02 behavior), surfaced in the panel with a fresh
   read afterwards.
 - The panel is modal-on-gear; a full settings page could reuse the same

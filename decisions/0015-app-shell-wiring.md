@@ -10,15 +10,15 @@ per ARCHITECTURE §7. Deleting a project must tear down worktrees + rows.
 
 ## Decision
 
-1. **App struct + managed state**: `ade-app::app::App` (db, settings,
+1. **App struct + managed state**: `fartcode-app::app::App` (db, settings,
    projects, tasks, conversations, event_bus as `Arc`s) built in `App::init`
-   (db path from `ADE_DB_FILE`), managed via `app.manage(Arc<App>)`, and
+   (db path from `FARTCODE_DB_FILE`), managed via `app.manage(Arc<App>)`, and
    commands take `State<'_, Arc<App>>` (Tauri 2 keys state by exact `TypeId`
    — no Arc coercion; §7's sketch already used `Arc<dyn ...>` fields).
    `events`/`conversations`/`settings`/`db` are wired but unused until their
    tickets (marked `#[allow(dead_code)]`, kept alive by `App`).
 2. **Event bridge**: `spawn_event_forwarder` forwards a whitelist of
-   `InternalEvent`s to the frontend channel `ade:event` (serde JSON). The
+   `InternalEvent`s to the frontend channel `fartcode:event` (serde JSON). The
    forwarder survives `RecvError::Lagged` (drops old events, keeps bridging)
    and only ends on `Closed`.
 3. **Project delete teardown**: the project row delete happens in ONE
@@ -44,5 +44,5 @@ per ARCHITECTURE §7. Deleting a project must tear down worktrees + rows.
   and drives navigation; every command maps errors to `String` (no panics).
 - Same-named projects remain a documented edge until the segment scheme
   changes (tracked with E2-xx worktree work).
-- `ade-app` has unit tests for the event mapper; the cascade/teardown is
+- `fartcode-app` has unit tests for the event mapper; the cascade/teardown is
   covered by `worktrees_integration::delete_project_cascades_rows_and_tears_down_worktrees`.

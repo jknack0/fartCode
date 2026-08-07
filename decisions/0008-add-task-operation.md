@@ -16,7 +16,7 @@ separate `provisionWorkspace` step that ensures the worktree.
 
 ## Decision
 
-- **Core operation in `ade-core::tasks::operations`** (`TaskCreationService`):
+- **Core operation in `fartcode-core::tasks::operations`** (`TaskCreationService`):
   a single `create()` that (1) validates project + inputs (typed `Error`s,
   never panics), (2) commits task + workspace + conversation rows through the
   extended `DbTaskStore::create`, (3) provisions the workspace via
@@ -24,7 +24,7 @@ separate `provisionWorkspace` step that ensures the worktree.
   `task:provisioned`. The dialog-facing branch picker is exposed as
   `list_branches(project_id)`.
 - **`WorkspaceTarget` enum** (new-worktree | repository-instance | project-root
-  | byoi) added to `ade-core::tasks`; `DbTaskStore::create` honors it
+  | byoi) added to `fartcode-core::tasks`; `DbTaskStore::create` honors it
   (workspace row shape + id reuse), with the versioned workspace config
   (`{version:'2', git, workspace}`) stored on `workspaces.config`.
 - **Conversation config builder**: `InitialConversationConfig::build_config()`

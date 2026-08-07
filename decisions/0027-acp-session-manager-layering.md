@@ -1,4 +1,4 @@
-# ADR-0027 — ACP SessionManager/SessionCell live in ade-acp behind a persistence trait
+# ADR-0027 — ACP SessionManager/SessionCell live in fartcode-acp behind a persistence trait
 
 Status: accepted (issue #30)
 
@@ -12,21 +12,21 @@ one manager keyed by conversation id, provider session ids persisted in
 
 Two layering questions:
 
-1. Where do the types live? `ade-core` owns the conversations domain, but
-   ARCHITECTURE.md's crate graph makes `ade-core` the leaf — and the
+1. Where do the types live? `fartcode-core` owns the conversations domain, but
+   ARCHITECTURE.md's crate graph makes `fartcode-core` the leaf — and the
    session machinery speaks ACP wire types (`agent-client-protocol-schema`)
-   and drives an `AcpClient`, which belong to `ade-acp`.
-2. How does the manager persist session ids without `ade-acp` depending on
-   `ade-core` (forbidden direction: `ade-acp` is a sibling stub crate, not
-   below `ade-core`)?
+   and drives an `AcpClient`, which belong to `fartcode-acp`.
+2. How does the manager persist session ids without `fartcode-acp` depending on
+   `fartcode-core` (forbidden direction: `fartcode-acp` is a sibling stub crate, not
+   below `fartcode-core`)?
 
 ## Decision
 
-1. **`ade-acp::session` owns the runtime** — `SessionCell` + `SessionManager`
-   live next to the client/transport they drive. No `ade-core` dependency is
-   added to `ade-acp`.
+1. **`fartcode-acp::session` owns the runtime** — `SessionCell` + `SessionManager`
+   live next to the client/transport they drive. No `fartcode-core` dependency is
+   added to `fartcode-acp`.
 2. **Persistence via a one-method trait** — `SessionIdStore::set_session_id`
-   is defined in `ade-acp`; the app layer (#32) implements it over
+   is defined in `fartcode-acp`; the app layer (#32) implements it over
    `DbConversationStore` (which already has the guarded single-UPDATE
    `set_session_id` from E2-05). Errors are logged, never fatal (launcher
    precedent, E2-06).
@@ -36,7 +36,7 @@ Two layering questions:
    host already isolates one session per worker. The manager takes the
    client via `StartInput` (spawned by the caller — test rig now, process
    host at #32).
-4. **The provider decision hook lives in `ade-core::conversations`** —
+4. **The provider decision hook lives in `fartcode-core::conversations`** —
    `resolve_session_path(conversation)` returns `SessionPath::Acp` only when
    BOTH `config.type == acp` AND the registry reports
    `capabilities.acp`; every other shape falls back to the TUI/PTY path,
@@ -48,7 +48,7 @@ Two layering questions:
 
 ## Consequences
 
-- `ade-acp` tests run against the fake adapter with an in-memory
+- `fartcode-acp` tests run against the fake adapter with an in-memory
   `SessionIdStore`; the restart-resume acceptance test simulates "restart"
   as a fresh manager + fresh adapter process seeded with the persisted id.
 - #32 must wire the real `SessionIdStore` adapter, the Tauri commands, and

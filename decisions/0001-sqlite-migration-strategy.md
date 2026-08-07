@@ -25,7 +25,7 @@ with sha256 recorded but never re-verified.
 - **FTS tables live outside migrations**, version-gated via `kv` keys
   (`fts_version='3'`, `file_index_version='4'`) exactly as later tickets read
   them; a gate bump drops and rebuilds.
-- Legacy reference DBs (`emdash4.db`/`emdash3.db`) are copied to `ade.db` via
+- Legacy reference DBs (`emdash4.db`/`emdash3.db`) are copied to `fartCode.db` via
   `VACUUM INTO` with `app_secrets` cleared — but a copied reference DB is *not*
   schema-identical to the Phase 0 schema, so init fails loudly rather than
   corrupting; the real data-migration path is a later-phase concern.

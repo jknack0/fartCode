@@ -59,7 +59,7 @@ export default function CommitCard({ workspaceId }: { workspaceId: string }) {
       setPhase("creating-pr");
       try {
         // Push-when-unpublished + PR-open guard live in the backend
-        // (ade_git::commit::create_pr); the browser finishes the PR.
+        // (fartcode_git::commit::create_pr); the browser finishes the PR.
         const outcome = await gitCreatePr(workspaceId);
         await open(outcome.url);
         setPhase("idle");

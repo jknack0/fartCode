@@ -10,7 +10,7 @@ import {
 } from "../lib/tauri";
 
 const DEFAULTS = {
-  worktreeDirectory: "~/ade/worktrees",
+  worktreeDirectory: "~/fartCode/worktrees",
   defaultBranch: "main",
   baseRemote: "origin",
 };
@@ -71,8 +71,8 @@ export default function ProjectSettings({
       setDirty(false);
       setNotice(
         shared
-          ? "Shared to .ade.json — commit it to give teammates these defaults"
-          : "Nothing local to share — all shareable fields already live in .ade.json",
+          ? "Shared to .fartCode.json — commit it to give teammates these defaults"
+          : "Nothing local to share — all shareable fields already live in .fartCode.json",
       );
     } catch (e) {
       setError(String(e));

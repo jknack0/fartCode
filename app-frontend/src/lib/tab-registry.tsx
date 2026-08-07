@@ -76,7 +76,7 @@ export const TAB_KINDS: Record<TabKind, TabKindDef> = {
     label: "Script",
     glyph: "SCR",
     // The tab id IS the PTY id minted by terminal_open_lifecycle. The
-    // terminal runs the script with the ADE_* env contract; when the script
+    // terminal runs the script with the FARTCODE_* env contract; when the script
     // exits the tab stays (the backend retains the entry) and the tail is
     // replayed on reattach (E1-06).
     render: ({ tab, active }) => (

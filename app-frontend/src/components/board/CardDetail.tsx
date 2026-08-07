@@ -11,7 +11,7 @@ import {
   issueList,
   issueUnlink,
   issueUpdate,
-  onAdeEvent,
+  onFartcodeEvent,
   type IssueDto,
 } from "../../lib/tauri";
 import { useUi } from "../../store/ui";
@@ -61,7 +61,7 @@ export default function CardDetail({
         })
         .catch((e) => !cancelled && setError(String(e)));
     void reload();
-    const unlisten = onAdeEvent((ev) => {
+    const unlisten = onFartcodeEvent((ev) => {
       if (
         (ev.type === "issue:created" ||
           ev.type === "issue:updated" ||

@@ -1,7 +1,7 @@
-# Architecture — ade
+# Architecture — fartCode
 
 **Audience:** AI coding agents implementing Phase 0 tickets.
-**Companion to:** `PRD.md` (product spec), GitHub issues (work breakdown — `gh issue list -R jknack0/ade`).
+**Companion to:** `PRD.md` (product spec), GitHub issues (work breakdown — `gh issue list -R jknack0/fartCode`).
 
 Every decision here is binding. Tickets assume this document exists; if a ticket
 contradicts this file, this file wins (update the ticket).
@@ -12,14 +12,14 @@ contradicts this file, this file wins (update the ticket).
 
 ```
                     ┌──────────────────┐
-                    │    ade-app     │  Tauri shell, command modules, events
+                    │    fartcode-app     │  Tauri shell, command modules, events
                     └────────┬─────────┘
                              │
         ┌────────────────────┼────────────────────┐
         │                    │                    │
         ▼                    ▼                    ▼
 ┌───────────────┐   ┌───────────────┐   ┌───────────────┐
-│  ade-core  │   │ade-terminal│   │  ade-git    │
+│  fartcode-core  │   │fartcode-terminal│   │  fartcode-git    │
 │  (all domain) │   │  (PTY, tmux)  │   │ (worktrees,    │
 │               │   │               │   │  git ops, PR)  │
 └───────┬───────┘   └───────────────┘   └───────────────┘
@@ -27,29 +27,29 @@ contradicts this file, this file wins (update the ticket).
         │ depends on (Phase 0 subset shown):
         ▼
 ┌───────────────┐   ┌───────────────┐
-│ade-providers│   │ ade-telemetry│
+│fartcode-providers│   │ fartcode-telemetry│
 │ (35 agents,    │   │ (stub in Ph0)   │
 │  capabilities) │   │                 │
 └───────────────┘   └─────────────────┘
 ```
 
-**Phase 0 crates that exist but are mostly stubs:** `ade-acp`, `ade-ssh`,
-`ade-scheduler`, `ade-integrations`, `ade-server`, `ade-runtime`.
+**Phase 0 crates that exist but are mostly stubs:** `fartcode-acp`, `fartcode-ssh`,
+`fartcode-scheduler`, `fartcode-integrations`, `fartcode-server`, `fartcode-runtime`.
 They compile, export placeholder types/traits, and are filled in later phases.
 
 **Rule:** a crate may only depend on crates to its left or below in this graph.
-No circular dependencies. `ade-core` is the leaf — it depends on nothing
+No circular dependencies. `fartcode-core` is the leaf — it depends on nothing
 except third-party crates.
 
 ---
 
-## 2. Module layout: `ade-core`
+## 2. Module layout: `fartcode-core`
 
-`ade-core` is the largest crate. It follows the reference's domain-per-directory
+`fartcode-core` is the largest crate. It follows the reference's domain-per-directory
 pattern (`src/main/core/<domain>/`). Every domain gets its own module:
 
 ```
-ade-core/src/
+fartcode-core/src/
 ├── lib.rs                  // re-exports, prelude
 ├── error.rs                // the one Error enum (§3)
 ├── db/
@@ -102,7 +102,7 @@ ade-core/src/
 
 ## 3. Error type — one to rule them all
 
-`ade-core/src/error.rs` defines the single error enum used by every crate:
+`fartcode-core/src/error.rs` defines the single error enum used by every crate:
 
 ```rust
 use std::path::PathBuf;
@@ -189,7 +189,7 @@ impl From<Error> for String {
 ```
 
 **Rules for every crate:**
-- Every public fallible function returns `Result<T, ade_core::Error>`.
+- Every public fallible function returns `Result<T, fartcode_core::Error>`.
 - If a domain needs a new variant, add it to the central `Error` enum — do not create per-domain error types.
 - `Internal(String)` is the escape hatch for one-off messages during prototyping. Refactor into a named variant before merging.
 - `#[from]` derives on `rusqlite::Error` and `std::io::Error` mean you can use `?` directly in functions that touch the DB or filesystem.
@@ -216,7 +216,7 @@ PTY I/O) goes through `block_on`.
 Long-lived tasks spawn on the tokio runtime:
 
 ```rust
-// In app startup (ade-app/src/main.rs or ade-core init):
+// In app startup (fartcode-app/src/main.rs or fartcode-core init):
 let handle = tokio::runtime::Handle::current();
 
 // PTY reader: pipes output to Tauri events
@@ -250,9 +250,9 @@ handle.spawn(async move {
 Every Tauri command follows this pattern:
 
 ```rust
-// In ade-app/src/commands/projects.rs
-use ade_core::projects;
-use ade_core::Error;
+// In fartcode-app/src/commands/projects.rs
+use fartcode_core::projects;
+use fartcode_core::Error;
 
 #[tauri::command]
 fn add_project(path: String) -> Result<ProjectDto, String> {
@@ -280,7 +280,7 @@ Domain services ──→ InternalEvent ──→ EventBus ──→ Tauri emit 
                      (enum)            (channel)    (typed event name)
 ```
 
-### Internal event enum (in `ade-core/src/events.rs`)
+### Internal event enum (in `fartcode-core/src/events.rs`)
 
 ```rust
 /// Events emitted by domain services, consumed by Tauri command layer.
@@ -348,7 +348,7 @@ Internal events are emitted to the frontend as Tauri events with the same name
 ### Event emission
 
 ```rust
-// In ade-app, wrap the core event bus:
+// In fartcode-app, wrap the core event bus:
 pub struct AppEventBus {
     app_handle: tauri::AppHandle,
 }
@@ -386,7 +386,7 @@ export function onTaskCreated(cb: (payload: TaskCreatedPayload) => void) {
 These traits define the boundaries between crates. Implementations live in
 the owning crate; consumers depend on the trait.
 
-### 6.1 Db (in `ade-core::db`)
+### 6.1 Db (in `fartcode-core::db`)
 
 ```rust
 /// Single connection to the SQLite database.
@@ -426,14 +426,14 @@ impl SqliteDb {
 }
 ```
 
-### 6.2 SettingsStore (in `ade-core::settings`)
+### 6.2 SettingsStore (in `fartcode-core::settings`)
 
 > **Implemented (E1-02/E1-03).** The trait below is object-safe — ARCHITECTURE §7
 > stores it as `Arc<dyn SettingsStore>`, so `get`/`set` take/return JSON rather
 > than the generic `SettingKey<T>` sketch. Typed access (`settings::get(&PROJECT)`,
 > `settings::set(&TERMINAL, group)`) lives on the concrete `DbSettingsStore` via
 > `SettingKey<T>` wrappers. The project-settings surface was added so
-> `ade-core::projects` can seed/read settings through the trait object.
+> `fartcode-core::projects` can seed/read settings through the trait object.
 
 ```rust
 /// Object-safe settings store. JSON surface (typed wrappers on DbSettingsStore).
@@ -446,10 +446,10 @@ pub trait SettingsStore: Send + Sync {
     fn set_json(&self, key: &str, value: serde_json::Value) -> Result<(), Error>;
 
     /// Clear all local overrides. `None` clears `app_settings`; `Some(project_id)`
-    /// clears the project's `project_settings` row (`.ade.json` untouched).
+    /// clears the project's `project_settings` row (`.fartCode.json` untouched).
     fn reset(&self, project_id: Option<&str>) -> Result<(), Error>;
 
-    /// Move local shareable values into the repo's `.ade.json` and clear the DB.
+    /// Move local shareable values into the repo's `.fartCode.json` and clear the DB.
     fn share_with_team(&self, project_id: &str) -> Result<(), Error>;
 
     // -- project settings (used by `projects`) --
@@ -463,7 +463,7 @@ pub trait SettingsStore: Send + Sync {
 }
 ```
 
-### 6.3 PtyManager (in `ade-terminal`)
+### 6.3 PtyManager (in `fartcode-terminal`)
 
 ```rust
 /// Spawns and controls PTY processes.
@@ -511,12 +511,12 @@ pub struct PtyHandle {
 }
 ```
 
-### 6.4 GitOps (in `ade-git`)
+### 6.4 GitOps (in `fartcode-git`)
 
-> **Implemented (E1-03).** The **trait lives in `ade-core::git`** — not here — so
-> that `ade-core` domain modules (`projects`, later `workspaces`) can use it
-> without violating the crate-graph rule that `ade-core` is the leaf (depends on
-> nothing internal). `ade-git` provides the implementation (`CliGit`) and
+> **Implemented (E1-03).** The **trait lives in `fartcode-core::git`** — not here — so
+> that `fartcode-core` domain modules (`projects`, later `workspaces`) can use it
+> without violating the crate-graph rule that `fartcode-core` is the leaf (depends on
+> nothing internal). `fartcode-git` provides the implementation (`CliGit`) and
 > re-exports the trait. Phase 0 uses the **`git` CLI** (via `Command` arg arrays,
 > no shell/quoting) — git2 worktree lifecycle bindings land with E2-02. The trait
 > adds E1-03 ops beyond the sketch below (`init`, `clone`, `show_toplevel`,
@@ -525,7 +525,7 @@ pub struct PtyHandle {
 > fallback is a network call and was dropped to avoid hangs.
 
 ```rust
-/// Low-level git operations. Phase 0 implementation: ade_git::CliGit (git CLI).
+/// Low-level git operations. Phase 0 implementation: fartcode_git::CliGit (git CLI).
 pub trait GitOps: Send + Sync {
     /// Run `git worktree list --porcelain` and parse the output.
     fn worktree_list(&self, repo_path: &Path) -> Result<Vec<WorktreeEntry>, Error>;
@@ -562,7 +562,7 @@ pub struct WorktreeEntry {
 }
 ```
 
-### 6.5 AgentRegistry (in `ade-providers`)
+### 6.5 AgentRegistry (in `fartcode-providers`)
 
 ```rust
 /// Registry of all known agent CLIs.
@@ -623,7 +623,7 @@ pub enum PromptStrategy {
 }
 ```
 
-### 6.6 EventBus (in `ade-core::events`)
+### 6.6 EventBus (in `fartcode-core::events`)
 
 ```rust
 /// Internal event bus. Domain services push events; the Tauri layer subscribes
@@ -659,41 +659,41 @@ impl EventBus for BroadcastEventBus {
 
 ## 7. Application bootstrap (the `App` struct)
 
-Every domain service is created in `ade-app` at startup and shared via `Arc`.
+Every domain service is created in `fartcode-app` at startup and shared via `Arc`.
 This is the single place where concrete implementations are wired together:
 
 ```rust
-// ade-app/src/app.rs
+// fartcode-app/src/app.rs
 use std::sync::Arc;
 
 pub struct App {
-    pub db: Arc<ade_core::db::SqliteDb>,
-    pub settings: Arc<dyn ade_core::settings::SettingsStore>,
-    pub projects: Arc<dyn ade_core::projects::ProjectStore>,
-    pub tasks: Arc<dyn ade_core::tasks::TaskStore>,
-    pub conversations: Arc<dyn ade_core::conversations::ConversationStore>,
-    pub agent_registry: Arc<dyn ade_providers::AgentRegistry>,
-    pub pty_manager: Arc<dyn ade_terminal::PtyManager>,
-    pub git: Arc<dyn ade_git::GitOps>,
-    pub event_bus: Arc<dyn ade_core::events::EventBus>,
+    pub db: Arc<fartcode_core::db::SqliteDb>,
+    pub settings: Arc<dyn fartcode_core::settings::SettingsStore>,
+    pub projects: Arc<dyn fartcode_core::projects::ProjectStore>,
+    pub tasks: Arc<dyn fartcode_core::tasks::TaskStore>,
+    pub conversations: Arc<dyn fartcode_core::conversations::ConversationStore>,
+    pub agent_registry: Arc<dyn fartcode_providers::AgentRegistry>,
+    pub pty_manager: Arc<dyn fartcode_terminal::PtyManager>,
+    pub git: Arc<dyn fartcode_git::GitOps>,
+    pub event_bus: Arc<dyn fartcode_core::events::EventBus>,
 }
 
 impl App {
     pub fn init(db_path: Option<&str>) -> Result<Arc<Self>, Error> {
-        let db = ade_core::db::SqliteDb::init(db_path)?;
-        let event_bus = Arc::new(ade_core::events::BroadcastEventBus::new(256));
-        let settings = Arc::new(ade_core::settings::DbSettingsStore::new(db.clone()));
-        let agent_registry = Arc::new(ade_providers::StaticRegistry::default());
-        let git = Arc::new(ade_git::CliGit::new());
-        let pty_manager = Arc::new(ade_terminal::PortablePtyManager::new());
+        let db = fartcode_core::db::SqliteDb::init(db_path)?;
+        let event_bus = Arc::new(fartcode_core::events::BroadcastEventBus::new(256));
+        let settings = Arc::new(fartcode_core::settings::DbSettingsStore::new(db.clone()));
+        let agent_registry = Arc::new(fartcode_providers::StaticRegistry::default());
+        let git = Arc::new(fartcode_git::CliGit::new());
+        let pty_manager = Arc::new(fartcode_terminal::PortablePtyManager::new());
 
-        let projects = Arc::new(ade_core::projects::DbProjectStore::new(
+        let projects = Arc::new(fartcode_core::projects::DbProjectStore::new(
             db.clone(), settings.clone(), git.clone(), event_bus.clone(),
         ));
-        let tasks = Arc::new(ade_core::tasks::DbTaskStore::new(
+        let tasks = Arc::new(fartcode_core::tasks::DbTaskStore::new(
             db.clone(), event_bus.clone(),
         ));
-        let conversations = Arc::new(ade_core::conversations::DbConversationStore::new(
+        let conversations = Arc::new(fartcode_core::conversations::DbConversationStore::new(
             db.clone(), event_bus.clone(),
         ));
 
@@ -708,11 +708,11 @@ impl App {
 Tauri's `setup` hook initializes the app and manages it as Tauri state:
 
 ```rust
-// ade-app/src/main.rs
+// fartcode-app/src/main.rs
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
-            let app_state = App::init(std::env::var("ADE_DB_FILE").ok().as_deref())?;
+            let app_state = App::init(std::env::var("FARTCODE_DB_FILE").ok().as_deref())?;
 
             // Forward internal events to the frontend
             let app_handle = app.handle().clone();
@@ -753,7 +753,7 @@ fn add_project(state: tauri::State<'_, Arc<App>>, path: String) -> Result<Projec
 ### 8.1 Migration runner
 
 ```rust
-// ade-core/src/db/migrations.rs
+// fartcode-core/src/db/migrations.rs
 
 /// Embedded migration: (number, label, SQL text).
 /// The label is used for the migration journal, SQL is the raw DDL.
@@ -816,7 +816,7 @@ pub fn run_migrations(conn: &rusqlite::Connection) -> Result<(), Error> {
 ### 8.2 PTY agent launch flow
 
 ```rust
-// ade-terminal/src/manager.rs
+// fartcode-terminal/src/manager.rs
 
 /// The complete agent launch sequence.
 /// Called by the conversation supervisor (E2-06).
@@ -836,7 +836,7 @@ pub fn launch_agent(
     let cmd = build_command(provider, &config, &executable)?;
 
     // 4. Build the env allowlist
-    let env = ade_core::pty::env_allowlist::build_agent_env(
+    let env = fartcode_core::pty::env_allowlist::build_agent_env(
         &config.provider_id,
         &config.task_env,
         None, // hook_env — Phase 0: None
@@ -905,7 +905,7 @@ fn build_command(
 ### 8.3 Worktree create flow
 
 ```rust
-// ade-core/src/projects/worktrees.rs
+// fartcode-core/src/projects/worktrees.rs
 
 /// Create a new worktree from a source branch.
 pub fn checkout_branch_worktree(
@@ -947,9 +947,9 @@ pub fn checkout_branch_worktree(
 ### 8.4 Settings precedence resolution
 
 ```rust
-// ade-core/src/settings/service.rs
+// fartcode-core/src/settings/service.rs
 
-/// Effective value = local override > .ade.json > default.
+/// Effective value = local override > .fartCode.json > default.
 pub fn get_effective<T: SettingValue>(
     db: &dyn Db,
     project_id: &str,
@@ -960,7 +960,7 @@ pub fn get_effective<T: SettingValue>(
         return Ok(value);
     }
 
-    // 2. Try .ade.json (shareable_project_settings_json in project_settings)
+    // 2. Try .fartCode.json (shareable_project_settings_json in project_settings)
     if let Some(value) = get_shareable_value(db, project_id, &key)? {
         return Ok(value);
     }
@@ -977,7 +977,7 @@ pub fn set_local<T: SettingValue>(
     value: T,
 ) -> Result<(), Error> {
     if value == *key.default_value() {
-        // Remove the override — fall back to .ade.json or default
+        // Remove the override — fall back to .fartCode.json or default
         delete_local_override(db, project_id, &key)?;
     } else {
         // Store the override
@@ -993,7 +993,7 @@ pub fn set_local<T: SettingValue>(
 ### 8.5 Versioned JSON helper
 
 ```rust
-// ade-core/src/db/versioned_json.rs
+// fartcode-core/src/db/versioned_json.rs
 
 /// A column value that carries a version number and upgrade chain.
 /// Stored as JSON: {"version": N, "data": ...}
@@ -1046,7 +1046,7 @@ struct VersionedWrapper {
 One file. One function. Security-reviewed. Any addition = PR + review.
 
 ```rust
-// ade-core/src/pty/env_allowlist.rs
+// fartcode-core/src/pty/env_allowlist.rs
 
 /// Returns the final environment map for an agent process.
 /// Starts with base env, merges only allowlisted vars from the host,
@@ -1061,7 +1061,7 @@ pub fn build_agent_env(
     // -- Base env (always set) --
     env.insert("TERM".into(), "xterm-256color".into());
     env.insert("COLORTERM".into(), "truecolor".into());
-    env.insert("TERM_PROGRAM".into(), "ade".into());
+    env.insert("TERM_PROGRAM".into(), "fartCode".into());
 
     // -- Inherit allowlisted vars from the host process --
     let allowlist: &[&str] = &[
@@ -1103,7 +1103,7 @@ pub fn build_agent_env(
         }
     }
 
-    // Overlay task env (ADE_TASK_ID, etc.)
+    // Overlay task env (FARTCODE_TASK_ID, etc.)
     for (k, v) in task_env {
         env.insert(k.clone(), v.clone());
     }
@@ -1126,7 +1126,7 @@ pub fn build_agent_env(
 Every PR must satisfy these. If a ticket asks for something that violates a pattern,
 the pattern wins — update the ticket.
 
-1. **`Result<T, ade_core::Error>` everywhere.** No `unwrap()`, no `expect()`, no panics across crate boundaries. Use `?` pervasively. The only `unwrap()` allowed is in `main()` and tests.
+1. **`Result<T, fartcode_core::Error>` everywhere.** No `unwrap()`, no `expect()`, no panics across crate boundaries. Use `?` pervasively. The only `unwrap()` allowed is in `main()` and tests.
 
 2. **Versioned JSON for all JSON columns.** No raw `JSON.parse`/`JSON.stringify` at call sites. Use the `read_versioned`/`write_versioned` helpers. Corrupt data returns `None`, never panics.
 
@@ -1136,7 +1136,7 @@ the pattern wins — update the ticket.
 
 5. **DTOs at the boundary.** DB row types never cross the Tauri IPC boundary. Every domain exports `ModelDto` with `Serialize`.
 
-6. **Shell quoting via the shared module.** No ad-hoc `format!("'{}'", path)` or manual escaping. Call `ade_core::shell_escape::quote(input)`.
+6. **Shell quoting via the shared module.** No ad-hoc `format!("'{}'", path)` or manual escaping. Call `fartcode_core::shell_escape::quote(input)`.
 
 7. **Path validation via realpath containment.** Before deleting or operating in a directory, verify it's inside the expected root. Never delete project root.
 
@@ -1591,7 +1591,7 @@ breakdowns that land on the board after human approval. Dragging a card into
 In Progress spawns an agent in a worktree that starts implementing. Issues
 can be blocked by other issues, and the board makes that visible.
 
-Two agent roles, both ordinary ade machinery:
+Two agent roles, both ordinary fartCode machinery:
 
 - **PM agent** — one persistent project-scoped ACP conversation
   (`scope = 'project'`, `task_id` NULL) running in the project root. Writes
@@ -1609,7 +1609,7 @@ Two agent roles, both ordinary ade machinery:
 | Reverse moves | Board never kills; card moves change issue status only; re-drag into In Progress **reattaches** to the existing linked task |
 | Blocked-by | Derived at read time (any blocker ∉ Done ⇒ blocked); badge + hover list; cycles rejected at edge creation; dispatching a blocked card = confirm dialog, not a hard stop |
 | Completion | Auto-flip In Progress → In Review on ACP turn-complete or terminal-agent PTY exit; manual drag always works |
-| Chat → board writes | Fenced ` ```ade-proposal ` JSON block → interactive approval card in the transcript → Approve writes via ade-core commands. No agent tool registration; MCP tool server deferred to the E10 era |
+| Chat → board writes | Fenced ` ```fartCode-proposal ` JSON block → interactive approval card in the transcript → Approve writes via fartcode-core commands. No agent tool registration; MCP tool server deferred to the E10 era |
 | PRD artifact | Markdown file in the repo (`docs/prds/<slug>.md`), written by the PM agent's own file tools; issues reference path + section |
 | Dispatch prompt | Structured packet: issue title + body + acceptance criteria + PRD path (by reference) + one-line Done-blocker summaries + branch/worktree conventions footer |
 | Provider | Project `defaultAgent`; proposal block may carry per-issue provider/model, editable at approval, stored on the issue |
@@ -1651,7 +1651,7 @@ The PM system prompt defines a fenced block; the transcript parser renders it
 as an interactive card and **never throws on malformed input** (bad blocks
 render as plain transcript text — golden-file parse tests ride E17-04):
 
-    ```ade-proposal
+    ```fartCode-proposal
     {
       "prd": { "path": "docs/prds/oauth.md", "title": "OAuth 2.0 PKCE" },
       "issues": [
@@ -1664,7 +1664,7 @@ render as plain transcript text — golden-file parse tests ride E17-04):
     ```
 
 Approval resolves `blockedBy` titles to issue ids and writes rows through the
-ade-core issues module (E17-01) — the same functions the board UI uses.
+fartcode-core issues module (E17-01) — the same functions the board UI uses.
 
 ### DB schema
 
@@ -1759,7 +1759,7 @@ When "Create Task" is clicked, the task's initial prompt is constructed as:
 You are reviewing code in a git diff.
 
 FILE: src/auth/middleware.rs
-BRANCH: ade/fix-error-handling-a3f2
+BRANCH: fartCode/fix-error-handling-a3f2
 ENCLOSING FUNCTION: fn validate_token(token: &str) -> Result<Claims, AuthError>
 
 SELECTED CODE (lines 42-56):
@@ -1894,8 +1894,8 @@ Every ticket's merge gate includes `cargo test`. These are the patterns to use.
 ### DB integration tests
 
 ```rust
-// ade-core/tests/db_integration.rs
-use ade_core::db::SqliteDb;
+// fartcode-core/tests/db_integration.rs
+use fartcode_core::db::SqliteDb;
 use std::sync::Arc;
 
 #[test]
@@ -1928,8 +1928,8 @@ fn test_kv_roundtrip() {
 ### Git/worktree integration tests
 
 ```rust
-// ade-git/tests/worktree_integration.rs
-use ade_git::GitOps;
+// fartcode-git/tests/worktree_integration.rs
+use fartcode_git::GitOps;
 use std::process::Command;
 
 fn init_temp_repo() -> (tempfile::TempDir, PathBuf) {
@@ -1989,8 +1989,8 @@ fn test_worktree_create_and_prune() {
 ### PTY/agent integration test
 
 ```rust
-// ade-terminal/tests/agent_launch.rs
-use ade_terminal::PtyManager;
+// fartcode-terminal/tests/agent_launch.rs
+use fartcode_terminal::PtyManager;
 
 #[test]
 fn test_spawn_shell_and_read_output() {
@@ -2032,8 +2032,8 @@ fn test_env_allowlist_does_not_leak_secrets() {
 ### Migration test (separate test binary)
 
 ```rust
-// ade-core/tests/migrations.rs
-use ade_core::db::SqliteDb;
+// fartcode-core/tests/migrations.rs
+use fartcode_core::db::SqliteDb;
 
 #[test]
 fn test_fresh_install_creates_all_tables() {
@@ -2071,7 +2071,7 @@ fn test_migration_upgrade_path() {
 ### Test helper: in-memory DB
 
 ```rust
-// ade-core/src/db/connection.rs
+// fartcode-core/src/db/connection.rs
 impl SqliteDb {
     /// Creates an in-memory database for tests.
     /// Runs all migrations, returns a fully-initialized DB.
@@ -2179,19 +2179,19 @@ index. Numbered records (with context + rationale) live in `decisions/`
 
 | # | Ticket | Decision | Where it lives |
 |---|---|---|---|
-| D1 | E1-01 | Migration runner tracks progress by `MAX(created_at)` (journal `when`), records `sha256(sql)`, and **hash-verifies already-applied migrations on every init** (stricter than the reference, which records but never checks) — "hand-edit of a numbered migration is not possible". | `ade-core/src/db/migrations.rs` |
-| D2 | E1-01 | FTS tables live **outside** migrations, version-gated via `kv` (`fts_version='3'`, `file_index_version='4'`) exactly as later tickets read them. | `ade-core/src/db/migrations.rs` |
-| D3 | E1-01 | Legacy DB copy (`emdash4/3.db` → `ade.db` via `VACUUM INTO`, secrets cleared) is per-spec, but a copied reference DB is *not* schema-identical to Phase 0 — real data migration is a later-phase concern; init fails loudly rather than corrupting. | `ade-core/src/db/connection.rs` |
-| D4 | E1-02 | **Deviation (§6.2):** `SettingsStore` is object-safe (JSON surface) so §7's `Arc<dyn SettingsStore>` works; typed `SettingKey<T>` wrappers live on `DbSettingsStore`. Trait extended with the project-settings surface for `projects`. | `ade-core/src/settings/service.rs` (§6.2 here) |
-| D5 | E1-02 | App settings are **delta-vs-defaults**: updating to the default deletes the row; reads deep-merge defaults. Values validated by canonical round-trip (unknown keys stripped, zod-parse behavior). | `ade-core/src/settings/service.rs` |
-| D6 | E1-02 | Effective project-settings precedence: `defaults < .ade.json < DB-shareable` (later wins, reference `mergeShareableProjectSettings`). `update_project_settings` is **full-replace** (reference `update()`), so callers read-modify-write. | `ade-core/src/settings/service.rs` |
-| D7 | E1-02 | Legacy `.emdash.json` migration is a **one-shot at first access** (marked done even without a file, single marker covers base+shareable). Shareable merge is unconditional — the reference gates it on git-tracking (needs `ade-git`). | `ade-core/src/settings/service.rs` |
-| D8 | E1-03 | **Deviation (§6.4):** `GitOps` trait lives in `ade-core::git` (leaf rule); `ade-git::CliGit` implements it and re-exports. Phase 0 is git **CLI** (Command arg arrays, no shell) — git2 bindings with E2-02. | `ade-core/src/git.rs`, `ade-git/src/lib.rs` (§6.4 here) |
-| D9 | E1-03 | Base-ref resolution ports reference `computeBaseRef` `normalize()` exactly: slash-branches stay bare (`feature/x`), plain branches get the remote prefix; refinement derives the remote from the *detected* ref. `remote_head` is local-only (symbolic-ref) — the `git remote show` fallback (a network call that can hang) was dropped. | `ade-core/src/projects/mod.rs`, `ade-git/src/lib.rs` |
-| D10 | E1-03 | `.ade/` git exclusion writes `.git/info/exclude` (never a tracked `.gitignore`); in linked worktrees the entry lands in the per-worktree exclude (reference writes the common dir — E2-02 can align). `worktree_remove` is `rm -rf`+prune until E2-02 switches to `git worktree remove`. | `ade-core/src/projects/provider.rs`, `ade-git/src/lib.rs` |
-| D11 | E1-03 | `close_project` is a Phase 0 stub — session/workspace/preview teardown (tmux `detach` vs `terminate`) lands with E2-05/E2-02/E13. `RepoHostProvider` stubs GitHub repo creation (E8). | `ade-core/src/projects/provider.rs` |
-| D12 | E2-01 | **No status-transition allowlist** (reference-faithful) — any lifecycle status change is allowed; guards are same-status no-op + not-found. `InvalidStatusTransition` reserved for a future state machine. | `ade-core/src/tasks/` (ADR-0005) |
-| D13 | E2-01 | Create is **atomic** (task + workspace + initial conversation in one tx, rollback on failure); events fire post-commit, non-fatal. `tasks.workspace_intent` is legacy, never written. | `ade-core/src/tasks/mod.rs` (ADR-0005) |
-| D14 | E2-01 | **Provision fast-path contract**: idempotent re-fire of `task:provisioned` + recency touch; real workspace bootstrap is E2-02. Delete is hard (FK cascade); archive is non-destructive. | `ade-core/src/tasks/mod.rs` (ADR-0005) |
-| D15 | E2-03 | Random task names are `adjective-noun-verb` (vendored `human-id@4.2.0` word lists, exact combination order); title slugs implemented directly (nbranch semantics). | `ade-core/src/tasks/naming.rs` (ADR-0006) |
-| D16 | E2-03 | Branch resolution is pure + faithful: Linear branch names verbatim; `ade/<name>-<5-char base36 suffix>` when `appendRandomBranchSuffix`; suffix entropy from uuid (no rand dep); settings read by the caller. | `ade-core/src/tasks/naming.rs` (ADR-0006) |
+| D1 | E1-01 | Migration runner tracks progress by `MAX(created_at)` (journal `when`), records `sha256(sql)`, and **hash-verifies already-applied migrations on every init** (stricter than the reference, which records but never checks) — "hand-edit of a numbered migration is not possible". | `fartcode-core/src/db/migrations.rs` |
+| D2 | E1-01 | FTS tables live **outside** migrations, version-gated via `kv` (`fts_version='3'`, `file_index_version='4'`) exactly as later tickets read them. | `fartcode-core/src/db/migrations.rs` |
+| D3 | E1-01 | Legacy DB copy (`emdash4/3.db` → `fartCode.db` via `VACUUM INTO`, secrets cleared) is per-spec, but a copied reference DB is *not* schema-identical to Phase 0 — real data migration is a later-phase concern; init fails loudly rather than corrupting. | `fartcode-core/src/db/connection.rs` |
+| D4 | E1-02 | **Deviation (§6.2):** `SettingsStore` is object-safe (JSON surface) so §7's `Arc<dyn SettingsStore>` works; typed `SettingKey<T>` wrappers live on `DbSettingsStore`. Trait extended with the project-settings surface for `projects`. | `fartcode-core/src/settings/service.rs` (§6.2 here) |
+| D5 | E1-02 | App settings are **delta-vs-defaults**: updating to the default deletes the row; reads deep-merge defaults. Values validated by canonical round-trip (unknown keys stripped, zod-parse behavior). | `fartcode-core/src/settings/service.rs` |
+| D6 | E1-02 | Effective project-settings precedence: `defaults < .fartCode.json < DB-shareable` (later wins, reference `mergeShareableProjectSettings`). `update_project_settings` is **full-replace** (reference `update()`), so callers read-modify-write. | `fartcode-core/src/settings/service.rs` |
+| D7 | E1-02 | Legacy `.emdash.json` migration is a **one-shot at first access** (marked done even without a file, single marker covers base+shareable). Shareable merge is unconditional — the reference gates it on git-tracking (needs `fartcode-git`). | `fartcode-core/src/settings/service.rs` |
+| D8 | E1-03 | **Deviation (§6.4):** `GitOps` trait lives in `fartcode-core::git` (leaf rule); `fartcode-git::CliGit` implements it and re-exports. Phase 0 is git **CLI** (Command arg arrays, no shell) — git2 bindings with E2-02. | `fartcode-core/src/git.rs`, `fartcode-git/src/lib.rs` (§6.4 here) |
+| D9 | E1-03 | Base-ref resolution ports reference `computeBaseRef` `normalize()` exactly: slash-branches stay bare (`feature/x`), plain branches get the remote prefix; refinement derives the remote from the *detected* ref. `remote_head` is local-only (symbolic-ref) — the `git remote show` fallback (a network call that can hang) was dropped. | `fartcode-core/src/projects/mod.rs`, `fartcode-git/src/lib.rs` |
+| D10 | E1-03 | `.fartCode/` git exclusion writes `.git/info/exclude` (never a tracked `.gitignore`); in linked worktrees the entry lands in the per-worktree exclude (reference writes the common dir — E2-02 can align). `worktree_remove` is `rm -rf`+prune until E2-02 switches to `git worktree remove`. | `fartcode-core/src/projects/provider.rs`, `fartcode-git/src/lib.rs` |
+| D11 | E1-03 | `close_project` is a Phase 0 stub — session/workspace/preview teardown (tmux `detach` vs `terminate`) lands with E2-05/E2-02/E13. `RepoHostProvider` stubs GitHub repo creation (E8). | `fartcode-core/src/projects/provider.rs` |
+| D12 | E2-01 | **No status-transition allowlist** (reference-faithful) — any lifecycle status change is allowed; guards are same-status no-op + not-found. `InvalidStatusTransition` reserved for a future state machine. | `fartcode-core/src/tasks/` (ADR-0005) |
+| D13 | E2-01 | Create is **atomic** (task + workspace + initial conversation in one tx, rollback on failure); events fire post-commit, non-fatal. `tasks.workspace_intent` is legacy, never written. | `fartcode-core/src/tasks/mod.rs` (ADR-0005) |
+| D14 | E2-01 | **Provision fast-path contract**: idempotent re-fire of `task:provisioned` + recency touch; real workspace bootstrap is E2-02. Delete is hard (FK cascade); archive is non-destructive. | `fartcode-core/src/tasks/mod.rs` (ADR-0005) |
+| D15 | E2-03 | Random task names are `adjective-noun-verb` (vendored `human-id@4.2.0` word lists, exact combination order); title slugs implemented directly (nbranch semantics). | `fartcode-core/src/tasks/naming.rs` (ADR-0006) |
+| D16 | E2-03 | Branch resolution is pure + faithful: Linear branch names verbatim; `fartCode/<name>-<5-char base36 suffix>` when `appendRandomBranchSuffix`; suffix entropy from uuid (no rand dep); settings read by the caller. | `fartcode-core/src/tasks/naming.rs` (ADR-0006) |

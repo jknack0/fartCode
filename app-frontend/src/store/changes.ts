@@ -10,7 +10,7 @@ import {
   gitStageAll,
   gitStatus,
   gitUnstage,
-  onAdeEvent,
+  onFartcodeEvent,
   type GitStatusSnapshot,
 } from "../lib/tauri";
 
@@ -112,7 +112,7 @@ if (typeof window !== "undefined") window.__changesStore = useChanges;
 export function wireChangesEvents(): () => void {
   let unlisten: (() => void) | null = null;
   let disposed = false;
-  void onAdeEvent((event) => {
+  void onFartcodeEvent((event) => {
     const workspaceId =
       event.type === "git:changed" || event.type === "files:changed"
         ? event.workspaceId

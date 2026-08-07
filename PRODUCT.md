@@ -13,12 +13,12 @@ web
 ## Users
 
 Solo developer on their own machine. One person running several coding-agent
-CLIs in parallel across their own projects, using ade as the daily cockpit for
+CLIs in parallel across their own projects, using fartCode as the daily cockpit for
 creating, supervising, reviewing, and shipping agent work.
 
 ## Product Purpose
 
-ade is a free, open-source Agentic Development Environment. It does not run its
+fartCode is a free, open-source Agentic Development Environment. It does not run its
 own model — it orchestrates external coding-agent CLIs (Claude Code, Codex, Amp,
 omp, …) in parallel, each isolated in its own Git worktree, and gives the user
 one cockpit to create tasks, review diffs, commit/push/PR, monitor CI, schedule
@@ -29,7 +29,7 @@ them colliding and without losing state — everything persists across restarts
 
 ## Positioning
 
-Any agent, one cockpit. ade orchestrates whatever coding-agent CLIs the user
+Any agent, one cockpit. fartCode orchestrates whatever coding-agent CLIs the user
 already has installed (35 providers in the registry, 22 ACP-capable) and runs
 no model of its own. A neighboring product that ships or fronts a single model
 could not truthfully claim this neutrality.
@@ -37,7 +37,7 @@ could not truthfully claim this neutrality.
 ## Operating Context
 
 - Workflow: add project (local dir, GitHub clone, or SSH host) → Add Task →
-  ade creates a Git worktree and spawns the chosen agent in a terminal inside
+  fartCode creates a Git worktree and spawns the chosen agent in a terminal inside
   it → the task becomes a live workspace (terminals, editor, diff view) →
   review, stage, commit, push, open PR, watch CI checks without leaving the app.
 - Tasks come from branches, issue-tracker tickets, or cron automations.
@@ -75,7 +75,7 @@ could not truthfully claim this neutrality.
 
 ## Brand Commitments
 
-- Name: **ade**.
+- Name: **fartCode**.
 - Free and open-source; no pricing tiers, no hosted/cloud offering. Local app
   only.
 - App icons are placeholder-generated (amber bar on navy) and must be
@@ -94,7 +94,7 @@ could not truthfully claim this neutrality.
   implementation) incl. architecture docs.
 - `app-frontend/src/styles.css` — incumbent "Signal" token set (current
   implementation, not a confirmed commitment).
-- GitHub issues (`jknack0/ade`) — the single work list.
+- GitHub issues (`jknack0/fartCode`) — the single work list.
 - Absences future work must not fabricate: no testimonials, customers,
   benchmarks, pricing, licensing terms, marketing imagery, or screenshots of a
   shipped product exist. ade.ai landing/docs were research sources for the PRD,
@@ -102,7 +102,7 @@ could not truthfully claim this neutrality.
 
 ## Product Principles
 
-1. **Orchestrate, don't imitate.** ade's value is the cockpit, not a model.
+1. **Orchestrate, don't imitate.** fartCode's value is the cockpit, not a model.
    Every feature must work through the user's existing agent CLIs.
 2. **Parallel isolation is the core mechanic.** Per-task worktrees, terminals,
    and state must never collide; anything that breaks isolation breaks the

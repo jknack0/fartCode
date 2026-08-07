@@ -11,12 +11,12 @@ table (trigram tokenizer) already existed from E1-01.
 
 ## Decision
 
-1. **`ade_core::search` owns the index**: `upsert`/`delete` use a
+1. **`fartcode_core::search` owns the index**: `upsert`/`delete` use a
    deterministic rowid (`hash32(item_type:item_id)`) so upserts dedupe
    (FTS5 has no unique columns); `query` wraps the input in double quotes
    (trigram phrase matching) with quote-escapes; `backfill` repopulates from
    projects/tasks tables. Event-driven writes keep it current.
-2. **Indexer runs in `ade-app`**: `spawn_search_indexer` backfills on boot,
+2. **Indexer runs in `fartcode-app`**: `spawn_search_indexer` backfills on boot,
    then subscribes to the event bus (project/task/conversation
    added/deleted → upsert/delete). Lagged events are dropped (bridge
    survives), matching the event forwarder.
@@ -35,6 +35,6 @@ table (trigram tokenizer) already existed from E1-01.
 - The index is event-consistent (boot backfill + live updates) and the
   acceptance criteria are covered by core tests (upsert/query/delete/
   backfill, trigram substrings) + smoke.
-- sysinfo is a new ade-core dependency (already in the workspace manifest).
+- sysinfo is a new fartcode-core dependency (already in the workspace manifest).
 - The palette's command registry is a static list today; E2-10 task-switch
   and E2-06 agent commands plug into the same registry later.

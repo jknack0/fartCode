@@ -30,13 +30,13 @@ The reference delegates to two npm packages (`human-id@4.2.0` for random names,
   `branchName` suppresses the suffix; otherwise `raw-suffix` then
   `prefix/branch`; `normalize_branch_prefix` trims + strips `/`.
 - **Pure functions; settings are read by the caller** (E2-04 wires
-  `project.branchPrefix='ade'`, `project.appendRandomBranchSuffix=true`,
+  `project.branchPrefix='fartCode'`, `project.appendRandomBranchSuffix=true`,
   `tasks.autoGenerateName=true` from E1-02).
 
 ## Consequences
 
 - No runtime npm/network dependency; names are deterministic-shaped and
   shell-safe (`[a-z0-9-]`, ≤64).
-- Branch names match `ade/<name>-<suffix>` with the suffix toggle honored.
+- Branch names match `fartCode/<name>-<suffix>` with the suffix toggle honored.
 - If the exact reference distribution ever matters, the word lists can be
   swapped for the npm tarball contents — they're already verbatim copies.
