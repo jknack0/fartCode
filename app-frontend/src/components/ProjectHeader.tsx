@@ -38,7 +38,10 @@ export default function ProjectHeader({ projectId }: { projectId: string }) {
           number: g.number,
           title: g.title,
           url: g.url,
+          body: g.body,
           labels: g.labels,
+          assignees: g.assignees,
+          milestone: g.milestone,
         });
       }
       setSyncNote(

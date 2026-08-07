@@ -163,11 +163,6 @@ export default function CardDetail({
                 {issue.model ? <code> · {issue.model}</code> : null}
               </span>
             )}
-            {issue.externalRef && (
-              <a className="card-detail-meta-row" href={issue.externalRef}>
-                GitHub source ↗
-              </a>
-            )}
             {issue.prdPath && (
               <span className="card-detail-meta-row">
                 PRD <code>{issue.prdPath}</code>

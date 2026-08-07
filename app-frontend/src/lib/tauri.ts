@@ -984,7 +984,10 @@ export interface GitHubIssueDto {
   number: number;
   title: string;
   url: string;
+  body: string | null;
   labels: string[];
+  assignees: string[];
+  milestone: string | null;
   createdAt: string | null;
 }
 
@@ -993,14 +996,18 @@ export function projectGithubIssues(projectId: string): Promise<GitHubIssueDto[]
   return invoke("project_github_issues", { projectId });
 }
 
-/** Imports a GitHub issue as a local board card (Backlog), deduped on the
- * GitHub URL. */
+/** Imports a GitHub issue as a native board card with everything mapped
+ * (title, checkbox→acceptance, body, labels/assignees/milestone). The
+ * GitHub URL is the dedupe key only — no link survives on the card. */
 export function issueImportGithub(args: {
   projectId: string;
   number: number;
   title: string;
   url: string;
+  body: string | null;
   labels: string[];
+  assignees: string[];
+  milestone: string | null;
 }): Promise<IssueDto> {
-  return invoke("issue_import_github", args);
+  return invoke("issue_import_github", { request: args });
 }

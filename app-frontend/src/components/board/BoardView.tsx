@@ -196,16 +196,6 @@ export default function BoardView({ projectId }: { projectId: string }) {
                 >
                   <span className="board-card-title">{issue.title}</span>
                   <span className="board-card-badges">
-                    {issue.externalRef && (
-                      <a
-                        className="board-card-github"
-                        href={issue.externalRef}
-                        title="Imported from GitHub"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        gh
-                      </a>
-                    )}
                     {issue.provider && (
                       <span className="board-card-provider">{issue.provider}</span>
                     )}

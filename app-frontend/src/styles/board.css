@@ -132,18 +132,6 @@
 }
 
 
-/* Provenance badge on cards imported from GitHub (Sync from GitHub). */
-.board-card-github {
-  font-size: 10px;
-  font-family: "JetBrains Mono Variable", monospace;
-  color: var(--passive, #929192);
-  border: 1px solid currentColor;
-  border-radius: 4px;
-  padding: 0 3px;
-  text-decoration: none;
-}
-
-
 .board-card-blocked {
   position: relative;
   font-size: 11px;

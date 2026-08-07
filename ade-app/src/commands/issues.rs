@@ -171,35 +171,55 @@ pub fn project_github_issues(
     ade_git::issues::list_github_issues(&project.path).map_err(String::from)
 }
 
-/// Imports a GitHub issue as a local board card (Backlog), tagged with the
-/// GitHub URL. Idempotent: re-importing returns the existing card
-/// (deduped on external_ref).
+/// Import payload (one object over the wire, mirrors the GitHub fields).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportGithubIssueRequest {
+    pub project_id: String,
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    pub body: Option<String>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default)]
+    pub assignees: Vec<String>,
+    pub milestone: Option<String>,
+}
+
+/// Imports a GitHub issue as a native board card with EVERYTHING mapped:
+/// title (`#N` prefix), checkbox lines → acceptance criteria, body kept,
+/// and labels/assignees/milestone folded into the body so nothing is lost.
+/// The GitHub URL survives only as the internal dedupe key — once migrated,
+/// the card is a native issue with no link back. Idempotent.
 #[tauri::command]
 pub fn issue_import_github(
     app: State<'_, Arc<App>>,
-    project_id: String,
-    number: u64,
-    title: String,
-    url: String,
-    labels: Vec<String>,
+    request: ImportGithubIssueRequest,
 ) -> Result<Issue, String> {
-    let body = if labels.is_empty() {
-        None
-    } else {
-        Some(format!("GitHub labels: {}", labels.join(", ")))
+    let gh = ade_git::issues::GitHubIssue {
+        number: request.number,
+        title: request.title,
+        url: request.url.clone(),
+        body: request.body,
+        labels: request.labels,
+        assignees: request.assignees,
+        milestone: request.milestone,
+        created_at: None,
     };
+    let mapped = ade_git::issues::map_issue_fields(&gh);
     app.issues
         .create(NewIssue {
-            project_id,
-            title: format!("#{number} {title}"),
-            body,
-            acceptance: vec![],
+            project_id: request.project_id,
+            title: mapped.title,
+            body: mapped.body,
+            acceptance: mapped.acceptance,
             lane: Some(Lane::Backlog),
             provider: None,
             model: None,
             prd_path: None,
             prd_section: None,
-            external_ref: Some(url),
+            external_ref: Some(request.url), // dedupe key only — never surfaced
         })
         .map_err(String::from)
 }
