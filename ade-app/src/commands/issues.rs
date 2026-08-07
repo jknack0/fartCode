@@ -8,6 +8,7 @@ use serde::Deserialize;
 use tauri::State;
 
 use ade_core::issues::{Issue, IssuePatch, Lane, NewIssue};
+use ade_core::projects::ProjectStore;
 
 use crate::app::App;
 
@@ -63,6 +64,7 @@ pub fn issue_create(
             model: request.model,
             prd_path: request.prd_path,
             prd_section: request.prd_section,
+            external_ref: None,
         })
         .map_err(String::from)
 }
@@ -152,4 +154,52 @@ pub fn issue_dispatch(
     issue_id: String,
 ) -> Result<crate::dispatch::DispatchOutcome, String> {
     crate::dispatch::issue_dispatch_core(&app, &issue_id)
+}
+
+/// Open GitHub issues of the project's checkout (E17 dogfood), fetched via
+/// the gh CLI. Errors name the remedy (gh missing, not authed).
+#[tauri::command]
+pub fn project_github_issues(
+    app: State<'_, Arc<App>>,
+    project_id: String,
+) -> Result<Vec<ade_git::issues::GitHubIssue>, String> {
+    let project = app
+        .projects
+        .get(&project_id)
+        .map_err(String::from)?
+        .ok_or_else(|| format!("project not found: {project_id}"))?;
+    ade_git::issues::list_github_issues(&project.path).map_err(String::from)
+}
+
+/// Imports a GitHub issue as a local board card (Backlog), tagged with the
+/// GitHub URL. Idempotent: re-importing returns the existing card
+/// (deduped on external_ref).
+#[tauri::command]
+pub fn issue_import_github(
+    app: State<'_, Arc<App>>,
+    project_id: String,
+    number: u64,
+    title: String,
+    url: String,
+    labels: Vec<String>,
+) -> Result<Issue, String> {
+    let body = if labels.is_empty() {
+        None
+    } else {
+        Some(format!("GitHub labels: {}", labels.join(", ")))
+    };
+    app.issues
+        .create(NewIssue {
+            project_id,
+            title: format!("#{number} {title}"),
+            body,
+            acceptance: vec![],
+            lane: Some(Lane::Backlog),
+            provider: None,
+            model: None,
+            prd_path: None,
+            prd_section: None,
+            external_ref: Some(url),
+        })
+        .map_err(String::from)
 }

@@ -76,6 +76,7 @@ dependencies = [
  "ade-core",
  "git2",
  "serde",
+ "serde_json",
  "tempfile",
 ]
 

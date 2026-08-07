@@ -153,6 +153,8 @@ pub fn run() {
             commands::issue_proposals::issue_parse_proposal,
             commands::issue_proposals::issue_apply_proposal,
             commands::issues::issue_dispatch,
+            commands::issues::project_github_issues,
+            commands::issues::issue_import_github,
             commands::files::write_workspace_file,
             commands::conversations::create_conversation,
             commands::conversations::list_conversations,

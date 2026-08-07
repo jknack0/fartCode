@@ -9,11 +9,14 @@
 import { useEffect, useState } from "react";
 import {
   issueDispatch,
+  issueImportGithub,
   issueList,
   issueMove,
   onAdeEvent,
+  projectGithubIssues,
   terminalOpenAgent,
   terminalWrite,
+  type GitHubIssueDto,
   type IssueDto,
   type Lane,
 } from "../../lib/tauri";
@@ -48,6 +51,8 @@ export default function BoardView({ projectId }: { projectId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingBlockedDrop | null>(null);
+  const [ghIssues, setGhIssues] = useState<GitHubIssueDto[]>([]);
+  const [ghError, setGhError] = useState<string | null>(null);
   const projectTasks = useSidebar((s) => s.tasksByProject[projectId]);
 
   useEffect(() => {
@@ -77,6 +82,34 @@ export default function BoardView({ projectId }: { projectId: string }) {
       void unlisten.then((off) => off());
     };
   }, [projectId]);
+
+  // GitHub issues column (E17 dogfood): open issues of the project's
+  // checkout via gh CLI; import turns one into a local Backlog card
+  // (deduped on the GitHub URL).
+  const reloadGithub = () =>
+    projectGithubIssues(projectId)
+      .then((list) => {
+        setGhIssues(list);
+        setGhError(null);
+      })
+      .catch((e) => setGhError(String(e)));
+
+  useEffect(() => {
+    reloadGithub();
+  }, [projectId]);
+
+  const importedUrls = new Set(
+    issues.filter((i) => i.externalRef).map((i) => i.externalRef),
+  );
+
+  const importGithubIssue = (gh: GitHubIssueDto) =>
+    issueImportGithub({
+      projectId,
+      number: gh.number,
+      title: gh.title,
+      url: gh.url,
+      labels: gh.labels,
+    }).catch((e) => setError(String(e)));
 
   const move = (issueId: string, lane: Lane, position: number) =>
     issueMove(issueId, lane, position).catch((e) => setError(String(e)));
@@ -187,6 +220,16 @@ export default function BoardView({ projectId }: { projectId: string }) {
                 >
                   <span className="board-card-title">{issue.title}</span>
                   <span className="board-card-badges">
+                    {issue.externalRef && (
+                      <a
+                        className="board-card-github"
+                        href={issue.externalRef}
+                        title="Imported from GitHub"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        gh
+                      </a>
+                    )}
                     {issue.provider && (
                       <span className="board-card-provider">{issue.provider}</span>
                     )}
@@ -222,6 +265,46 @@ export default function BoardView({ projectId }: { projectId: string }) {
           </section>
         );
       })}
+
+      <section className="board-lane board-lane-github" data-lane="github">
+        <header className="board-lane-header">
+          GitHub
+          <span className="board-lane-count">
+            {ghError ? "!" : ghIssues.length}
+          </span>
+        </header>
+        <div className="board-lane-cards">
+          {ghError && <p className="board-github-error muted">{ghError}</p>}
+          {ghIssues.map((gh) => {
+            const imported = importedUrls.has(gh.url);
+            return (
+              <article key={gh.number} className="board-card board-card-github-issue">
+                <a
+                  className="board-card-title"
+                  href={gh.url}
+                  onClick={(e) => e.stopPropagation()}
+                  title={gh.url}
+                >
+                  #{gh.number} {gh.title}
+                </a>
+                {imported ? (
+                  <span className="board-card-imported" title="Already on the board">
+                    ✓
+                  </span>
+                ) : (
+                  <button
+                    className="board-card-import"
+                    title="Import onto the board"
+                    onClick={() => void importGithubIssue(gh)}
+                  >
+                    ↓
+                  </button>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      </section>
 
       {pending && (
         <div className="modal-backdrop" onClick={() => setPending(null)}>

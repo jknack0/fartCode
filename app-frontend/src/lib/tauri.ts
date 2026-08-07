@@ -845,6 +845,8 @@ export interface IssueDto {
   prdPath: string | null;
   prdSection: string | null;
   linkedTaskId: string | null;
+  /** Source URL when imported from an external tracker (GitHub #import). */
+  externalRef: string | null;
   blocked: boolean;
   blockers: BlockerRefDto[];
   createdAt: string | null;
@@ -974,4 +976,31 @@ export function issueApplyProposal(
   proposal: ProposalDto,
 ): Promise<IssueDto[]> {
   return invoke("issue_apply_proposal", { projectId, proposal });
+}
+
+// -- E17 dogfood: GitHub issues on the board ----------------------------------
+
+export interface GitHubIssueDto {
+  number: number;
+  title: string;
+  url: string;
+  labels: string[];
+  createdAt: string | null;
+}
+
+/** Open GitHub issues of the project's checkout (gh CLI under the hood). */
+export function projectGithubIssues(projectId: string): Promise<GitHubIssueDto[]> {
+  return invoke("project_github_issues", { projectId });
+}
+
+/** Imports a GitHub issue as a local board card (Backlog), deduped on the
+ * GitHub URL. */
+export function issueImportGithub(args: {
+  projectId: string;
+  number: number;
+  title: string;
+  url: string;
+  labels: string[];
+}): Promise<IssueDto> {
+  return invoke("issue_import_github", args);
 }

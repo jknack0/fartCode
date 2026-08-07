@@ -95,6 +95,7 @@ impl Fixture {
                 model: None,
                 prd_path: Some("docs/prds/x.md".into()),
                 prd_section: None,
+                external_ref: None,
             })
             .unwrap()
     }

@@ -121,6 +121,7 @@ fn apply_inner(
             model: issue.model.clone(),
             prd_path: proposal.prd.as_ref().map(|p| p.path.clone()),
             prd_section: None,
+            external_ref: None,
         })?);
     }
 
@@ -257,6 +258,7 @@ mod tests {
                 model: None,
                 prd_path: None,
                 prd_section: None,
+                external_ref: None,
             })
             .unwrap();
         let p = parse_proposal(

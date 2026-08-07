@@ -38,7 +38,7 @@
 
 .board {
   display: grid;
-  grid-template-columns: repeat(5, minmax(180px, 1fr));
+  grid-template-columns: repeat(6, minmax(160px, 1fr));
   gap: 8px;
   flex: 1;
   min-width: 0;
@@ -129,6 +129,59 @@
 
 .board-card-dot.status-review {
   background: var(--info, #82baff);
+}
+
+/* -- GitHub issues column (E17 dogfood) -- */
+
+.board-lane-github .board-card {
+  cursor: default;
+}
+
+.board-card-github-issue .board-card-title {
+  color: var(--info, #82baff);
+  text-decoration: none;
+}
+
+.board-card-github-issue .board-card-title:hover {
+  text-decoration: underline;
+}
+
+.board-card-import {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 5px;
+  color: var(--passive, #929192);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.board-card-import:hover {
+  background: var(--background-3);
+  color: var(--foreground, #e9e8e8);
+}
+
+.board-card-imported {
+  color: var(--status-review, #59b358);
+  font-size: 11px;
+}
+
+.board-card-github {
+  font-size: 10px;
+  font-family: "JetBrains Mono Variable", monospace;
+  color: var(--passive, #929192);
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0 3px;
+  text-decoration: none;
+}
+
+.board-github-error {
+  font-size: 12px;
+  padding: 6px;
 }
 
 .board-card-blocked {

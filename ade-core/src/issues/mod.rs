@@ -106,6 +106,9 @@ pub struct Issue {
     /// Task spawned by board dispatch (E17-03). Survives lane moves;
     /// cleared when the task is deleted.
     pub linked_task_id: Option<String>,
+    /// Source URL when imported from an external tracker (GitHub issue
+    /// import — dedupe key + provenance badge).
+    pub external_ref: Option<String>,
     /// Derived at read time (ADR-0032): any direct blocker not in Done.
     pub blocked: bool,
     pub blockers: Vec<BlockerRef>,
@@ -125,6 +128,7 @@ pub struct NewIssue {
     pub model: Option<String>,
     pub prd_path: Option<String>,
     pub prd_section: Option<String>,
+    pub external_ref: Option<String>,
 }
 
 /// Patch for [`IssueStore::update`]: `None` leaves the field alone;
@@ -205,7 +209,8 @@ pub struct IssueStore {
 /// Columns in `issue_from_row` order; the final `blocked` slot is the
 /// EXISTS subquery appended by the list/get SELECTs.
 const COLUMNS: &str = "id, project_id, title, body, acceptance, lane, position, \
-     provider, model, prd_path, prd_section, linked_task_id, created_at, updated_at";
+     provider, model, prd_path, prd_section, linked_task_id, external_ref, \
+     created_at, updated_at";
 
 /// Derived-blocked subquery: true when any direct blocker's lane ≠ done.
 const BLOCKED_SQL: &str = "EXISTS(SELECT 1 FROM issue_dependencies d \
@@ -215,7 +220,7 @@ const BLOCKED_SQL: &str = "EXISTS(SELECT 1 FROM issue_dependencies d \
 fn issue_from_row(row: &rusqlite::Row) -> rusqlite::Result<Issue> {
     let lane: String = row.get(5)?;
     let acceptance_cell: Option<String> = row.get(4)?;
-    let blocked: i64 = row.get(14)?;
+    let blocked: i64 = row.get(15)?;
     Ok(Issue {
         id: row.get(0)?,
         project_id: row.get(1)?,
@@ -234,8 +239,9 @@ fn issue_from_row(row: &rusqlite::Row) -> rusqlite::Result<Issue> {
         prd_path: row.get(9)?,
         prd_section: row.get(10)?,
         linked_task_id: row.get(11)?,
-        created_at: row.get(12)?,
-        updated_at: row.get(13)?,
+        external_ref: row.get(12)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
         blocked: blocked != 0,
         blockers: Vec::new(), // attached by the caller (second query)
     })
@@ -299,6 +305,7 @@ impl IssueStore {
             items: new.acceptance,
         })?;
         let id = format!("iss_{}", uuid::Uuid::new_v4());
+        let mut deduped_id: Option<String> = None;
         {
             let conn = self.conn()?;
             let project_exists: bool = conn.query_row(
@@ -309,29 +316,50 @@ impl IssueStore {
             if !project_exists {
                 return Err(Error::ProjectNotFound(new.project_id));
             }
-            conn.execute(
-                "INSERT INTO issues
-                     (id, project_id, title, body, acceptance, lane, position,
-                      provider, model, prd_path, prd_section)
-                 VALUES (
-                     ?1, ?2, ?3, ?4, ?5, ?6,
-                     (SELECT COALESCE(MAX(position) + 1, 0) FROM issues
-                       WHERE project_id = ?2 AND lane = ?6),
-                     ?7, ?8, ?9, ?10
-                 )",
-                rusqlite::params![
-                    id,
-                    new.project_id,
-                    title,
-                    new.body,
-                    acceptance,
-                    lane.as_str(),
-                    new.provider,
-                    new.model,
-                    new.prd_path,
-                    new.prd_section,
-                ],
-            )?;
+            // One board card per external issue: importing the same GitHub
+            // issue twice returns the existing card instead of a duplicate.
+            // (Resolved inside the guard block; returned after it drops so
+            // `get` can take the lock itself.)
+            if let Some(external_ref) = &new.external_ref {
+                deduped_id = conn
+                    .query_row(
+                        "SELECT id FROM issues WHERE project_id = ?1 AND external_ref = ?2",
+                        rusqlite::params![new.project_id, external_ref],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+            }
+            if deduped_id.is_none() {
+                conn.execute(
+                    "INSERT INTO issues
+                         (id, project_id, title, body, acceptance, lane, position,
+                          provider, model, prd_path, prd_section, external_ref)
+                     VALUES (
+                         ?1, ?2, ?3, ?4, ?5, ?6,
+                         (SELECT COALESCE(MAX(position) + 1, 0) FROM issues
+                           WHERE project_id = ?2 AND lane = ?6),
+                         ?7, ?8, ?9, ?10, ?11
+                     )",
+                    rusqlite::params![
+                        id,
+                        new.project_id,
+                        title,
+                        new.body,
+                        acceptance,
+                        lane.as_str(),
+                        new.provider,
+                        new.model,
+                        new.prd_path,
+                        new.prd_section,
+                        new.external_ref,
+                    ],
+                )?;
+            }
+        }
+        if let Some(existing_id) = deduped_id {
+            return self
+                .get(&existing_id)?
+                .ok_or_else(|| Error::Internal("deduped issue vanished".into()));
         }
         self.event_bus.send(InternalEvent::IssueCreated {
             id: id.clone(),
@@ -675,6 +703,7 @@ mod tests {
             model: None,
             prd_path: None,
             prd_section: None,
+            external_ref: None,
         }
     }
 
@@ -1018,6 +1047,31 @@ mod tests {
             rx.try_recv().unwrap(),
             InternalEvent::IssueDeleted { ref id, .. } if id == &a.id
         ));
+    }
+
+    #[test]
+    fn external_ref_dedupes_imports() {
+        let store = fixture();
+        let mut gh = new_issue("#42 Fix the flaky test");
+        gh.external_ref = Some("https://github.com/o/r/issues/42".into());
+        let first = store.create(gh).unwrap();
+        assert_eq!(
+            first.external_ref.as_deref(),
+            Some("https://github.com/o/r/issues/42")
+        );
+
+        // Importing the same GitHub issue again returns the existing card.
+        let mut dup = new_issue("#42 Fix the flaky test (again)");
+        dup.external_ref = Some("https://github.com/o/r/issues/42".into());
+        let second = store.create(dup).unwrap();
+        assert_eq!(second.id, first.id);
+        assert_eq!(store.list_for_project("p1").unwrap().len(), 1);
+
+        // A different external ref (or none) creates a new card.
+        let mut other = new_issue("#43 Something else");
+        other.external_ref = Some("https://github.com/o/r/issues/43".into());
+        store.create(other).unwrap();
+        assert_eq!(store.list_for_project("p1").unwrap().len(), 2);
     }
 
     #[test]
