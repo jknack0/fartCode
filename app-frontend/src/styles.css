@@ -1222,8 +1222,6 @@ button.danger:hover {
   border-radius: var(--radius-xl);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
   overflow: hidden;
-  align-self: flex-start;
-  margin-top: 15vh;
 }
 
 .palette input {
