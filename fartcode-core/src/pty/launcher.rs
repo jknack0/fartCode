@@ -341,6 +341,7 @@ impl AgentLauncher {
                     .collect::<Vec<_>>(),
                 PtySize::default(),
                 EnvPolicy::AllowlistedOnly,
+                &[],
             )?;
 
             // Keystroke strategy: pump output into the injector and type the
@@ -802,10 +803,36 @@ impl Drop for SessionGuard {
     }
 }
 
+/// Well-known user binary directories that may be absent from the app's
+/// PATH when launched outside an interactive shell (GUI launchers, IDEs,
+/// Dock). Searched AFTER the regular PATH, in order.
+fn common_bin_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    if let Some(home) = &home {
+        for sub in [".local/bin", ".bun/bin", ".cargo/bin", ".npm-global/bin"] {
+            dirs.push(home.join(sub));
+        }
+    }
+    dirs.push(PathBuf::from("/opt/homebrew/bin"));
+    dirs.push(PathBuf::from("/usr/local/bin"));
+    dirs
+}
+
 /// Finds an executable on PATH (names-outer: first listed binary wins).
+/// Falls back to well-known user bin dirs (`.local/bin`, `.bun/bin`, …)
+/// when PATH alone misses them — GUI-launched processes often inherit a
+/// minimal PATH that lacks user install locations.
 pub fn find_on_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
+    let mut search_dirs: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    for extra in common_bin_dirs() {
+        if !search_dirs.contains(&extra) {
+            search_dirs.push(extra);
+        }
+    }
+    for dir in search_dirs {
         let candidate = dir.join(name);
         if candidate.is_file() {
             #[cfg(unix)]

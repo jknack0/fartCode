@@ -123,6 +123,7 @@ pub(crate) fn spawn_lifecycle_script<R: tauri::Runtime>(
             program: &program,
             args: &args,
             env: &env,
+            remove: &[],
             cwd: Path::new(&ctx.cwd),
             rows,
             cols,
@@ -131,15 +132,38 @@ pub(crate) fn spawn_lifecycle_script<R: tauri::Runtime>(
         .map_err(|e| e.to_string())
 }
 
-/// Auto-run hook (E1-06): fires setup/run at task creation when the
-/// project's settings enable them. Best-effort — a failed spawn (no script
-/// configured, worktree missing) must never fail the creation itself.
-pub(crate) fn run_auto_lifecycle_scripts<R: tauri::Runtime>(
+/// Auto-run hook (E1-06): fires setup/run at task creation ONLY when the
+/// project's `autoRunSetupScriptOnTaskCreation` /
+/// `autoRunRunScriptOnTaskCreation` flags are on (default off — scripts
+/// configured but not flagged stay manual). Best-effort — a failed spawn
+/// (no script configured, worktree missing) must never fail the creation
+/// itself.
+pub fn run_auto_lifecycle_scripts<R: tauri::Runtime>(
     terminals: &TerminalManager<R>,
     app: &App,
     task_id: &str,
 ) {
+    let ctx = match crate::commands::terminals::resolve_task_context(&app.db, task_id) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            tracing::debug!(task_id, error = %e, "auto lifecycle scripts skipped");
+            return;
+        }
+    };
+    let settings = match app
+        .settings
+        .get_project_settings(&ctx.project_id, Path::new(&ctx.project_path))
+    {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::debug!(task_id, error = %e, "auto lifecycle scripts skipped");
+            return;
+        }
+    };
     for script_type in [LifecycleScriptType::Setup, LifecycleScriptType::Run] {
+        if !auto_run_enabled(&settings, script_type) {
+            continue;
+        }
         if let Err(e) = spawn_lifecycle_script(terminals, app, task_id, script_type, 24, 80) {
             tracing::debug!(
                 task_id,

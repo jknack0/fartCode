@@ -165,19 +165,34 @@ export const useTabs = create<TabsState>((set, get) => ({
       // E1-06: surface lifecycle script terminals the backend is running
       // (or ran — auto-run at task creation) that no tab covers yet. The
       // retained entry replays the output tail, so the finished run's
-      // output is visible in the tab.
+      // output is visible in the tab. Agent terminals (ADR-0033) are
+      // surfaced the same way — dispatch spawns one before navigation, so
+      // the task view must show the live session it just handed off to.
       try {
         const terms = await terminalListForTask(taskId);
         const covered = new Set(
           [...left.tabs, ...(right?.tabs ?? [])].map((t) => t.id),
         );
         const extras = terms
-          .filter((t) => t.kind === "lifecycle" && !covered.has(t.id))
-          .map((t) => ({
-            id: t.id,
-            kind: "lifecycle-script" as const,
-            title: scriptTabTitle(t.scriptType ?? ""),
-          }));
+          .filter((t) => !covered.has(t.id))
+          .map((t) => {
+            if (t.kind === "agent") {
+              return {
+                id: t.id,
+                kind: "terminal" as const,
+                title: t.agent ?? "Agent",
+              };
+            }
+            if (t.kind === "lifecycle") {
+              return {
+                id: t.id,
+                kind: "lifecycle-script" as const,
+                title: scriptTabTitle(t.scriptType ?? ""),
+              };
+            }
+            return null;
+          })
+          .filter((t): t is NonNullable<typeof t> => t !== null);
         if (extras.length > 0) {
           left = {
             tabs: [...left.tabs, ...extras],
@@ -185,22 +200,14 @@ export const useTabs = create<TabsState>((set, get) => ({
           };
         }
       } catch (e) {
-        console.warn("lifecycle terminal discovery failed:", e);
+        console.warn("terminal discovery failed:", e);
       }
+      // No auto-spawn: a task with nothing running opens on an empty pane
+      // (the task view's empty state offers ⌘T / ⌘D). Agent and lifecycle
+      // terminals arrive through the discovery above — an unsummoned plain
+      // shell is never created on its own. (E2-12 summon-only terminals.)
       if (left.tabs.length === 0) {
-        // Terminal-first: a task's default surface is a shell in its
-        // worktree; extra terminals are summoned explicitly (⌘T / ⌘D),
-        // never auto-opened. (E2-12: work inside fartCode.)
-        try {
-          const terminalId = await terminalOpen(taskId, 24, 80);
-          left = {
-            tabs: [{ id: terminalId, kind: "terminal", title: "Terminal" }],
-            activeId: terminalId,
-          };
-        } catch (e) {
-          console.warn("terminal_open failed on task open:", e);
-          left = { tabs: [], activeId: null };
-        }
+        left = { tabs: [], activeId: null };
       }
       const panes: TaskPanes = { left, right };
       // Persist the respawned terminal ids immediately so the stored state
@@ -222,7 +229,25 @@ export const useTabs = create<TabsState>((set, get) => ({
     set((s) => {
       const old = s.panesByTask[taskId];
       if (!old || !old[pane]) return s;
-      if (old[pane].tabs.some((t) => t.id === tab.id)) return s;
+      // A tab with this id already exists — focus it instead of stacking a
+      // duplicate (ADR-0033: the backend reattaches a live agent terminal,
+      // so a second open converges on the one existing tab).
+      const existingPane = (["left", "right"] as const).find((p) =>
+        old[p]?.tabs.some((t) => t.id === tab.id),
+      );
+      if (existingPane) {
+        const target: Pane = { ...old[existingPane]!, activeId: tab.id };
+        const panes: TaskPanes = {
+          left: existingPane === "left" ? target : old.left,
+          right:
+            existingPane === "right" ? target : old.right ? { ...old.right } : null,
+        };
+        persist(taskId, panes, existingPane);
+        return {
+          panesByTask: { ...s.panesByTask, [taskId]: panes },
+          activePaneByTask: { ...s.activePaneByTask, [taskId]: existingPane },
+        };
+      }
       const target: Pane = { tabs: [...old[pane].tabs, tab], activeId: tab.id };
       const panes: TaskPanes = {
         left: pane === "left" ? target : old.left,

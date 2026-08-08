@@ -95,6 +95,10 @@ pub struct TerminalSpec<'a> {
     /// inherited env). The E1-06 lifecycle env contract (`FARTCODE_*` vars)
     /// arrives through here.
     pub env: &'a [(String, String)],
+    /// Env vars stripped from the child AFTER env application (ADR-0034):
+    /// a claude-login (OAuth) default account must not see
+    /// `ANTHROPIC_API_KEY` — its presence flips the CLI to API billing.
+    pub remove: &'a [String],
     pub cwd: &'a Path,
     pub rows: u16,
     pub cols: u16,
@@ -156,6 +160,11 @@ impl<R: tauri::Runtime> TerminalManager<R> {
     /// (E2-13, #52 — startup commands spawn as `sh -c '<cmd>'`). The tmux
     /// server owns it, so it survives an app crash; the next `open`
     /// reattaches.
+    ///
+    /// Agent terminals are deduped per task (ADR-0033): a live agent
+    /// terminal reattaches instead of spawning a second — enforced here so
+    /// every caller (dispatch, ⌘⇧O, comment-tasks) converges on one
+    /// session.
     pub fn open(&self, spec: TerminalSpec<'_>) -> Result<String, fartcode_core::Error> {
         let TerminalSpec {
             task_id,
@@ -165,11 +174,17 @@ impl<R: tauri::Runtime> TerminalManager<R> {
             program,
             args,
             env,
+            remove,
             cwd,
             rows,
             cols,
             lifecycle,
         } = spec;
+        if agent.is_some() {
+            if let Some(existing) = self.find_running_agent(task_id) {
+                return Ok(existing);
+            }
+        }
         let tmux_binary = tmux
             .then(fartcode_core::pty::tmux::resolve_tmux_binary)
             .flatten();
@@ -218,6 +233,7 @@ impl<R: tauri::Runtime> TerminalManager<R> {
                 cols: cols.max(2),
             },
             EnvPolicy::Inherit,
+            remove,
         );
         let handle = match spawn_result {
             Ok(handle) => handle,
@@ -400,6 +416,19 @@ impl<R: tauri::Runtime> TerminalManager<R> {
                 e.task_id == task_id
                     && e.lifecycle_type.as_deref() == Some(script_type)
                     && !e.exited.load(Ordering::Relaxed)
+            })
+            .map(|(id, _)| id.clone())
+    }
+
+    /// Id of the task's IN-FLIGHT agent terminal, if any (ADR-0033: one
+    /// agent terminal per task — a second open reattaches the live one
+    /// instead of stacking another agent tab).
+    pub fn find_running_agent(&self, task_id: &str) -> Option<String> {
+        self.terminals
+            .lock()
+            .iter()
+            .find(|(_, e)| {
+                e.task_id == task_id && e.agent.is_some() && !e.exited.load(Ordering::Relaxed)
             })
             .map(|(id, _)| id.clone())
     }

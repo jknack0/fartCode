@@ -4,7 +4,9 @@
 
 use std::sync::LazyLock;
 
-use crate::types::{Capabilities, PromptDescriptor, PromptStrategy, ProviderDescriptor};
+use crate::types::{
+    AuthMethod, AuthMethodKind, Capabilities, PromptDescriptor, PromptStrategy, ProviderDescriptor,
+};
 
 pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
     vec![
@@ -49,6 +51,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["agy".to_string(), "antigravity".to_string()],
         default_model: Some("Gemini 3.5 Flash (Medium)".to_string()),
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "claude".to_string(),
@@ -91,6 +94,32 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["claude".to_string()],
         default_model: Some("claude-fable-5".to_string()),
         env_vars: vec!["ANTHROPIC_API_KEY".to_string()],
+        // E3-07 login methods, ported from the reference claude plugin:
+        // cli-login (OAuth — the user's Claude subscription, no API
+        // charges) first, api-key second. When a claude-login account is
+        // the default, launchers pass NO auth env vars and strip any
+        // inherited ANTHROPIC_API_KEY — its presence would flip the CLI
+        // to API-key billing.
+        auth_methods: vec![
+            AuthMethod {
+                id: "claude-login".to_string(),
+                name: "Sign in with Claude Code".to_string(),
+                description: "OAuth via the Claude Code CLI. Uses your Claude Pro/Max subscription — no per-token API charges.".to_string(),
+                kind: AuthMethodKind::CliLogin,
+                env_vars: vec![],
+                login_args: vec!["auth".to_string(), "login".to_string()],
+                status_args: vec!["auth".to_string(), "status".to_string()],
+            },
+            AuthMethod {
+                id: "anthropic-api-key".to_string(),
+                name: "Use an Anthropic API key".to_string(),
+                description: "Pay-per-token API billing via ANTHROPIC_API_KEY.".to_string(),
+                kind: AuthMethodKind::ApiKey,
+                env_vars: vec!["ANTHROPIC_API_KEY".to_string()],
+                login_args: vec![],
+                status_args: vec![],
+            },
+        ],
     },
     ProviderDescriptor {
         id: "codex".to_string(),
@@ -133,6 +162,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["codex".to_string()],
         default_model: Some("gpt-5.6-sol".to_string()),
         env_vars: vec!["OPENAI_API_KEY".to_string()],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "devin".to_string(),
@@ -175,6 +205,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["devin".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "droid".to_string(),
@@ -217,6 +248,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["droid".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "grok".to_string(),
@@ -259,6 +291,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["grok".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "qwen".to_string(),
@@ -301,6 +334,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["qwen".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "amp".to_string(),
@@ -343,6 +377,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["amp".to_string()],
         default_model: Some("low".to_string()),
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "charm".to_string(),
@@ -385,6 +420,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["crush".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "commandcode".to_string(),
@@ -427,6 +463,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["command-code".to_string(), "commandcode".to_string(), "cmdc".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "copilot".to_string(),
@@ -469,6 +506,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["copilot".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "cursor".to_string(),
@@ -511,6 +549,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["cursor-agent".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "hermes".to_string(),
@@ -553,6 +592,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["hermes".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "opencode".to_string(),
@@ -595,6 +635,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["opencode".to_string()],
         default_model: None,
         env_vars: vec!["ANTHROPIC_API_KEY".to_string(), "OPENAI_API_KEY".to_string(), "GEMINI_API_KEY".to_string()],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "auggie".to_string(),
@@ -637,6 +678,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["auggie".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "cline".to_string(),
@@ -679,6 +721,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["cline".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "goose".to_string(),
@@ -721,6 +764,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["goose".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "kilocode".to_string(),
@@ -763,6 +807,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["kilo".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "kimi".to_string(),
@@ -805,6 +850,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["kimi".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "kiro".to_string(),
@@ -847,6 +893,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["kiro-cli".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "rovo".to_string(),
@@ -889,6 +936,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["rovodev".to_string(), "acli".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "codebuddy".to_string(),
@@ -931,6 +979,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["codebuddy".to_string(), "cbc".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "codebuff".to_string(),
@@ -973,6 +1022,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["codebuff".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "continue".to_string(),
@@ -1015,6 +1065,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["cn".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "freebuff".to_string(),
@@ -1057,6 +1108,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["freebuff".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "jules".to_string(),
@@ -1099,6 +1151,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["jules".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "junie".to_string(),
@@ -1141,6 +1194,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["junie".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "mistral".to_string(),
@@ -1183,6 +1237,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["vibe".to_string()],
         default_model: Some("mistral-medium-3.5".to_string()),
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "autohand".to_string(),
@@ -1225,6 +1280,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["autohand".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "letta".to_string(),
@@ -1267,6 +1323,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["letta".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "mimocode".to_string(),
@@ -1309,6 +1366,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["mimo".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "oh-my-pi".to_string(),
@@ -1351,6 +1409,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["omp".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "pi".to_string(),
@@ -1393,6 +1452,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["pi".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "qoder".to_string(),
@@ -1435,6 +1495,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["qodercli".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     },
     ProviderDescriptor {
         id: "zero".to_string(),
@@ -1477,6 +1538,7 @@ pub static PROVIDERS: LazyLock<Vec<ProviderDescriptor>> = LazyLock::new(|| {
         binaries: vec!["zero".to_string()],
         default_model: None,
         env_vars: vec![],
+        auth_methods: vec![],
     }
 ]
 });

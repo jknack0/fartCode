@@ -191,6 +191,7 @@ body {
   display: flex;
   flex-direction: column;
   width: 320px;
+  position: relative;
   min-height: 0;
   background: var(--background-tertiary);
   border-left: 1px solid var(--border);
@@ -521,12 +522,108 @@ body {
 .sidebar {
   grid-area: sidebar;
   width: 264px;
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
   background: var(--background-tertiary);
   border-right: 1px solid var(--border);
   overflow-y: auto;
+}
+
+.sidebar-rail {
+  grid-area: sidebar;
+  width: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  background: var(--background-tertiary);
+  border-right: 1px solid var(--border);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sidebar-rail button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--foreground-muted);
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
+  flex-shrink: 0;
+}
+
+.sidebar-rail button:hover:not(:disabled) {
+  background: var(--background-tertiary-1);
+  color: var(--foreground);
+}
+
+.sidebar-rail button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.rail-chip {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--foreground-passive);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px 3px;
+  background: var(--background-1);
+}
+
+.rail-projects {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.rail-project {
+  background: var(--background-1);
+}
+
+.rail-project.active {
+  background: var(--background-tertiary-2);
+  color: var(--foreground);
+}
+
+/* Drag handles for the left/right gutters -------------------------------- */
+.gutter-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  z-index: 10;
+  cursor: col-resize;
+}
+
+.gutter-handle:hover,
+.gutter-handle:active {
+  background: var(--background-tertiary-2);
+}
+
+.sidebar-handle {
+  right: 0;
+}
+
+.sheet-handle {
+  left: 0;
 }
 
 .sidebar-header {
@@ -545,15 +642,6 @@ body {
   color: var(--foreground);
 }
 
-/* the brand dot: an emerald indicator set into the wordmark */
-.brand-mark {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin: 0 1px;
-  border-radius: 9999px;
-  background: var(--accent);
-}
 
 .header-actions {
   display: flex;
@@ -1351,19 +1439,6 @@ button.danger:hover {
   color: var(--foreground-muted);
 }
 
-.tab-bar-trailing {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  padding: 0 8px;
-}
-
-.tab-bar-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-right: 8px;
-}
 
 .tab-dirty {
   color: var(--status-in-progress);
@@ -1390,21 +1465,8 @@ button.danger:hover {
   cursor: help;
 }
 
-.changes-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  /* Override the global button padding/border — they would eat the whole
-   * 26px box and shrink the icon to zero width. */
-  padding: 0;
-  border-radius: var(--radius-sm);
-  color: var(--foreground-passive);
-}
-
-/* Lifecycle script launchers (E1-06): one small button per configured
- * script, next to the changes toggle. */
+/* Lifecycle script launchers (E1-06): one small key per configured
+ * script, in the app header row (same chrome across scopes). */
 .script-run {
   padding: 2px 7px;
   height: 22px;
@@ -1415,27 +1477,33 @@ button.danger:hover {
   letter-spacing: 0.04em;
   color: var(--foreground-passive);
   background: var(--background-secondary);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
 }
 
 .script-run:hover {
   background: var(--surface-elevated-hover);
   color: var(--foreground);
-  border-color: var(--border-strong);
+  border-color: var(--border-1);
 }
 
 .script-run:active {
   background: var(--background-tertiary-2);
 }
 
-.changes-toggle:hover {
-  background: var(--surface-elevated-hover);
-  color: var(--foreground);
+/* Task-scope header: project / task breadcrumb in the title slot. */
+.task-header-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.changes-toggle.active {
-  background: var(--background-tertiary-2);
-  color: var(--info);
+.task-header-title em {
+  color: var(--foreground-passive);
+  font-style: normal;
+  margin: 0 2px;
 }
 
 /* the pane holding keyboard focus tints its active tab's kind glyph */
@@ -1481,6 +1549,23 @@ button.danger:hover {
   flex: 1;
   min-height: 0;
   background: var(--xterm-bg);
+}
+
+/* A pane with no tabs: summon hints, never an auto-spawned shell. */
+.pane-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+}
+
+.pane-empty p {
+  margin: 0;
+  font-size: 13px;
 }
 
 /* every tab stays mounted (a hidden tab keeps its session alive) */
@@ -1618,6 +1703,47 @@ button.danger:hover {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--foreground-passive);
+}
+
+.account-method {
+  padding: 1px 8px;
+  border-radius: 9999px;
+  background: var(--background-3);
+  font-size: 11px;
+  color: var(--foreground-muted);
+  white-space: nowrap;
+}
+
+.account-full {
+  grid-column: 1 / -1;
+}
+
+.account-login-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  min-height: 32px;
+}
+
+.account-ok {
+  color: var(--success, #3fb950);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.account-muted {
+  color: var(--foreground-passive);
+  font-size: 12px;
+}
+
+.account-login-btn {
+  margin-left: 4px;
+}
+
+.account-actions {
+  display: flex;
+  align-items: flex-end;
 }
 
 .account-default {

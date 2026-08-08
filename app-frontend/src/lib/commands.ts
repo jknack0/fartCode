@@ -5,7 +5,6 @@
 // Terminal-first: ⌘T opens a shell in the task's worktree; ⌘⇧O opens OMP;
 // ⌘⇧A opens the task's structured-chat conversation (E2-11-6).
 import { CommandId, createRegistry, registerCommand } from "./registry";
-import { ensureAcpConversation, focusConversationTab } from "./acp-conversation";
 import { useSidebar, visibleTaskOrder } from "../store/sidebar";
 import { terminalOpen, terminalOpenAgent, terminalOpenLifecycle } from "./tauri";
 import { scriptTabTitle } from "./tab-registry";
@@ -62,14 +61,18 @@ async function openOmpTab(taskId: string, pane: PaneId): Promise<void> {
   });
 }
 
-/** Opens (or focuses) the task's ACP conversation tab (⌘⇧A). */
-async function openConversationTab(
-  projectId: string,
-  taskId: string,
-  pane: PaneId,
-): Promise<void> {
-  const conv = await ensureAcpConversation(projectId, taskId);
-  if (conv) focusConversationTab(taskId, conv.id, pane);
+/** Opens the task chat in the right sheet (⌘⇧A / header icon): chat mode
+ * when the sheet is closed, switches changes mode → chat mode when open. */
+export function openTaskChat(): void {
+  const ui = useUi.getState();
+  if (!ui.changesOpen) {
+    ui.setTaskChatOpen(true);
+    ui.setChangesOpen(true);
+  } else if (ui.taskChatOpen) {
+    ui.setChangesOpen(false); // chat mode → close the sheet
+  } else {
+    ui.setTaskChatOpen(true); // changes mode → chat mode
+  }
 }
 
 function switchTask(dir: 1 | -1): void {
@@ -141,8 +144,11 @@ export function registerAllCommands(): void {
       if (!ui.changesOpen) {
         ui.setChangesOpen(true);
         if (projectScope) ui.setProjectChatOpen(false);
+        else ui.setTaskChatOpen(false);
       } else if (projectScope && ui.projectChatOpen) {
         ui.setProjectChatOpen(false); // chat mode → changes mode
+      } else if (!projectScope && ui.taskChatOpen) {
+        ui.setTaskChatOpen(false); // chat mode → changes mode
       } else {
         ui.setChangesOpen(false);
       }
@@ -249,15 +255,7 @@ export function registerAllCommands(): void {
     label: "Open agent conversation",
     defaultKeys: ["⌘⇧A"],
     scope: "task-view",
-    run: () => {
-      const sb = useSidebar.getState();
-      if (!sb.selectedTaskId || !sb.selectedProjectId) return;
-      const taskId = sb.selectedTaskId;
-      const pane = useTabs.getState().activePaneByTask[taskId] ?? "left";
-      void openConversationTab(sb.selectedProjectId, taskId, pane).catch((e) =>
-        console.error("conversation open failed", e),
-      );
-    },
+    run: () => openTaskChat(),
   });
   registerCommand(registry, {
     id: "send-context",

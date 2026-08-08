@@ -46,7 +46,11 @@ export default function ProjectChatPanel({ projectId }: { projectId: string }) {
           className="project-chat-minimize"
           title="Hide project chat (⌘⇧2)"
           aria-label="Hide project chat"
-          onClick={() => useUi.getState().setProjectChatOpen(false)}
+          onClick={() => {
+            const ui = useUi.getState();
+            ui.setProjectChatOpen(false);
+            ui.setChangesOpen(false); // close the sheet, not just switch modes
+          }}
         >
           <IconChevron />
         </button>

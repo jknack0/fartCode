@@ -40,6 +40,7 @@ impl PtyManager for PortablePtyManager {
         env: &[(String, String)],
         size: PtySize,
         env_policy: EnvPolicy,
+        remove: &[String],
     ) -> Result<Box<dyn PtyHandle>, Error> {
         let pty_system = native_pty_system();
         let pair: PtyPair = pty_system
@@ -63,6 +64,12 @@ impl PtyManager for PortablePtyManager {
         builder.cwd(cwd);
         for (key, value) in env {
             builder.env(key, value);
+        }
+        // ADR-0034 login-account scrubbing: env vars that must not reach
+        // the child even via the inherited parent env (ANTHROPIC_API_KEY
+        // would flip the claude CLI to API-key billing).
+        for key in remove {
+            builder.env_remove(key);
         }
 
         let child = pair
@@ -283,6 +290,7 @@ mod tests {
                 &[],
                 PtySize::default(),
                 EnvPolicy::Inherit,
+                &[],
             )
             .unwrap();
         let _ = h.wait_exit(Duration::from_secs(10));
@@ -305,6 +313,7 @@ mod tests {
                 &[],
                 PtySize::default(),
                 EnvPolicy::AllowlistedOnly,
+                &[],
             )
             .unwrap();
         let _ = h2.wait_exit(Duration::from_secs(10));
@@ -313,6 +322,39 @@ mod tests {
             std::fs::read_to_string(tmp.path().join("probe2.txt")).unwrap(),
             "",
             "AllowlistedOnly must strip the parent env"
+        );
+    }
+
+    /// ADR-0034: the `remove` list strips env vars from the child even
+    /// when the parent env set them (Inherit policy). The claude CLI
+    /// switches to API-key billing the moment ANTHROPIC_API_KEY exists,
+    /// so login (OAuth) accounts must scrub it from inherited env.
+    #[test]
+    fn remove_strips_env_vars_under_inherit_policy() {
+        let _guard = EnvGuard::set("FARTCODE_PTY_LEAK_PROBE", "secret-value");
+        let tmp = tempfile::tempdir().unwrap();
+        let mgr = PortablePtyManager;
+
+        let mut h = mgr
+            .spawn(
+                "/bin/bash",
+                &[
+                    "-c".to_string(),
+                    "echo -n \"$FARTCODE_PTY_LEAK_PROBE\" > probe.txt".to_string(),
+                ],
+                tmp.path(),
+                &[],
+                PtySize::default(),
+                EnvPolicy::Inherit,
+                &["FARTCODE_PTY_LEAK_PROBE".to_string()],
+            )
+            .unwrap();
+        let _ = h.wait_exit(Duration::from_secs(10));
+        let _ = h.flush();
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("probe.txt")).unwrap(),
+            "",
+            "remove must scrub the var from the inherited env"
         );
     }
 
@@ -331,6 +373,7 @@ mod tests {
                 &[],
                 PtySize::default(),
                 EnvPolicy::Inherit,
+                &[],
             )
             .unwrap();
         handle.write("echo hello-from-pty\nexit\n").unwrap();
@@ -368,6 +411,7 @@ mod tests {
                 &[],
                 PtySize::default(),
                 EnvPolicy::Inherit,
+                &[],
             )
             .unwrap();
         let exit = handle
@@ -406,6 +450,7 @@ mod tests {
                 &[("FARTCODE_TEST_VAR".into(), "is-here".into())],
                 PtySize::default(),
                 EnvPolicy::Inherit,
+                &[],
             )
             .unwrap();
         handle.write("echo $FARTCODE_TEST_VAR\nexit\n").unwrap();
@@ -431,6 +476,7 @@ mod tests {
                 &[],
                 PtySize::default(),
                 EnvPolicy::Inherit,
+                &[],
             )
             .unwrap();
         handle.write("sleep 5\n").unwrap();
@@ -454,6 +500,7 @@ mod tests {
                 &[],
                 PtySize::default(),
                 EnvPolicy::Inherit,
+                &[],
             )
             .unwrap();
         // >1 MiB of output (exercises the cap) + a backgrounded grandchild
@@ -497,6 +544,7 @@ mod tests {
                 &[],
                 PtySize::default(),
                 EnvPolicy::Inherit,
+                &[],
             )
             .unwrap();
         assert_send(&h);

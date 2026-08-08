@@ -35,6 +35,85 @@ one exists).
   `PullRequestPanel.tsx`; agent comments show a `⚡ <provider>` chip via
   `commentAuthor()`.
 
+## Wrong tab on new task — three root causes fixed (2026-08-07)
+
+The "TTY/Setup script tab on every new task" bug was three stacked defects,
+found by reading the real app DB (`~/Library/Application Support/fartCode`):
+1. **Auto-run flag ignored:** `run_auto_lifecycle_scripts` never consulted
+   `auto_run_enabled` — a configured `scripts.setup` (ade project: `omp`)
+   spawned on EVERY task creation with the flag defaulting off. Now gated;
+   regression test in tests/task_creation_agent_launch.rs.
+2. **Silent failures:** fartcode-app had NO tracing subscriber — every
+   best-effort launch error was dropped. `run()` now installs an
+   EnvFilter (default `info`, override RUST_LOG) and agent-launch failure
+   logs at `warn`.
+3. **PATH fragility:** GUI/`make dev` launches can inherit a PATH without
+   `~/.local/bin` (where claude lives). `find_on_path` now falls back to
+   common user bin dirs (`.local/bin`, `.bun/bin`, `.cargo/bin`,
+   homebrew) AFTER the real PATH — mirrors the reference
+   remote-shell-profile PATH inclusion.
+
+
+## Unified top chrome + one agent terminal per task (2026-08-07, ADR-0033)
+
+- The header grid area now ALWAYS renders: `ProjectHeader` (project scope)
+  or the new `TaskHeader` (task scope — project/task breadcrumb + script
+  launchers + Changes toggle). TaskView's tab bars are pure tab switching;
+  `.changes-toggle`/`.tab-bar-trailing`/`.tab-bar-actions` CSS deleted.
+- **One agent terminal per task:** `terminal_open_agent` reattaches a live
+  agent entry (`TerminalManager::find_running_agent`, lifecycle-dedupe
+  pattern) before provider resolution. Frontend: tabs-store `addTab`
+  focuses an existing same-id tab; `ensureTabs` surfaces uncovered live
+  agent terminals as tabs (dispatch spawns before navigation, so the task
+  view must show the hand-off). Switching agents = close the agent tab.
+- **No tab bar unless there's something to switch:** `TaskView` renders the
+  left pane's `TabBar` only when the task has 2+ tabs or a split. One agent
+  terminal (the normal case) now sits directly under the header — the lone
+  "TTY claude" chip was the "why is there a tab for the task?" report.
+  Verified live on the running app: 1 tab → no bar, ⌘T → bar with both
+  chips, close → bar gone.
+- Integration test: fartcode-app/tests/agent_terminals_integration.rs.
+- **Add Task (left nav) launches the default agent:** `create_task` calls
+  `launch_default_agent` (best-effort, same provider resolution as
+  dispatch: DEFAULT_AGENT setting → registry binary on PATH). With the
+  agent installed, a fresh task opens straight on the agent tab. The
+  frontend NEVER auto-spawns a plain shell on task open anymore — the old
+  `ensureTabs` terminal fallback is deleted; an empty pane shows ⌘T/⌘D
+  summon hints. Test: tests/task_creation_agent_launch.rs.
+- **Gotcha (bit in practice):** a "still see the TTY tab" report after
+  these changes = the running app is a STALE process. The Rust
+  `create_task` launch needs a rebuild+restart (`make dev` / relaunch),
+  and store-level frontend changes need a webview reload, not just HMR.
+  Check the running pid's start time vs the binary mtime before
+  re-diagnosing.
+
+
+## Issue board design pass (2026-08-07)
+
+- BoardView + CardDetail + board.css rebuilt as ONE ruled surface: a
+  hairline-framed plate (`--background-1`) with five lanes divided by 1px
+  `--border` rules, shared 32px head row + mono counts; cards are rows
+  (title + canonical `.status-dot` + mono chips). Replaces the old
+  five-floating-boxes layout. Narrow windows scroll the frame at a 750px
+  floor (heads and lanes share `min-width` so they stay registered).
+- Cards: linked-task dot uses the CANONICAL `.status-dot` mapping (the
+  old board.css had wrong hues: done=green, review=blue — both violate
+  the Dots-Are-Data rule). Provider chip is mono passive; gh provenance
+  chip opens externalRef via `plugin:shell|open`; blocked chip keeps
+  amber + hover popover; acceptance tally "Nac" on the title row.
+- CardDetail is now an inspector: lane header with status dot (task
+  status wins over lane), agent row with the ONE emerald key —
+  Dispatch (backend resolves provider fallback) or Open task when
+  linked — meta grid (Source/PRD/Task/Created), empty-state rows for
+  acceptance/blockers, hover-only destructive remove keys, sticky
+  footer delete confirm. Sheet widens to 420px via
+  `.changes-panel.detail-open`.
+- Toolbar gained "Add issue" (creates in Backlog, opens its detail) —
+  new frontend call to `issue_create`; board empty state teaches the
+  GitHub-sync key. All verified in the mocked-backend browser smoke
+  (drag/move, blocked-dispatch confirm modal, dispatch → agent write →
+  task navigation, gh chip URL open, dirty-save, contrast ≥5.2:1).
+
 ## Repo renamed ade → fartCode (2026-08-07)
 
 - User rename, everywhere: 12 crates `ade-*` → `fartcode-*` (dirs + Cargo
@@ -140,9 +219,10 @@ one exists).
   persisted view-state are DROPPED on restore (never respawn as a shell).
 - **UI:** TabKind `lifecycle-script` (glyph SCR, TerminalView), titles
   "Setup script"/"Run script"/"Teardown script" (`scriptTabTitle` in
-  tab-registry), per-configured-script `Run <type>` buttons in the TaskView
-  tab-bar trailing slot (next to the Changes toggle), fetched via
-  getProjectSettings per project open. ⌘-free; the tab bar is the surface.
+  tab-registry). Per-configured-script `Run <type>` keys live in the
+  task-scope header row (`TaskHeader`, ADR-0033 — moved there from the
+  old tab-bar trailing slot), fetched via getProjectSettings per project
+  open. ⌘-free.
 - **Testing:** `TerminalManager` is now `TerminalManager<R: Runtime = Wry>`
   + `tauri = { features = ["test"] }` in fartcode-app — integration tests drive
   the REAL PTY layer via `tauri::test::mock_app()` (retain/dedupe/kind,
@@ -740,4 +820,4 @@ one exists).
 - `PRD.md` — product spec + epic inventory.
 - GitHub issues — the only work list (`gh issue list -R jknack0/fartCode`).
 - `phase0-checklists.md` — cross-cutting Phase 0 process checklists (ex-Appendix).
-- `decisions/` — ADRs 0001–0023; record new ones before merge, not after.
+- `decisions/` — ADRs 0001–0033; record new ones before merge, not after.

@@ -16,6 +16,8 @@ import GitFooter from "./GitFooter";
 import PullRequestPanel from "./PullRequestPanel";
 import CardDetail from "./board/CardDetail";
 import ProjectChatPanel from "./projectChat/ProjectChatPanel";
+import TaskChatPanel from "./TaskChatPanel";
+import { useGutterResize } from "../lib/useGutterResize";
 import { IconBranch, IconClose, IconDiscard, IconMinus, IconPlus } from "./icons";
 
 const GLYPH: Record<GitChangeDto["status"], string> = {
@@ -31,6 +33,7 @@ export default function ChangesSidebar() {
   const setOpen = useUi((s) => s.setChangesOpen);
   const detailIssueId = useUi((s) => s.boardDetailIssueId);
   const projectChatOpen = useUi((s) => s.projectChatOpen);
+  const taskChatOpen = useUi((s) => s.taskChatOpen);
   const { projects, tasksByProject, selectedProjectId, selectedTaskId } = useSidebar();
   const task = selectedProjectId
     ? (tasksByProject[selectedProjectId] ?? []).find((t) => t.id === selectedTaskId)
@@ -45,6 +48,7 @@ export default function ChangesSidebar() {
   const entry = useChanges((s) => (workspaceId ? s.byWorkspace[workspaceId] : undefined));
   const [provisioning, setProvisioning] = useState(false);
   const [panelTab, setPanelTab] = useState<"changes" | "prs">("changes");
+  const resize = useGutterResize(320, 240, 640, -1);
 
   useEffect(() => {
     if (open && workspaceId) {
@@ -57,7 +61,7 @@ export default function ChangesSidebar() {
 
   // E17 project scope: the sheet shows ONE of changes | PM chat (they
   // alternate, never stack), and a board card click swaps the whole sheet
-  // to card detail.
+  // to card detail. Task scope mirrors it: changes ⇄ task chat.
   const showDetail = !taskId && detailIssueId !== null;
   const showChat = !taskId && projectChatOpen && selectedProjectId !== null;
 
@@ -65,11 +69,17 @@ export default function ChangesSidebar() {
   const changeCount = snapshot ? snapshot.staged.length + snapshot.unstaged.length : 0;
 
   return (
-    <aside className="changes-panel">
+    <aside
+      className={`changes-panel${showDetail ? " detail-open" : ""}`}
+      style={{ width: resize.width }}
+    >
+      <div className="gutter-handle sheet-handle" {...resize.bind} />
       {showDetail ? (
         <CardDetail projectId={selectedProjectId!} issueId={detailIssueId} />
       ) : showChat ? (
         <ProjectChatPanel projectId={selectedProjectId} />
+      ) : taskId && taskChatOpen ? (
+        <TaskChatPanel projectId={selectedProjectId!} taskId={taskId} />
       ) : (
         <>
           <div className="changes-scroll">

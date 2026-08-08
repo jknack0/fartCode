@@ -12,6 +12,7 @@ import { useSidebar } from "../store/sidebar";
 import { hint } from "../lib/useCommands";
 import { projectGitPull } from "../lib/tauri";
 import { IconChevron, IconClose, IconGear, IconPin, IconPlus, IconPull } from "./icons";
+import { useGutterResize } from "../lib/useGutterResize";
 
 export default function Sidebar() {
   const {
@@ -28,6 +29,7 @@ export default function Sidebar() {
   } = useSidebar();
 
   const sidebarVisible = useUi((s) => s.sidebarVisible);
+  const toggleSidebarVisible = useUi((s) => s.toggleSidebarVisible);
   // Re-renders hint text when keybindings change (E14-01 hint rendering).
   useUi((s) => s.bindingsVersion);
   const setProjectSettingsOpen = useUi((s) => s.setProjectSettingsOpen);
@@ -41,6 +43,7 @@ export default function Sidebar() {
     projectId: string;
     message: string;
   } | null>(null);
+  const resize = useGutterResize(264, 160, 480, 1);
 
   const pullProject = async (projectId: string) => {
     setPullError(null);
@@ -54,7 +57,49 @@ export default function Sidebar() {
     }
   };
 
-  if (!sidebarVisible) return null;
+  if (!sidebarVisible) {
+    // Gmail-style collapsed rail: icon-only, projects as letter squares.
+    // Expand sits at the top, mirroring the collapse control in the full
+    // sidebar's header (⌘B toggles too).
+    return (
+      <aside className="sidebar-rail">
+        <button
+          title={`Show sidebar (${hint("toggle-sidebar") || "⌘B"})`}
+          onClick={() => toggleSidebarVisible()}
+        >
+          <IconChevron />
+        </button>
+        <button title="Command palette" onClick={() => setPaletteOpen(true)}>
+          <span className="rail-chip">{hint("open-command-palette") || "⌘K"}</span>
+        </button>
+        <button
+          title="Project settings"
+          onClick={() => setProjectSettingsOpen(true)}
+          disabled={!selectedProjectId}
+        >
+          <IconGear />
+        </button>
+        <div className="rail-projects">
+          {projects.map((p) => (
+            <button
+              key={p.id}
+              className={`rail-project${selectedProjectId === p.id ? " active" : ""}`}
+              title={p.name}
+              onClick={() => selectProject(p.id)}
+            >
+              {p.name[0] ?? "?"}
+            </button>
+          ))}
+        </div>
+        <button
+          title={`Add project (${hint("new-project")})`}
+          onClick={() => setCreateProjectOpen(true)}
+        >
+          <IconPlus />
+        </button>
+      </aside>
+    );
+  }
 
   const pinnedCount = projects.reduce(
     (n, p) =>
@@ -63,11 +108,10 @@ export default function Sidebar() {
   );
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" style={{ width: resize.width }}>
+      <div className="gutter-handle sidebar-handle" {...resize.bind} />
       <div className="sidebar-header">
-        <span className="brand">
-          a<span className="brand-mark" aria-hidden="true" />de
-        </span>
+        <span className="brand">fartCode</span>
         <div className="header-actions">
           <button
             className="palette-chip"
@@ -88,6 +132,14 @@ export default function Sidebar() {
             onClick={() => setCreateProjectOpen(true)}
           >
             <IconPlus />
+          </button>
+          <button
+            title={`Hide sidebar (${hint("toggle-sidebar") || "⌘B"})`}
+            onClick={() => toggleSidebarVisible()}
+          >
+            <span style={{ display: "inline-flex", transform: "rotate(180deg)" }}>
+              <IconChevron />
+            </span>
           </button>
         </div>
       </div>

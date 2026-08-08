@@ -151,7 +151,7 @@ precede JetBrains Mono inside terminals so Powerline glyphs render.
 **Key Characteristics:**
 - Neutral charcoal chassis: background #111111, sidebar tertiary #201f20, tab bar secondary #181818
 - Hairline 1px borders (#383738) separate regions; no glow, no gradient, no backdrop blur
-- One emerald action color (#00a67b) on primary keys; emerald brand dot in the wordmark
+- One emerald action color (#00a67b) on primary keys
 - Blue (#82baff) for selection, focus lamp, customized marks, and info notices
 - Status dots are data: amber = in progress, green = review, neutral gray = todo/done/cancelled
 - Two voices: Inter Variable (UI) and JetBrains Mono Variable (machine)
@@ -161,7 +161,7 @@ precede JetBrains Mono inside terminals so Powerline glyphs render.
 ## Colors
 
 ### Primary
-- **Emerald** (#00a67b): the primary button face (Add project, Save, Get started), hover #00b589, border #006c50, white text. Also the brand dot set into the "fartCode" wordmark. Never a background tint, never decoration.
+- **Emerald** (#00a67b): the primary button face (Add project, Save, Get started), hover #00b589, border #006c50, white text. Never a background tint, never decoration.
 - **Info Blue** (#82baff): selection foreground, the focus lamp on the keyboard-active pane's tab, customized-shortcut marks and chords, info notice text. Selection wash is #173865 (and rgba(57,142,255,0.475) inside terminals).
 - **Destructive Red** (#f27470): delete hovers, danger buttons on a #2a1b1a face with #964441 border, error strips.
 
@@ -181,8 +181,8 @@ precede JetBrains Mono inside terminals so Powerline glyphs render.
 
 ### Named Rules
 **The One Emerald Rule.** Emerald appears on exactly one class of thing: the
-key that creates, saves, or commits — plus the brand dot. If a screen shows
-emerald on anything that isn't an action, it's wrong.
+key that creates, saves, or commits. If a screen shows emerald on anything
+that isn't an action, it's wrong.
 
 **The Dots Are Data Rule.** Amber, green, and red render only as status dots
 and destructive affordances. The mapping is fixed: in_progress = amber,
@@ -212,7 +212,8 @@ mono.
 The shell is a two-column grid: a fixed 264px tertiary sidebar and a fluid
 main area on the background color.
 
-- **Sidebar:** 48px header with the wordmark (emerald brand dot) and 26px ghost keys plus the mono ⌘K chip; micro-label sections over 32px project rows and 30px task rows, all rounded-lg with 8px side padding; hover-only affordances (add-task, delete) fade in.
+- **Sidebar:** 48px header with the wordmark and 26px ghost keys plus the mono ⌘K chip; micro-label sections over 32px project rows and 30px task rows, all rounded-lg with 8px side padding; hover-only affordances (add-task, delete) fade in.
+- **Header row:** the grid's top row ALWAYS renders — project name + sheet/GitHub keys at project scope, a `project / task` breadcrumb + script keys + the Changes key at task scope (ADR-0033). Same height, same hairline below, both scopes; tab bars are pure tab switching.
 - **Main:** a 41px tab bar on secondary with a hairline below; panes split side by side with a 1px border between; terminal wells on secondary-1.
 - **Fixed furniture:** the resource monitor is an elevated plate seated at the bottom-right (12px inset, rounded-lg, drop shadow). Dialog plates center over a 55% black backdrop.
 
@@ -229,7 +230,7 @@ gradient, no backdrop blur.
 Four radii cover every surface: 6px (small keys, chips), 8px (inputs, ghost
 buttons, tab close), 10px (sidebar rows, primary/danger keys, resource
 monitor), 14px (dialog plates, palette). Circles belong to dots only: 8px
-status dots, 6px brand dot and focus lamp. All borders are 1px hairlines.
+status dots and the 6px focus lamp. All borders are 1px hairlines.
 
 ## Components
 
@@ -260,6 +261,23 @@ status dots, 6px brand dot and focus lamp. All borders are 1px hairlines.
 
 ### Resource monitor
 - **Plate:** elevated, rounded-lg, hairline border, seated 12px from the bottom-right; 12px 600 header over a hairline; mono meters with 4px neutral tracks and passive fills.
+
+### Issue board (project view)
+- **Surface:** ONE rounded-lg plate on secondary (#181818) with a hairline
+  frame; five lanes divided by 1px border rules, shared 32px head row
+  (12px 500 label + mono 11px count). Below a 750px floor the frame scrolls
+  sideways — heads and lanes share the floor and stay registered.
+- **Cards:** rows on background-2 with hairline border and radius-sm; the
+  linked task's canonical status dot leads, 13px Inter title, mono 10px
+  passive chips (provider), amber "blocked" chip with hover popover, and a
+  mono acceptance tally. Selected card = tertiary-2 fill + border-1.
+- **Inspector (right sheet):** card click swaps the sheet to the card
+  detail — 41px header with lane label + status dot, agent row holding the
+  one emerald key (Dispatch / Open task), meta grid (Source/PRD/Task/
+  Created), empty-state rows, hover-only destructive remove keys, sticky
+  footer delete confirm. The sheet widens to 420px while open.
+- **Toolbar:** "Board" micro-label + mono total + ghost Add-issue key; the
+  inline add row creates in Backlog and opens its inspector.
 
 ## Do's and Don'ts
 

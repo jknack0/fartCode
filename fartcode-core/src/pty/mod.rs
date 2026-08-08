@@ -866,6 +866,7 @@ mod tests {
             binaries: vec!["synthetic".into()],
             default_model: None,
             env_vars: Vec::new(),
+            auth_methods: Vec::new(),
         }
     }
 }

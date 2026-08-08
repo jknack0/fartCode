@@ -115,6 +115,50 @@ pub enum Capability {
     Trust,
 }
 
+/// How a provider authenticates (reference `auth.methods`, E3-07 "login
+/// methods, API key registry").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthMethodKind {
+    /// CLI-managed login (e.g. `claude auth login`): OAuth tokens live in
+    /// the CLI's own credential store, NOT in the fartCode keyring. Uses
+    /// the user's subscription (Claude Pro/Max) — no per-token API
+    /// charges. fartCode must never pass an API-key env var in this mode:
+    /// its mere presence flips the CLI to API-key billing.
+    CliLogin,
+    /// Pay-per-token env-var credential stored in the OS keyring (e.g.
+    /// `ANTHROPIC_API_KEY`).
+    ApiKey,
+}
+
+impl AuthMethodKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AuthMethodKind::CliLogin => "cli-login",
+            AuthMethodKind::ApiKey => "api-key",
+        }
+    }
+}
+
+/// One authentication method a provider accepts (reference `auth.methods`
+/// entries: claude exposes `cli-login` "Sign in with Claude Code" and
+/// `api-key` "Use an Anthropic API key").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthMethod {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub kind: AuthMethodKind,
+    /// Env vars read for `ApiKey` methods (e.g. `ANTHROPIC_API_KEY`).
+    pub env_vars: Vec<String>,
+    /// CLI args that start the login flow (`CliLogin`), e.g.
+    /// `["auth", "login"]`.
+    pub login_args: Vec<String>,
+    /// CLI args for the auth status probe (`CliLogin`), e.g.
+    /// `["auth", "status"]` — the CLI prints JSON (claude does by
+    /// default; `--json` is accepted on the exact versions we target).
+    pub status_args: Vec<String>,
+}
+
 /// Everything the app knows about a provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderDescriptor {
@@ -129,5 +173,35 @@ pub struct ProviderDescriptor {
     pub binaries: Vec<String>,
     pub default_model: Option<String>,
     /// Auth env var names the provider reads (e.g. `ANTHROPIC_API_KEY`).
+    /// For providers with `auth_methods`, this is the flattened api-key
+    /// method's vars (legacy behavior, kept for callers that predate
+    /// methods).
     pub env_vars: Vec<String>,
+    /// Login + API-key methods (reference `auth.methods`). Empty for
+    /// providers whose only auth surface is `env_vars`.
+    pub auth_methods: Vec<AuthMethod>,
+}
+
+impl ProviderDescriptor {
+    /// The auth method with `id`, if any.
+    pub fn auth_method(&self, id: &str) -> Option<&AuthMethod> {
+        self.auth_methods.iter().find(|m| m.id == id)
+    }
+
+    /// Preferred method: the first api-key method, else the first login
+    /// method, else `None`. Drives `resolve_env` for accounts created
+    /// before the method column existed (legacy rows behave as api-key).
+    pub fn default_auth_method(&self) -> Option<&AuthMethod> {
+        self.auth_methods
+            .iter()
+            .find(|m| m.kind == AuthMethodKind::ApiKey)
+            .or_else(|| self.auth_methods.first())
+    }
+
+    /// The cli-login method, if the provider has one.
+    pub fn login_method(&self) -> Option<&AuthMethod> {
+        self.auth_methods
+            .iter()
+            .find(|m| m.kind == AuthMethodKind::CliLogin)
+    }
 }

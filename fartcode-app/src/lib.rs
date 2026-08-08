@@ -26,6 +26,15 @@ fn prune_view_state_on_boot(app: &App) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Log output for dev runs: defaults to INFO (override with RUST_LOG).
+    // Without a subscriber every tracing call is silently dropped — the
+    // best-effort agent/script launches were failing invisibly.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .try_init();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // Second launch focuses the existing window instead of opening
@@ -185,6 +194,8 @@ pub fn run() {
             commands::provider_accounts::remove_provider_account,
             commands::provider_accounts::set_default_provider_account,
             commands::provider_accounts::list_providers,
+            commands::provider_accounts::provider_auth_status,
+            commands::provider_accounts::provider_auth_login,
             commands::terminals::terminal_open,
             commands::terminals::terminal_open_agent,
             commands::lifecycle::terminal_open_lifecycle,

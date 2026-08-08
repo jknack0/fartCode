@@ -101,6 +101,7 @@ pub fn terminal_open(
             program: &program,
             args: &args,
             env: &[],
+            remove: &[],
             cwd: std::path::Path::new(&ctx.cwd),
             rows,
             cols,
@@ -109,10 +110,30 @@ pub fn terminal_open(
         .map_err(|e| e.to_string())
 }
 
+/// Env vars stripped from an agent launch (ADR-0034): when the provider's
+/// default account authenticates via CLI login (OAuth), the API-key env
+/// vars (e.g. `ANTHROPIC_API_KEY`) must not reach the CLI — inherited or
+/// injected, their presence flips it to API-key billing. Empty for
+/// api-key accounts and providers without a default account.
+pub(crate) fn agent_env_removals(app: &App, provider_id: &str) -> Vec<String> {
+    match app.provider_accounts.resolve_removals(provider_id) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::debug!(provider_id, error = %e, "auth removal resolution failed");
+            Vec::new()
+        }
+    }
+}
+
 /// Opens an agent CLI (e.g. `omp`) in the task's workspace. The binary is
 /// resolved from the provider registry's `binaries` list via PATH. Returns
 /// the terminal id. Agent terminals always run as plain PTYs — tmux slot
 /// durability (ADR-0025) is for shell terminals.
+///
+/// ONE agent terminal per task (ADR-0033): a live agent terminal
+/// reattaches instead of spawning a second — dispatch, ⌘⇧O, and the
+/// comment-task flow all converge on the same session. Switching agents
+/// means closing the agent tab first.
 #[tauri::command]
 pub fn terminal_open_agent(
     terminals: State<'_, Arc<TerminalManager>>,
@@ -122,6 +143,11 @@ pub fn terminal_open_agent(
     rows: u16,
     cols: u16,
 ) -> Result<String, String> {
+    // Reattach before provider resolution: the existing session must be
+    // reachable even if its binary left PATH meanwhile.
+    if let Some(existing) = terminals.find_running_agent(&task_id) {
+        return Ok(existing);
+    }
     let ctx = resolve_task_context(&app.db, &task_id)?;
     let provider =
         fartcode_providers::get(&agent).ok_or_else(|| format!("unknown agent: {agent}"))?;
@@ -130,6 +156,7 @@ pub fn terminal_open_agent(
         .iter()
         .find_map(|b| fartcode_core::pty::launcher::find_on_path(b))
         .ok_or_else(|| format!("agent not installed: {agent}"))?;
+    let remove = agent_env_removals(&app, &agent);
     terminals
         .open(TerminalSpec {
             task_id: &task_id,
@@ -139,6 +166,7 @@ pub fn terminal_open_agent(
             program: &binary.to_string_lossy(),
             args: &[],
             env: &[],
+            remove: &remove,
             cwd: std::path::Path::new(&ctx.cwd),
             rows,
             cols,

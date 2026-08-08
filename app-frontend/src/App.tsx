@@ -11,6 +11,7 @@ import ProjectHeader from "./components/ProjectHeader";
 import ProjectView from "./components/ProjectView";
 import ResourceMonitor from "./components/ResourceMonitor";
 import Sidebar from "./components/Sidebar";
+import TaskHeader from "./components/TaskHeader";
 import TaskView from "./components/TaskView";
 import { useCommands, hint } from "./lib/useCommands";
 import { wireChangesEvents } from "./store/changes";
@@ -59,6 +60,9 @@ function App() {
       {selectedProjectId && !selectedTaskId && (
         <ProjectHeader projectId={selectedProjectId} />
       )}
+      {selectedTaskId && selectedProjectId && (
+        <TaskHeader taskId={selectedTaskId} projectId={selectedProjectId} />
+      )}
       <Onboarding />
       <CommandPalette />
       <Modals />
@@ -66,14 +70,12 @@ function App() {
       <section className="main">
         {error && <p className="error">{error}</p>}
         {selectedTaskId && selectedProjectId ? (
-          <TaskView taskId={selectedTaskId} projectId={selectedProjectId} />
+          <TaskView taskId={selectedTaskId} />
         ) : selectedProjectId ? (
           <ProjectView projectId={selectedProjectId} />
         ) : (
           <div className="placeholder">
-            <h1>
-              a<span className="brand-mark" aria-hidden="true" />de
-            </h1>
+            <h1>fartCode</h1>
             <p className="muted">
               Add a project to get started — press{" "}
               <span className="kbd-hint">{hint("new-project") || "⌘⇧N"}</span>{" "}

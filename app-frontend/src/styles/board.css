@@ -1,4 +1,6 @@
-/* E17 project view layout + board (E17-02, #56). Tokens from styles.css. */
+/* E17 project view: the issue board is ONE ruled surface — a plate with
+   five hairline-divided lanes — and the card detail is its inspector.
+   Tokens from styles.css; status hues from the canonical .status-dot. */
 
 .project-view {
   display: flex;
@@ -22,124 +24,325 @@
   /* Beat the global button padding (6px 12px) — it crushes the 24px
      content box to zero width and the icon collapses. */
   padding: 0;
-  border-radius: 6px;
-  color: var(--muted, #b8b7b8);
+  border-radius: var(--radius-sm);
+  color: var(--foreground-muted);
 }
 
 .project-action:hover {
   background: var(--background-2);
-  color: var(--foreground, #e9e8e8);
+  color: var(--foreground);
 }
 
 .project-action.active {
-  color: var(--foreground, #e9e8e8);
+  color: var(--foreground);
   background: var(--background-2);
 }
 
+/* -- the board surface --------------------------------------------------- */
+
 .board {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(180px, 1fr));
-  gap: 8px;
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-width: 0;
-  padding: 12px;
+  min-height: 0;
+  padding: 12px 12px 16px;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.board-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.board-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--foreground-passive);
+}
+
+.board-total {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--foreground-passive);
+}
+
+.board-add {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-elevated);
+}
+
+.board-add:hover {
+  background: var(--surface-elevated-hover);
+  color: var(--foreground);
+}
+
+.board-error {
+  margin: 0;
+}
+
+/* Inline "add issue" row above the frame. */
+.board-new-card {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.board-new-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--background-1);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+
+.board-new-input:focus {
+  outline: 2px solid var(--border-primary);
+  outline-offset: 0;
+  border-color: var(--border-1);
+}
+
+/* The frame: one plate, five lanes. Below the lane floor the frame
+   scrolls sideways — heads and lanes share the same grid floor so they
+   never drift apart. */
+.board-frame {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--background-1);
   overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.board-lane-heads {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  min-width: 750px;
+  border-bottom: 1px solid var(--border);
+  background: var(--background-1);
+  flex-shrink: 0;
+}
+
+.board-lane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+}
+
+.board-lane-head + .board-lane-head {
+  border-left: 1px solid var(--border);
+}
+
+.board-lane-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--foreground-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-lane-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--foreground-passive);
+}
+
+.board-lanes {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  min-width: 750px;
+  flex: 1;
+  min-height: 0;
 }
 
 .board-lane {
   display: flex;
-  flex-direction: column;
   min-height: 0;
-  background: var(--background-1);
-  border: 1px solid var(--background-secondary-3);
-  border-radius: 8px;
+  min-width: 0;
 }
 
-.board-lane-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted, #b8b7b8);
-  border-bottom: 1px solid var(--background-secondary-3);
+.board-lane + .board-lane {
+  border-left: 1px solid var(--border);
 }
 
-.board-lane-count {
-  font-family: "JetBrains Mono Variable", monospace;
-  color: var(--passive, #929192);
+.board-lane.over {
+  background: var(--background-2);
 }
 
 .board-lane-cards {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  width: 100%;
+  min-width: 0;
   padding: 8px;
   overflow-y: auto;
 }
 
+/* Keeps an empty lane a full drop target. */
+.board-lane-placeholder {
+  flex: 1;
+  min-height: 96px;
+}
+
+.board-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.board-empty p {
+  margin: 0;
+  max-width: 380px;
+  font-size: 13px;
+}
+
+/* -- cards --------------------------------------------------------------- */
+
 .board-card {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
   padding: 8px 10px;
   background: var(--background-2);
-  border: 1px solid var(--background-secondary-3);
-  border-radius: 6px;
-  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   cursor: grab;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.board-card:hover {
+  background: var(--background-tertiary-1);
+}
+
+.board-card.selected {
+  background: var(--background-tertiary-2);
+  border-color: var(--border-1);
 }
 
 .board-card.dragging {
   opacity: 0.4;
 }
 
-.board-card-badges {
+.board-card.blocked {
+  opacity: 0.72;
+}
+
+.board-card.blocked:hover {
+  opacity: 1;
+}
+
+.board-card-main {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.board-card-main .status-dot {
+  align-self: center;
+}
+
+.board-card-title {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+/* Acceptance tally — quiet, to the right of the title. */
+.board-card-ac {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--foreground-passive);
+}
+
+.board-card-ac-unit {
+  margin-left: 2px;
+}
+
+.board-card-chips {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 5px;
 }
 
-.board-card-provider {
-  font-size: 11px;
-  font-family: "JetBrains Mono Variable", monospace;
-  color: var(--info, #82baff);
-  border: 1px solid currentColor;
-  border-radius: 4px;
-  padding: 0 4px;
+.board-card-chips:empty {
+  display: none;
 }
 
-.board-card-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--passive, #929192);
+.board-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--foreground-passive);
+  text-decoration: none;
 }
 
-.board-card-dot.status-in_progress {
-  background: var(--status-in-progress, #dbae50);
+a.board-chip:hover {
+  color: var(--foreground-muted);
+  border-color: var(--border-1);
 }
 
-.board-card-dot.status-done {
-  background: var(--status-review, #59b358);
+.board-chip-provider {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.board-card-dot.status-review {
-  background: var(--info, #82baff);
+.board-chip-gh {
+  padding: 2px 5px;
 }
 
-
-.board-card-blocked {
+/* Blocked chip keeps the amber status hue — the dependency IS state. */
+.board-chip-blocked {
   position: relative;
-  font-size: 11px;
-  color: var(--status-in-progress, #dbae50);
-  border: 1px solid currentColor;
-  border-radius: 4px;
-  padding: 0 4px;
+  font-size: 10px;
+  color: var(--status-in-progress);
+  border-color: var(--status-in-progress);
   cursor: default;
+}
+
+.board-card.blocked:hover .board-chip-blocked {
+  color: var(--status-in-progress);
 }
 
 .blocked-popover {
@@ -149,16 +352,19 @@
   top: calc(100% + 4px);
   z-index: 30;
   flex-direction: column;
-  min-width: 160px;
+  gap: 2px;
+  min-width: 170px;
+  max-width: 240px;
   background: var(--background-3);
-  border: 1px solid var(--background-secondary-3);
-  border-radius: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 6px;
-  color: var(--foreground, #e9e8e8);
+  color: var(--foreground);
+  cursor: default;
 }
 
-.board-card-blocked:hover .blocked-popover,
-.board-card-blocked:focus-within .blocked-popover {
+.board-chip-blocked:hover .blocked-popover,
+.board-chip-blocked:focus-within .blocked-popover {
   display: flex;
 }
 
@@ -168,13 +374,15 @@
   gap: 8px;
   padding: 2px 4px;
   font-size: 12px;
+  line-height: 16px;
 }
 
 .blocked-popover-row em {
-  color: var(--passive, #929192);
+  color: var(--foreground-passive);
   font-style: normal;
-  font-family: "JetBrains Mono Variable", monospace;
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  flex-shrink: 0;
 }
 
 .blocked-confirm-list {
@@ -183,55 +391,253 @@
 }
 
 .blocked-confirm-list em {
-  color: var(--passive, #929192);
+  color: var(--foreground-passive);
   font-style: normal;
 }
 
-/* -- card detail (right region) -- */
+/* -- card detail (right-sheet inspector) ---------------------------------- */
 
 .card-detail {
   display: flex;
   flex-direction: column;
   width: 380px;
   min-width: 280px;
-  border-left: 1px solid var(--background-secondary-3);
-  background: var(--background-1);
   min-height: 0;
-  overflow-y: auto;
+  border-left: 1px solid var(--border);
+  background: var(--background-1);
 }
 
 .card-detail-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--background-secondary-3);
+  gap: 8px;
+  height: 41px;
+  flex-shrink: 0;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--border);
 }
 
 .card-detail-lane {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
   font-size: 11px;
-  font-family: "JetBrains Mono Variable", monospace;
-  color: var(--muted, #b8b7b8);
+  color: var(--foreground-muted);
+}
+
+/* Lane dot rides the canonical status mapping: amber working, green
+   review, gray otherwise. */
+.card-detail-lane-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  flex-shrink: 0;
+  background: var(--status-neutral);
+}
+
+.card-detail-lane-dot.status-in_progress {
+  background: var(--status-in-progress);
+}
+
+.card-detail-lane-dot.status-review {
+  background: var(--status-in-review);
+}
+
+.card-detail-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  color: var(--foreground-passive);
+}
+
+.card-detail-close:hover {
+  background: var(--background-tertiary-1);
+  color: var(--foreground);
+}
+
+.card-detail-loading,
+.card-detail-error {
+  margin: 8px 12px;
+}
+
+.card-detail-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .card-detail-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   padding: 12px;
 }
 
-.card-detail-body h3 {
-  margin: 8px 0 0;
+/* Agent row: provider/model left, blocked note, one emerald key right. */
+.card-detail-agent-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.card-detail-agent {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--foreground-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-detail-agent em {
+  margin-left: 6px;
+  color: var(--foreground-passive);
+  font-style: normal;
+}
+
+.card-detail-blocked-note {
   font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--passive, #929192);
+  color: var(--status-in-progress);
+  flex-shrink: 0;
+}
+
+.card-detail-dispatch {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .card-detail-title {
+  width: 100%;
+  padding: 2px 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--foreground);
+  font-family: var(--font-sans);
   font-size: 14px;
   font-weight: 600;
+  line-height: 20px;
+}
+
+.card-detail-title:focus {
+  outline: 2px solid var(--border-primary);
+  outline-offset: 2px;
+}
+
+.card-detail-body-edit {
+  width: 100%;
+  resize: vertical;
+  min-height: 72px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--background);
+  color: var(--foreground-body);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.card-detail-body-edit:focus {
+  outline: 2px solid var(--border-primary);
+  outline-offset: 0;
+  border-color: var(--border-1);
+}
+
+.card-detail-save {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.card-detail-dirty {
+  font-size: 11px;
+  color: var(--foreground-passive);
+}
+
+/* Meta grid — dt label, dd value. */
+.card-detail-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.card-detail-meta-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.card-detail-meta-row dt {
+  flex-shrink: 0;
+  width: 52px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--foreground-passive);
+}
+
+.card-detail-meta-row dd {
+  margin: 0;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--foreground-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-detail-meta-row code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.card-detail-meta-row em {
+  color: var(--foreground-passive);
+  font-style: normal;
+}
+
+.card-detail-link {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--info);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.card-detail-link:hover {
+  text-decoration: underline;
+  color: var(--info);
+  background: none;
+}
+
+.card-detail-body h3 {
+  margin: 14px 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--foreground-passive);
+}
+
+.card-detail-empty {
+  margin: 0;
+  font-size: 12px;
 }
 
 .card-detail-ac,
@@ -247,36 +653,115 @@
 .card-detail-ac li,
 .card-detail-edges li {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: baseline;
   gap: 8px;
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 17px;
   background: var(--background-2);
-  border: 1px solid var(--background-secondary-3);
-  border-radius: 6px;
-  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 6px 4px 8px;
+}
+
+.card-detail-ac-text,
+.card-detail-edge-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .card-detail-edges em {
-  color: var(--passive, #929192);
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--foreground-passive);
   font-style: normal;
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 10px;
 }
 
-.card-detail-edge-add,
-.card-detail-ac-add {
+/* Hover-only remove keys, destructive on hover. */
+.row-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  color: transparent;
+}
+
+.card-detail-ac li:hover .row-remove,
+.card-detail-edges li:hover .row-remove,
+.row-remove:focus-visible {
+  color: var(--foreground-passive);
+}
+
+.row-remove:hover {
+  color: var(--destructive);
+  background: transparent;
+}
+
+.card-detail-ac-add,
+.card-detail-edge-add {
   display: flex;
   gap: 6px;
 }
 
-.card-detail-edge-add select,
 .card-detail-ac-add input {
   flex: 1;
   min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 12px;
 }
 
-.card-detail-danger {
-  margin-top: 12px;
+.card-detail-edge-add select {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--background);
+  color: var(--foreground-muted);
+  font-family: var(--font-sans);
+  font-size: 12px;
+}
+
+.card-detail-ac-add input:focus,
+.card-detail-edge-add select:focus {
+  outline: 2px solid var(--border-primary);
+  outline-offset: 0;
+  border-color: var(--border-1);
+}
+
+.card-detail-footer {
+  margin-top: auto;
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.card-detail-delete {
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--foreground-passive);
+}
+
+.card-detail-delete:hover {
+  color: var(--destructive);
+  background: transparent;
+}
+
+.card-detail-confirm-note {
+  font-size: 12px;
+  color: var(--foreground-muted);
+  margin-right: auto;
 }

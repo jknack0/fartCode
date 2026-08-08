@@ -379,7 +379,17 @@ impl AcpRuntime {
     /// descriptor's env vars from the process env (the TUI launcher
     /// convention) — a missing var is skipped, never invented. The renderer
     /// contributes nothing.
+    ///
+    /// A CLI-login (OAuth) default account returns EMPTY env and skips the
+    /// process-env fallback (ADR-0034): the CLI's own credential store
+    /// authenticates, and a stray `ANTHROPIC_API_KEY` — injected OR
+    /// inherited — would flip it to API-key billing.
     fn provider_env(&self, provider_id: &str) -> Vec<(String, String)> {
+        if let Ok(Some(method)) = self.provider_accounts.default_auth_method(provider_id) {
+            if method.kind == fartcode_providers::AuthMethodKind::CliLogin {
+                return Vec::new();
+            }
+        }
         if let Ok(env) = self.provider_accounts.resolve_env(provider_id) {
             if !env.is_empty() {
                 return env;

@@ -78,6 +78,7 @@ fn spawn_attach(mgr: &PortablePtyManager, line: &str, cwd: &Path) -> Box<dyn Pty
         &[("TERM".to_string(), "xterm-256color".to_string())],
         PtySize { rows: 24, cols: 80 },
         EnvPolicy::Inherit,
+        &[],
     )
     .expect("attach PTY spawns")
 }

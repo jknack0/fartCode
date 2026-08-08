@@ -1,8 +1,8 @@
-// Tab bar (E2-10): one per task pane. Tabs are terminals; click to
-// activate, × to close (⌘W), ⌘T adds another. `trailing` renders at the
-// bar's right edge (the changes toggle lives there — E4-03). Diff tabs show
-// a dirty dot while their editor holds unsaved changes (E4-05).
-import type { ReactNode } from "react";
+// Tab bar (E2-10): one per task pane, pure tab switching. Tabs are
+// terminals; click to activate, × to close (⌘W), ⌘T adds another. Diff
+// tabs show a dirty dot while their editor holds unsaved changes (E4-05).
+// Scope chrome (scripts, changes toggle) lives in the app header row —
+// the top chrome stays identical across scopes.
 import { useDiffs } from "../store/diffs";
 import { useTabs, type PaneId } from "../store/tabs";
 import { TAB_KINDS } from "../lib/tab-registry";
@@ -11,11 +11,9 @@ import { IconClose } from "./icons";
 export default function TabBar({
   taskId,
   pane,
-  trailing,
 }: {
   taskId: string;
   pane: PaneId;
-  trailing?: ReactNode;
 }) {
   const panes = useTabs((s) => s.panesByTask[taskId]);
   const activePane = useTabs((s) => s.activePaneByTask[taskId] ?? "left");
@@ -55,7 +53,6 @@ export default function TabBar({
           </button>
         </div>
       ))}
-      {trailing && <div className="tab-bar-trailing">{trailing}</div>}
     </div>
   );
 }

@@ -41,3 +41,6 @@ fartcode-app/gen/
 .codex/
 .impeccable/
 .github/hooks/
+
+# pi harness session artifacts
+.pi-subagents/

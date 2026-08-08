@@ -396,6 +396,7 @@ impl LifecycleScriptService {
                 env,
                 PtySize::default(),
                 EnvPolicy::Inherit,
+                &[],
             )?;
             handle.write(&String::from_utf8_lossy(input))?;
 

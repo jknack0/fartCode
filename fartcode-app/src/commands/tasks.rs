@@ -2,6 +2,7 @@
 //! create+provision).
 
 use fartcode_core::projects::ProjectStore;
+use fartcode_core::settings::DEFAULT_AGENT;
 use fartcode_core::tasks::deletion::DeleteTaskOptions;
 use fartcode_core::tasks::naming::{
     generate_task_name, random_suffix, resolve_task_branch_name, BranchNameOptions,
@@ -16,7 +17,7 @@ use tauri::State;
 
 use crate::app::App;
 use crate::commands::lifecycle::run_auto_lifecycle_scripts;
-use crate::terminals::TerminalManager;
+use crate::terminals::{TerminalManager, TerminalSpec};
 
 /// Creates a task AND provisions its workspace (worktree + branch) in one
 /// shot — the E2-04 create_with_provision flow. The branch name follows the
@@ -47,7 +48,57 @@ pub fn create_task(
     // E1-06: auto-run setup/run scripts on task creation when the project
     // configured them. Best-effort — the task stands either way.
     run_auto_lifecycle_scripts(&terminals, &app, &created.task.id);
+    // PRD workflow: Add Task → spawn the chosen agent in its worktree.
+    // Best-effort — without the agent binary the frontend's terminal
+    // fallback covers the surface; with it, the agent tab IS the task.
+    launch_default_agent(&terminals, &app, &created.task.id);
     Ok(TaskDto::from(&created.task))
+}
+
+/// Spawns the default agent CLI in the task's worktree (the left-nav
+/// create path; dispatch and comment-tasks launch their own). Best-effort:
+/// a missing binary or spawn failure logs and returns without failing the
+/// task. One agent terminal per task holds (ADR-0033) — a live agent
+/// reattaches instead of stacking.
+pub fn launch_default_agent<R: tauri::Runtime>(
+    terminals: &TerminalManager<R>,
+    app: &App,
+    task_id: &str,
+) {
+    let outcome = (|| -> Result<String, String> {
+        let provider = app.settings.get(&DEFAULT_AGENT).map_err(String::from)?;
+        let registry = fartcode_providers::get(&provider)
+            .ok_or_else(|| format!("unknown agent: {provider}"))?;
+        let binary = registry
+            .binaries
+            .iter()
+            .find_map(|b| fartcode_core::pty::launcher::find_on_path(b))
+            .ok_or_else(|| format!("agent not installed: {provider}"))?;
+        let ctx = crate::commands::terminals::resolve_task_context(&app.db, task_id)?;
+        let remove = crate::commands::terminals::agent_env_removals(app, &provider);
+        terminals
+            .open(TerminalSpec {
+                task_id,
+                project_id: &ctx.project_id,
+                agent: Some(&provider),
+                tmux: false,
+                program: &binary.to_string_lossy(),
+                args: &[],
+                env: &[],
+                remove: &remove,
+                cwd: std::path::Path::new(&ctx.cwd),
+                rows: 24,
+                cols: 80,
+                lifecycle: None,
+            })
+            .map_err(|e| e.to_string())
+    })();
+    match outcome {
+        Ok(_) => {}
+        // warn (not debug): the default level surfaces it — a silent
+        // launch failure is exactly what left new tasks on the wrong tab.
+        Err(e) => tracing::warn!(task_id, error = %e, "default agent launch failed"),
+    }
 }
 
 /// Builds [`CreateTaskParams`] for the standard flow (E2-04 naming +

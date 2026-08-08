@@ -20,10 +20,14 @@ mod providers_data;
 
 use providers_data::PROVIDERS;
 
-pub use types::{Capabilities, Capability, PromptDescriptor, PromptStrategy, ProviderDescriptor};
+pub use types::{
+    AuthMethod, AuthMethodKind, Capabilities, Capability, PromptDescriptor, PromptStrategy,
+    ProviderDescriptor,
+};
 
-/// Lookup + filtering API (reference `createPluginRegistry`).
-pub fn get(id: &str) -> Option<&ProviderDescriptor> {
+/// Lookup + filtering API (reference `createPluginRegistry`). The registry
+/// is a process-lifetime static, so lookups return `'static` descriptors.
+pub fn get(id: &str) -> Option<&'static ProviderDescriptor> {
     PROVIDERS.iter().find(|p| p.id == id)
 }
 pub fn list() -> &'static [ProviderDescriptor] {
@@ -59,6 +63,17 @@ fn resolve_executable_in<'a>(
         .find(|p| p.id == name || p.binaries.iter().any(|b| b == name))
 }
 
+/// Renderer-facing auth method — no login/status args (server-side only).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthMethodDto {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    /// `cli-login` | `api-key`
+    pub kind: &'static str,
+}
+
 /// Renderer-facing DTO — typed JSON, no secrets (nothing here is secret).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProviderDto {
@@ -73,6 +88,8 @@ pub struct ProviderDto {
     pub default_model: Option<String>,
     pub binaries: Vec<String>,
     pub prompt_strategy: &'static str,
+    /// Login + API-key methods for the accounts UI (E3-07).
+    pub auth_methods: Vec<AuthMethodDto>,
 }
 
 impl ProviderDto {
@@ -103,6 +120,16 @@ impl ProviderDto {
                 PromptStrategy::StdinPipe => "stdin-pipe",
                 PromptStrategy::Keystroke => "keystroke",
             },
+            auth_methods: p
+                .auth_methods
+                .iter()
+                .map(|m| AuthMethodDto {
+                    id: m.id.clone(),
+                    name: m.name.clone(),
+                    description: m.description.clone(),
+                    kind: m.kind.as_str(),
+                })
+                .collect(),
         }
     }
 }
@@ -193,6 +220,50 @@ mod tests {
         assert_eq!(claude.prompt.resume_flag.as_deref(), Some("--resume"));
         assert_eq!(claude.prompt.model_flag.as_deref(), Some("--model"));
         assert!(claude.env_vars.iter().any(|v| v == "ANTHROPIC_API_KEY"));
+    }
+
+    #[test]
+    fn claude_exposes_oauth_login_and_api_key_methods() {
+        let claude = get("claude").expect("claude registered");
+        assert_eq!(claude.auth_methods.len(), 2);
+
+        let login = claude
+            .login_method()
+            .expect("claude has a cli-login method");
+        assert_eq!(login.id, "claude-login");
+        assert_eq!(login.kind, AuthMethodKind::CliLogin);
+        assert_eq!(login.login_args, vec!["auth", "login"]);
+        assert_eq!(login.status_args, vec!["auth", "status"]);
+        assert!(login.env_vars.is_empty(), "login holds no env vars");
+
+        let api_key = claude
+            .auth_method("anthropic-api-key")
+            .expect("claude has an api-key method");
+        assert_eq!(api_key.kind, AuthMethodKind::ApiKey);
+        assert_eq!(api_key.env_vars, vec!["ANTHROPIC_API_KEY"]);
+
+        // Legacy rows (auth_method NULL) resolve to the first api-key
+        // method — behavior parity with pre-method accounts.
+        assert_eq!(
+            claude.default_auth_method().map(|m| m.id.as_str()),
+            Some("anthropic-api-key")
+        );
+        assert!(claude.auth_method("not-a-method").is_none());
+    }
+
+    #[test]
+    fn dto_carries_auth_methods_for_the_accounts_ui() {
+        let dtos = list_dtos();
+        let claude = dtos.iter().find(|d| d.id == "claude").unwrap();
+        assert_eq!(claude.auth_methods.len(), 2);
+        assert_eq!(claude.auth_methods[0].kind, "cli-login");
+        assert_eq!(claude.auth_methods[0].id, "claude-login");
+        assert_eq!(claude.auth_methods[1].kind, "api-key");
+        assert_eq!(claude.auth_methods[1].id, "anthropic-api-key");
+        // Providers without methods expose an empty list (frontend renders
+        // the legacy API-key form).
+        let codex = dtos.iter().find(|d| d.id == "codex").unwrap();
+        assert!(codex.auth_methods.is_empty());
     }
 
     #[test]

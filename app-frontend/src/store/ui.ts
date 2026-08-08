@@ -36,6 +36,9 @@ interface UiState {
   changesOpen: boolean;
   /** PM chat panel (E17-04): right-side panel in the project view. */
   projectChatOpen: boolean;
+  /** Task chat panel: right-side panel in the task view, same sheet as
+   * Changes (mirrors the project scope's chat panel). */
+  taskChatOpen: boolean;
   /** Open card-detail issue id (E17-02): takes precedence over the chat
    * panel in the project view's right region; null shows the chat. */
   boardDetailIssueId: string | null;
@@ -58,6 +61,7 @@ interface UiState {
   setResourceOpen: (open: boolean) => void;
   setChangesOpen: (open: boolean) => void;
   setProjectChatOpen: (open: boolean) => void;
+  setTaskChatOpen: (open: boolean) => void;
   setBoardDetailIssueId: (id: string | null) => void;
   setSettingsOpen: (open: boolean) => void;
   setProjectSettingsOpen: (open: boolean) => void;
@@ -80,6 +84,7 @@ export const useUi = create<UiState>((set, get) => ({
   resourceOpen: false,
   changesOpen: false,
   projectChatOpen: true,
+  taskChatOpen: false,
   boardDetailIssueId: null,
   settingsOpen: false,
   projectSettingsOpen: false,
@@ -96,6 +101,7 @@ export const useUi = create<UiState>((set, get) => ({
   setResourceOpen: (resourceOpen) => set({ resourceOpen }),
   setChangesOpen: (changesOpen) => set({ changesOpen }),
   setProjectChatOpen: (projectChatOpen) => set({ projectChatOpen }),
+  setTaskChatOpen: (taskChatOpen) => set({ taskChatOpen }),
   setBoardDetailIssueId: (boardDetailIssueId) => set({ boardDetailIssueId }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setProjectSettingsOpen: (projectSettingsOpen) => set({ projectSettingsOpen }),

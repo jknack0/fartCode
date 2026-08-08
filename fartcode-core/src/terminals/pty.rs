@@ -76,7 +76,10 @@ pub enum EnvPolicy {
 /// Spawns shell PTYs (object-safe — services hold `Arc<dyn PtyManager>`).
 pub trait PtyManager: Send + Sync {
     /// Spawns `cmd` with `args` in `cwd` with `env` (see `EnvPolicy`),
-    /// attached to a fresh pty.
+    /// attached to a fresh pty. `remove` lists env vars stripped from the
+    /// child AFTER env application (login-account scrubbing, ADR-0034:
+    /// a stray `ANTHROPIC_API_KEY` flips the claude CLI to API billing).
+    #[allow(clippy::too_many_arguments)]
     fn spawn(
         &self,
         cmd: &str,
@@ -85,5 +88,6 @@ pub trait PtyManager: Send + Sync {
         env: &[(String, String)],
         size: PtySize,
         env_policy: EnvPolicy,
+        remove: &[String],
     ) -> Result<Box<dyn PtyHandle>, Error>;
 }

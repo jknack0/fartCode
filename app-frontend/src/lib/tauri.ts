@@ -177,6 +177,22 @@ export function setResourceMonitorEnabled(enabled: boolean): Promise<void> {
 
 // -- E3-07 provider accounts -------------------------------------------------
 
+export interface AuthMethodDto {
+  id: string;
+  name: string;
+  description: string;
+  /** "cli-login" (OAuth subscription) | "api-key" */
+  kind: string;
+}
+
+export interface AuthStatusDto {
+  providerId: string;
+  authenticated: boolean;
+  account: string | null;
+  /** "oauth" | "apiKey" | "none" | "unknown" */
+  method: string;
+}
+
 export interface ProviderAccountDto {
   id: string;
   providerId: string;
@@ -185,6 +201,8 @@ export interface ProviderAccountDto {
   isDefault: boolean;
   /** Server-computed mask of the keyring secret — never the secret. */
   maskedSecret: string;
+  /** Auth method id ("claude-login" = OAuth sub, "anthropic-api-key", null = legacy). */
+  authMethod: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -200,8 +218,9 @@ export function addProviderAccount(
   accountId: string,
   secret: string,
   label: string | null,
+  authMethod: string | null,
 ): Promise<ProviderAccountDto> {
-  return invoke("add_provider_account", { providerId, accountId, secret, label });
+  return invoke("add_provider_account", { providerId, accountId, secret, label, authMethod });
 }
 
 export function removeProviderAccount(id: string): Promise<void> {
@@ -210,6 +229,21 @@ export function removeProviderAccount(id: string): Promise<void> {
 
 export function setDefaultProviderAccount(id: string): Promise<void> {
   return invoke("set_default_provider_account", { id });
+}
+
+/** Live CLI login (OAuth) state for a provider, e.g. `claude auth status`. */
+export function providerAuthStatus(providerId: string): Promise<AuthStatusDto> {
+  return invoke("provider_auth_status", { providerId });
+}
+
+/** Opens the provider's interactive login flow (`claude auth login`) in a terminal. */
+export function providerAuthLogin(
+  providerId: string,
+  taskId: string | null,
+  rows: number,
+  cols: number,
+): Promise<string> {
+  return invoke("provider_auth_login", { providerId, taskId, rows, cols });
 }
 
 export interface ProviderDto {
@@ -222,6 +256,7 @@ export interface ProviderDto {
   defaultModel: string | null;
   binaries: string[];
   promptStrategy: string;
+  authMethods: AuthMethodDto[];
 }
 
 export function listProviders(): Promise<ProviderDto[]> {
