@@ -288,6 +288,118 @@ impl LineCommentStore {
             .lock()
             .map_err(|_| Error::Internal("db connection mutex poisoned".into()))
     }
+
+    // -- Agent tool surface (E4-11, #51) ------------------------------------
+
+    /// Resolves the reviewed task's materialized worktree path (the agent
+    /// tool validates anchors against it). `None` when the task has no
+    /// workspace row or it isn't on disk yet.
+    fn task_workspace_path(&self, task_id: &str) -> Result<Option<std::path::PathBuf>, Error> {
+        let conn = self.conn()?;
+        let path: Option<String> = conn
+            .query_row(
+                "SELECT w.path FROM tasks t
+                   JOIN workspaces w ON w.id = t.workspace_id
+                  WHERE t.id = ?1",
+                [task_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(path
+            .map(std::path::PathBuf::from)
+            .filter(|p| !p.as_os_str().is_empty()))
+    }
+
+    /// Agent-authored comment (§14 tool surface): validated against the
+    /// task's workspace before persisting — path containment (no escape),
+    /// the file must exist on disk, and the anchor must be a non-empty,
+    /// in-range, ordered line span. Attribution lands in `created_by` as
+    /// `agent:<provider>`. Guardrail failures are typed
+    /// ([`Error::InvalidLineComment`] / [`Error::PathEscape`]).
+    pub fn add_agent_comment(
+        &self,
+        opts: AddLineCommentOptions,
+        provider: &str,
+    ) -> Result<LineComment, Error> {
+        let worktree = self.task_workspace_path(&opts.task_id)?.ok_or_else(|| {
+            Error::InvalidLineComment(format!(
+                "task {} has no materialized workspace to validate against",
+                opts.task_id
+            ))
+        })?;
+
+        validate_comment_anchor(&worktree, &opts.file_path, opts.line_number, opts.line_end)?;
+
+        let mut with_author = opts;
+        with_author.created_by = Some(format!("agent:{provider}"));
+        self.add(with_author)
+    }
+}
+
+/// Anchor guardrails shared by the agent tool: lexical+canonical path
+/// containment, file existence, and a non-empty in-range line span.
+/// `line_count` caps the anchor at the file's real length so an agent can't
+/// point past EOF.
+fn validate_comment_anchor(
+    worktree: &std::path::Path,
+    rel_path: &str,
+    line_number: i64,
+    line_end: Option<i64>,
+) -> Result<(), Error> {
+    // Containment — mirrors files.rs: reject absolute paths and `..`
+    // components lexically (covers files that don't exist yet), then
+    // canonicalize and confirm the target stays under the worktree.
+    let rel = std::path::Path::new(rel_path);
+    let lexical = !rel_path.is_empty()
+        && rel
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)));
+    if !lexical {
+        return Err(Error::PathEscape(rel_path.into()));
+    }
+    let canonical_worktree = worktree
+        .canonicalize()
+        .map_err(|e| Error::InvalidLineComment(format!("worktree not resolvable: {e}")))?;
+    let target = canonical_worktree.join(rel);
+    let resolved = target.canonicalize().map_err(|_| {
+        Error::InvalidLineComment(format!("file not found in workspace: {rel_path}"))
+    })?;
+    if !resolved.starts_with(&canonical_worktree) {
+        return Err(Error::PathEscape(rel_path.into()));
+    }
+
+    // Anchor range.
+    if line_number < 1 {
+        return Err(Error::InvalidLineComment(format!(
+            "line_number {line_number} is out of range"
+        )));
+    }
+    let end = line_end.unwrap_or(line_number);
+    if end < line_number {
+        return Err(Error::InvalidLineComment(format!(
+            "line_end {end} before line_number {line_number}"
+        )));
+    }
+    let line_count = count_lines(&resolved)?;
+    if (line_number as usize) > line_count {
+        return Err(Error::InvalidLineComment(format!(
+            "line_number {line_number} past end of file ({line_count} lines)"
+        )));
+    }
+    Ok(())
+}
+
+/// Line count of a file (counts newline-terminated lines plus a trailing
+/// partial line). Bounded read — a huge file still streams line by line.
+fn count_lines(path: &std::path::Path) -> Result<usize, Error> {
+    use std::io::BufRead;
+    let file = std::fs::File::open(path)?;
+    let mut count = 0usize;
+    for _ in std::io::BufReader::new(file).lines() {
+        count += 1;
+    }
+    Ok(count)
 }
 
 /// Context for the §14 agent prompt template.
@@ -609,5 +721,149 @@ TASK:\nFix the code based on the comment above. Write the corrected implementati
         assert!(prompt.contains("SELECTED CODE (line 3):"));
         assert!(!prompt.contains("BRANCH:"));
         assert!(!prompt.contains("ENCLOSING FUNCTION:"));
+    }
+
+    // -- Agent tool (E4-11) --------------------------------------------------
+
+    /// Task whose workspace is a real tempdir with a source file on disk.
+    fn agent_fixture() -> (Arc<LineCommentStore>, tempfile::TempDir) {
+        let store = fixture();
+        let wt = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(wt.path().join("src")).unwrap();
+        std::fs::write(
+            wt.path().join("src/main.rs"),
+            "fn a() {}\nfn b() {}\nfn c() {}\n",
+        )
+        .unwrap();
+        store
+            .conn()
+            .unwrap()
+            .execute_batch(&format!(
+                "INSERT INTO tasks (id, project_id, name, status, workspace_id)
+                   VALUES ('task-wt', 'p1', 't', 'in_progress', 'ws-1');
+                 INSERT INTO workspaces (id, path) VALUES ('ws-1', '{}');",
+                wt.path().to_string_lossy()
+            ))
+            .unwrap();
+        (store, wt)
+    }
+
+    fn agent_opts(file: &str, line: i64) -> AddLineCommentOptions {
+        AddLineCommentOptions {
+            task_id: "task-wt".into(),
+            file_path: file.into(),
+            line_number: line,
+            line_end: None,
+            source_side: SourceSide::After,
+            line_content: None,
+            content: "agent feedback".into(),
+            created_by: None,
+        }
+    }
+
+    #[test]
+    fn agent_comment_is_attributed_and_persisted() {
+        let (store, _wt) = agent_fixture();
+        let c = store
+            .add_agent_comment(agent_opts("src/main.rs", 2), "claude")
+            .unwrap();
+        assert_eq!(c.created_by, "agent:claude");
+        assert_eq!(c.line_number, 2);
+        assert!(!c.resolved);
+        // Visible in the task's list like any other comment.
+        let listed = store.list_for_task("task-wt", None).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].created_by, "agent:claude");
+    }
+
+    #[test]
+    fn agent_comment_rejects_path_escape() {
+        let (store, _wt) = agent_fixture();
+        for bad in ["../out.rs", "/etc/passwd", "src/../../x.rs"] {
+            let err = store
+                .add_agent_comment(agent_opts(bad, 1), "claude")
+                .unwrap_err();
+            assert!(matches!(err, Error::PathEscape(_)), "{bad}: got {err:?}");
+        }
+    }
+
+    #[test]
+    fn agent_comment_rejects_missing_file() {
+        let (store, _wt) = agent_fixture();
+        let err = store
+            .add_agent_comment(agent_opts("src/nope.rs", 1), "claude")
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidLineComment(_)), "{err:?}");
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn agent_comment_rejects_out_of_range_anchor() {
+        let (store, _wt) = agent_fixture();
+        // File has 3 lines: line 4 is past EOF, line 0 invalid.
+        let err = store
+            .add_agent_comment(agent_opts("src/main.rs", 4), "claude")
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidLineComment(_)));
+        assert!(err.to_string().contains("past end"));
+
+        let err = store
+            .add_agent_comment(agent_opts("src/main.rs", 0), "claude")
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidLineComment(_)));
+
+        // line_end before line_number.
+        let mut opts = agent_opts("src/main.rs", 2);
+        opts.line_end = Some(1);
+        let err = store.add_agent_comment(opts, "claude").unwrap_err();
+        assert!(matches!(err, Error::InvalidLineComment(_)));
+    }
+
+    #[test]
+    fn agent_comment_without_workspace_is_rejected() {
+        let store = fixture();
+        store.conn().unwrap().execute(
+            "INSERT INTO tasks (id, project_id, name, status) VALUES ('task-nows', 'p1', 't', 'in_progress')",
+            [],
+        ).unwrap();
+        let mut opts = agent_opts("src/main.rs", 1);
+        opts.task_id = "task-nows".into();
+        let err = store.add_agent_comment(opts, "claude").unwrap_err();
+        assert!(matches!(err, Error::InvalidLineComment(_)));
+        assert!(err.to_string().contains("no materialized workspace"));
+    }
+
+    #[test]
+    fn task_deletion_cascades_comments() {
+        // E4-11 guardrail: FK ON DELETE CASCADE leaves no orphan comments
+        // when the reviewed task is removed.
+        let store = fixture();
+        store
+            .conn()
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO tasks (id, project_id, name, status) VALUES
+               ('task-a', 'p1', 'a', 'in_progress'),
+               ('task-b', 'p1', 'b', 'in_progress');",
+            )
+            .unwrap();
+        store.add(add_opts("task-a")).unwrap();
+        store.add(add_opts("task-b")).unwrap();
+        assert_eq!(store.list_for_task("task-a", None).unwrap().len(), 1);
+
+        store
+            .conn()
+            .unwrap()
+            .execute("DELETE FROM tasks WHERE id = 'task-a'", [])
+            .unwrap();
+        // task-a's comment is gone; task-b's survives.
+        assert!(store.list_for_task("task-a", None).unwrap().is_empty());
+        assert_eq!(store.list_for_task("task-b", None).unwrap().len(), 1);
+        let total: i64 = store
+            .conn()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM line_comments", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(total, 1, "no orphan rows after cascade");
     }
 }

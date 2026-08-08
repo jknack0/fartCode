@@ -48,6 +48,8 @@ pub struct App {
     pub fs_watch: Arc<FsWatchService>,
     /// E4-10 diff line comments (§14).
     pub line_comments: Arc<fartcode_core::line_comments::LineCommentStore>,
+    /// E4-09 PR sync cache (§11 pull_requests; engine in fartcode-git).
+    pub pr_sync: Arc<fartcode_core::pr_sync::PrSyncStore>,
     /// E17-01 project board issues (§13).
     pub issues: Arc<fartcode_core::issues::IssueStore>,
 }
@@ -129,6 +131,12 @@ impl App {
             db.clone(),
             event_bus.clone() as Arc<dyn EventBus>,
         ));
+        // E4-09: PR sync cache — the PR tab renders from it instantly; the
+        // scheduler (spawned in lib.rs) and on-demand syncs feed it.
+        let pr_sync = Arc::new(fartcode_core::pr_sync::PrSyncStore::new(
+            db.clone(),
+            event_bus.clone() as Arc<dyn EventBus>,
+        ));
         // E17-01: project board issues (§13) — local-first store, derived
         // blocked state, cycle-rejected edges.
         let issues = Arc::new(fartcode_core::issues::IssueStore::new(
@@ -149,6 +157,7 @@ impl App {
             provider_accounts,
             fs_watch,
             line_comments,
+            pr_sync,
             issues,
         }))
     }
@@ -192,6 +201,12 @@ pub fn event_to_value(event: &InternalEvent) -> Option<serde_json::Value> {
             workspace_id,
         } => Some(json!({
             "type": "git:changed", "projectId": project_id, "workspaceId": workspace_id,
+        })),
+        InternalEvent::PrUpdated {
+            workspace_id,
+            pr_url,
+        } => Some(json!({
+            "type": "pr:updated", "workspaceId": workspace_id, "prUrl": pr_url,
         })),
         InternalEvent::FilesChanged {
             workspace_id,
@@ -295,6 +310,16 @@ mod tests {
         let v = event_to_value(&ev).unwrap();
         assert_eq!(v["type"], "files:changed");
         assert_eq!(v["paths"][0], "src/main.rs");
+
+        // E4-09 PR sync events reach the frontend envelope.
+        let ev = InternalEvent::PrUpdated {
+            workspace_id: "w1".into(),
+            pr_url: "https://github.com/o/r/pull/42".into(),
+        };
+        let v = event_to_value(&ev).unwrap();
+        assert_eq!(v["type"], "pr:updated");
+        assert_eq!(v["workspaceId"], "w1");
+        assert_eq!(v["prUrl"], "https://github.com/o/r/pull/42");
 
         // E4-10 line-comment events reach the frontend envelope.
         let ev = InternalEvent::CommentCreated {

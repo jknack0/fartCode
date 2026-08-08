@@ -4,6 +4,37 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## E4 PR section, PR sync, agent comment tool (#47/#49/#51, 2026-08-07)
+
+- **GitHub client** lives in `fartcode-core/src/github` (token.rs keyring +
+  `gh auth token` import; client.rs reqwest REST; models.rs DTOs). Secrets only
+  in the OS keyring — never SQLite/logs. Parsers are unit-tested against
+  recorded fixtures (`client::fixtures`). Rate-limit aware: 401→GithubAuth,
+  403/429+remaining:0→GithubRateLimited(reset_at).
+- **PR sync cache** (`pull_requests`, migration 0005): one row per PR URL,
+  scalar query columns + full `PrDto` in a versioned-JSON `data` column
+  (ADR-0036 — JSON sub-collections, not four normalized sub-tables). Idempotent
+  upsert = deserialize-and-compare → skip write+event when byte-identical.
+- **Scheduler** in `fartcode-git/src/pr_sync.rs`: periodic `run_scheduler`
+  (base 60s, exp backoff on failures capped 1h, jitter), rebuilds targets from
+  DB each cycle (restart-safe), `IN_FLIGHT` set dedupes concurrent syncs.
+  Cursors in `kv` (`pr_sync:last:*` / `pr_sync:failures:*`). Rate-limit ends the
+  cycle early (account-global). The PR tab reads the cache (instant/offline) and
+  kicks a background sync; scheduler keeps it warm.
+- **Commit-card PR-open guard** is now `CachedPrLookup` (reads the sync cache —
+  local, offline-safe) instead of `StubPrLookup`. `PrLookup::pr_url` gained a
+  `remote` param.
+- **Agent comment tool** (#51): `LineCommentStore::add_agent_comment` validates
+  against the task's materialized worktree (path containment, file exists,
+  in-range anchor) with typed errors, attributes `created_by = agent:<provider>`.
+  Exposed as `agent_add_line_comment`. **Autonomous agent invocation (MCP tool
+  registration) is deferred** — no MCP custom-tool infra exists yet; see
+  ADR-0035.
+- Gotchas: migration count tests assert 6 now (0000–0005). `DOMAIN_TABLES`
+  includes `pull_requests` + `issues`. Frontend PR tab is `store/pr.ts` +
+  `PullRequestPanel.tsx`; agent comments show a `⚡ <provider>` chip via
+  `commentAuthor()`.
+
 ## Repo renamed ade → fartCode (2026-08-07)
 
 - User rename, everywhere: 12 crates `ade-*` → `fartcode-*` (dirs + Cargo

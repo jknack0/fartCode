@@ -108,8 +108,9 @@ pub fn git_discard(
 }
 
 /// Commit-card repo state (E4-06): branch, push-remote presence, published
-/// flag, and the PR-open guard (`StubPrLookup` until E4-07/E8 land). The
-/// push remote is the owning project's effective `pushRemote` setting.
+/// flag, and the PR-open guard (the E4-09 sync cache — local and
+/// offline-safe). The push remote is the owning project's effective
+/// `pushRemote` setting.
 #[tauri::command]
 pub fn git_commit_state(
     app: State<'_, Arc<App>>,
@@ -117,8 +118,10 @@ pub fn git_commit_state(
 ) -> Result<fartcode_git::commit::CommitState, String> {
     let worktree = workspace_path(&app, &workspace_id)?;
     let push_remote = project_push_remote(&app, &workspace_id)?;
-    fartcode_git::commit::state(&worktree, &push_remote, &fartcode_git::commit::StubPrLookup)
-        .map_err(String::from)
+    let lookup = fartcode_git::pr_sync::CachedPrLookup {
+        store: app.pr_sync.clone(),
+    };
+    fartcode_git::commit::state(&worktree, &push_remote, &lookup).map_err(String::from)
 }
 
 /// Result of `git_commit` — the new commit hash (reference returns it; the
@@ -154,9 +157,8 @@ pub fn git_push(
 }
 
 /// Phase 0 "Commit & Create PR" backend (E4-06): pushes when the branch
-/// isn't published, applies the PR-open guard, and returns the GitHub
-/// compare URL for the browser to finish the job (full PR creation =
-/// E4-07/E8).
+/// isn't published, applies the PR-open guard (sync cache), and returns the
+/// GitHub compare URL for the browser to finish the job.
 #[tauri::command]
 pub fn git_create_pr(
     app: State<'_, Arc<App>>,
@@ -164,8 +166,10 @@ pub fn git_create_pr(
 ) -> Result<fartcode_git::commit::CreatePrOutcome, String> {
     let worktree = workspace_path(&app, &workspace_id)?;
     let push_remote = project_push_remote(&app, &workspace_id)?;
-    fartcode_git::commit::create_pr(&worktree, &push_remote, &fartcode_git::commit::StubPrLookup)
-        .map_err(String::from)
+    let lookup = fartcode_git::pr_sync::CachedPrLookup {
+        store: app.pr_sync.clone(),
+    };
+    fartcode_git::commit::create_pr(&worktree, &push_remote, &lookup).map_err(String::from)
 }
 
 /// Fetches the push remote (E4-08 footer).
@@ -250,7 +254,7 @@ pub fn project_github_url(
 /// `getPushRemote`: pushRemote ?? baseRemote ?? "origin"). Resolves
 /// workspace → task → project; falls back to "origin" for workspaces not
 /// owned by a task (repository-root workspaces).
-fn project_push_remote(app: &App, workspace_id: &str) -> Result<String, String> {
+pub(crate) fn project_push_remote(app: &App, workspace_id: &str) -> Result<String, String> {
     let project_id: Option<String> = {
         let conn = app
             .db

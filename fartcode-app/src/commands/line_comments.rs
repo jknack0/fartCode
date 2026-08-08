@@ -52,6 +52,46 @@ pub fn add_line_comment(
         .map_err(String::from)
 }
 
+/// Agent-tool surface (E4-11, #51): validated against the task's workspace
+/// (path containment, file existence, in-range anchor) and attributed to the
+/// provider as `created_by = agent:<provider>`. See decisions/0035 for the
+/// agent-call mechanism.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentAddLineCommentRequest {
+    pub task_id: String,
+    pub file_path: String,
+    pub line_start: i64,
+    pub line_end: Option<i64>,
+    pub source_side: String,
+    pub content: String,
+    /// Provider id making the call (`claude`, …) — lands in attribution.
+    pub provider: String,
+}
+
+#[tauri::command]
+pub fn agent_add_line_comment(
+    app: State<'_, Arc<App>>,
+    request: AgentAddLineCommentRequest,
+) -> Result<LineComment, String> {
+    let side = SourceSide::parse(&request.source_side).map_err(String::from)?;
+    app.line_comments
+        .add_agent_comment(
+            fartcode_core::line_comments::AddLineCommentOptions {
+                task_id: request.task_id,
+                file_path: request.file_path,
+                line_number: request.line_start,
+                line_end: request.line_end,
+                source_side: side,
+                line_content: None,
+                content: request.content,
+                created_by: None,
+            },
+            &request.provider,
+        )
+        .map_err(String::from)
+}
+
 /// Comments for a task (optionally narrowed to one file) — the diff gutter
 /// rehydrates from here on tab open / restart.
 #[tauri::command]

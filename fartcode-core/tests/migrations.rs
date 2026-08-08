@@ -32,7 +32,7 @@ fn test_full_migration_chain_applies_from_scratch() {
             Ok((row.get(0)?, row.get::<_, String>(1)?.len()))
         })
         .unwrap();
-    assert_eq!(count, 4, "expected all journal migrations applied");
+    assert_eq!(count, 6, "expected all journal migrations applied");
     assert_eq!(hash_len, 64, "sha256 hex must be 64 chars");
 
     // FTS tables exist and the kv gates are set to the expected versions.
@@ -125,7 +125,7 @@ fn test_migrations_reinit_is_noop() {
         .unwrap()
         .query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(count, 4);
+    assert_eq!(count, 6);
     drop(db);
 
     let db2 = SqliteDb::init(Some(db_path.to_str().unwrap())).unwrap();
@@ -135,5 +135,5 @@ fn test_migrations_reinit_is_noop() {
         .unwrap()
         .query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(count2, 4, "re-init must not re-apply migrations");
+    assert_eq!(count2, 6, "re-init must not re-apply migrations");
 }

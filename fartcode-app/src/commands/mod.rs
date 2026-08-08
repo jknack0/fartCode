@@ -5,6 +5,7 @@
 pub mod conversations;
 pub mod files;
 pub mod git;
+pub mod github;
 pub mod issue_proposals;
 pub mod issues;
 pub mod lifecycle;

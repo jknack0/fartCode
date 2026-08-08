@@ -145,6 +145,12 @@ pub enum InternalEvent {
         project_id: String,
         workspace_id: String,
     },
+    /// E4-09: a PR row changed in the sync cache (or appeared). Consumers
+    /// refetch the workspace's cached PR section.
+    PrUpdated {
+        workspace_id: String,
+        pr_url: String,
+    },
     /// E4-01: working files changed in a workspace's worktree. `paths` are
     /// worktree-relative, deduped, and capped (a hint for editors; consumers
     /// needing exact state refetch).

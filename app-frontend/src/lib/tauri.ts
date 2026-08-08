@@ -38,6 +38,7 @@ export type FartcodeEvent =
   | { type: "files:changed"; workspaceId: string; paths: string[] }
   | { type: "comment:created"; id: string; taskId: string; filePath: string; lineNumber: number }
   | { type: "comment:resolved"; id: string }
+  | { type: "pr:updated"; workspaceId: string; prUrl: string }
   | { type: "issue:created"; id: string; projectId: string; title: string }
   | { type: "issue:updated"; id: string; projectId: string }
   | { type: "issue:deleted"; id: string; projectId: string };
@@ -747,6 +748,117 @@ export function gitAddRemote(workspaceId: string, name: string, url: string): Pr
   return invoke("git_add_remote", { workspaceId, name, url });
 }
 
+// -- E4-07/E4-09 PR section (shapes mirror fartcode-core/src/github) ----------
+
+export type PrStatus = "open" | "closed" | "merged";
+
+export interface PrUserDto {
+  login: string;
+  avatarUrl: string | null;
+  url: string | null;
+}
+
+export interface PrFileDto {
+  filename: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  patchElided: boolean;
+}
+
+export interface PrCommitDto {
+  sha: string;
+  subject: string;
+  author: PrUserDto | null;
+  authorName: string | null;
+  date: string | null;
+  url: string | null;
+}
+
+export interface PrCheckDto {
+  id: string;
+  name: string;
+  status: string;
+  conclusion: string | null;
+  url: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  appName: string | null;
+}
+
+export interface PrCommentDto {
+  id: string;
+  kind: "issue" | "review";
+  body: string;
+  url: string | null;
+  author: PrUserDto | null;
+  path: string | null;
+  line: number | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+/** One denormalized PR — the whole Pull Requests tab. */
+export interface PrDto {
+  number: number;
+  title: string;
+  url: string;
+  status: PrStatus;
+  draft: boolean;
+  author: PrUserDto | null;
+  baseRef: string;
+  headRef: string;
+  headOid: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  commitCount: number;
+  mergeableState: string | null;
+  reviewDecision: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  files: PrFileDto[];
+  commits: PrCommitDto[];
+  checks: PrCheckDto[];
+  comments: PrCommentDto[];
+}
+
+/** Pull Requests tab payload: empty-state discriminators + the PR. */
+export interface PrSectionDto {
+  tokenPresent: boolean;
+  repository: string | null;
+  branch: string | null;
+  pr: PrDto | null;
+}
+
+/** Cached read + background sync (tab open). */
+export function prSectionGet(workspaceId: string): Promise<PrSectionDto> {
+  return invoke("pr_section_get", { workspaceId });
+}
+
+/** Awaits one sync pass, then returns the cache (explicit refresh). */
+export function prSectionSync(workspaceId: string): Promise<PrSectionDto> {
+  return invoke("pr_section_sync", { workspaceId });
+}
+
+export interface GithubTokenStatusDto {
+  connected: boolean;
+  mask: string | null;
+}
+
+export function githubTokenStatus(): Promise<GithubTokenStatusDto> {
+  return invoke("github_token_status");
+}
+export function githubTokenImport(): Promise<GithubTokenStatusDto> {
+  return invoke("github_token_import");
+}
+export function githubTokenSet(token: string): Promise<GithubTokenStatusDto> {
+  return invoke("github_token_set", { token });
+}
+export function githubTokenClear(): Promise<void> {
+  return invoke("github_token_clear");
+}
+
 /** Left-nav project pull: `git pull --ff-only` at the project root. */
 export function projectGitPull(projectId: string): Promise<void> {
   return invoke("project_git_pull", { projectId });
@@ -790,6 +902,28 @@ export function addLineComment(args: {
   content: string;
 }): Promise<LineCommentDto> {
   return invoke("add_line_comment", { request: args });
+}
+
+/** E4-11 agent-tool surface: validated against the task's workspace and
+ * attributed to the provider. */
+export function agentAddLineComment(args: {
+  taskId: string;
+  filePath: string;
+  lineStart: number;
+  lineEnd: number | null;
+  sourceSide: "before" | "after";
+  content: string;
+  provider: string;
+}): Promise<LineCommentDto> {
+  return invoke("agent_add_line_comment", { request: args });
+}
+
+/** Parses `createdBy` ("user" | "agent:<provider>") into an author. */
+export function commentAuthor(createdBy: string): { kind: "user" | "agent"; provider: string | null } {
+  if (createdBy.startsWith("agent:")) {
+    return { kind: "agent", provider: createdBy.slice("agent:".length) };
+  }
+  return { kind: "user", provider: null };
 }
 
 export function listLineComments(taskId: string, filePath?: string): Promise<LineCommentDto[]> {

@@ -49,6 +49,10 @@ fn sql_for_tag(tag: &str) -> Option<&'static str> {
         "0003_issue_external_ref" => {
             Some(include_str!("../../migrations/0003_issue_external_ref.sql"))
         }
+        "0004_provider_auth_method" => Some(include_str!(
+            "../../migrations/0004_provider_auth_method.sql"
+        )),
+        "0005_pull_requests" => Some(include_str!("../../migrations/0005_pull_requests.sql")),
         _ => None,
     }
 }

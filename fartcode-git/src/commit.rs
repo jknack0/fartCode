@@ -2,10 +2,10 @@
 //! DTO that drives the card's disabled-state matrix and the PR-open guard.
 //!
 //! Free functions over a worktree path, same shape as `stage.rs` (E4-03).
-//! The PR lookup is behind the [`PrLookup`] trait: Phase 0 ships
-//! [`StubPrLookup`] (always "no open PR") — the real lookup lands with the
-//! E4-07 PR sync engine / E8 token plumbing. The guard logic and its UI
-//! wiring are testable against the stub today.
+//! The PR lookup is behind the [`PrLookup`] trait: the app wires
+//! `fartcode_git::pr_sync::CachedPrLookup` (the E4-09 sync cache — local,
+//! offline-safe); tests use fakes. The guard logic and its UI wiring are
+//! testable without a network.
 
 use std::path::Path;
 
@@ -18,10 +18,10 @@ use crate::{git_cmd, git_stdout_ok, CliGit};
 /// Open-PR lookup for one branch (the commit card's PR-open guard).
 ///
 /// `None` = no open PR for the branch. Implementations must not hang
-/// (non-interactive network access only; failures surface as `Err`, which
-/// the card treats as "guard unknown → offer push only").
+/// (local cache reads only; failures surface as `Err`, which the card
+/// treats as "guard unknown → offer push only").
 pub trait PrLookup: Send + Sync {
-    fn pr_url(&self, repo: &Path, branch: &str) -> Result<Option<String>, Error>;
+    fn pr_url(&self, repo: &Path, remote: &str, branch: &str) -> Result<Option<String>, Error>;
 }
 
 /// Phase 0 stand-in: no PR engine yet (E4-07/E8), so no branch ever has an
@@ -31,7 +31,7 @@ pub trait PrLookup: Send + Sync {
 pub struct StubPrLookup;
 
 impl PrLookup for StubPrLookup {
-    fn pr_url(&self, _repo: &Path, _branch: &str) -> Result<Option<String>, Error> {
+    fn pr_url(&self, _repo: &Path, _remote: &str, _branch: &str) -> Result<Option<String>, Error> {
         Ok(None)
     }
 }
@@ -92,7 +92,7 @@ pub fn state(
     // whole state read — the card must still render commit/push affordances.
     let pr_url = branch
         .as_deref()
-        .map(|b| lookup.pr_url(worktree, b))
+        .map(|b| lookup.pr_url(worktree, push_remote, b))
         .transpose()
         .ok()
         .flatten()
@@ -197,7 +197,7 @@ pub fn create_pr(
     // PR-open guard (reference: the action degrades to push when a PR is
     // already open). Guard failures degrade to "proceed" — same policy as
     // the state read.
-    if let Some(existing) = lookup.pr_url(worktree, &branch).ok().flatten() {
+    if let Some(existing) = lookup.pr_url(worktree, push_remote, &branch).ok().flatten() {
         return Err(Error::Git(format!(
             "a pull request is already open: {existing}"
         )));
@@ -300,7 +300,12 @@ mod tests {
 
     struct FakeLookup(Option<String>);
     impl PrLookup for FakeLookup {
-        fn pr_url(&self, _repo: &Path, _branch: &str) -> Result<Option<String>, Error> {
+        fn pr_url(
+            &self,
+            _repo: &Path,
+            _remote: &str,
+            _branch: &str,
+        ) -> Result<Option<String>, Error> {
             Ok(self.0.clone())
         }
     }

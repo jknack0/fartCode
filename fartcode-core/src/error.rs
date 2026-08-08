@@ -141,9 +141,30 @@ pub enum Error {
     #[error("file watch error: {0}")]
     Watch(String),
 
+    // -- GitHub (E4-07/E4-09) --
+    #[error("github error: {0}")]
+    Github(String),
+
+    #[error("github authentication required: {0}")]
+    GithubAuth(String),
+
+    /// 403/429 with the rate limit exhausted (or secondary limit). `reset_at`
+    /// is the unix epoch second from `X-RateLimit-Reset` when present.
+    #[error("github rate limit hit — try again later")]
+    GithubRateLimited { reset_at: Option<i64> },
+
+    #[error("pull request not found: {0}")]
+    PullRequestNotFound(String),
+
     // -- Workspace files (E4-05) --
     #[error("path escapes the workspace: {0}")]
     PathEscape(String),
+
+    // -- Line comments (E4-11 agent tool) --
+    /// Malformed/out-of-range anchor, missing file, or a workspace that
+    /// can't be resolved — the agent tool's guardrail errors.
+    #[error("invalid line comment: {0}")]
+    InvalidLineComment(String),
 
     // -- Catch-all --
     #[error("{0}")]

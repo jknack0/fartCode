@@ -68,6 +68,13 @@ pub fn run() {
                 app_state.fs_watch.clone(),
                 app_state.event_bus.clone(),
             );
+            // E4-09: PR sync scheduler — periodic background refresh of the
+            // pull_requests cache (cursors in kv survive restarts).
+            tauri::async_runtime::spawn(fartcode_git::pr_sync::run_scheduler(
+                app_state.pr_sync.clone(),
+                app_state.db.clone(),
+                fartcode_git::pr_sync::SchedulerConfig::default(),
+            ));
             // E2-07: rehydrate previously-spawned agent sessions AFTER DB
             // init (reference boot order). Each launch blocks, so this runs
             // on a background thread — the window never waits on agents.
@@ -138,7 +145,14 @@ pub fn run() {
             commands::git::git_add_remote,
             commands::git::project_git_pull,
             commands::git::project_github_url,
+            commands::github::pr_section_get,
+            commands::github::pr_section_sync,
+            commands::github::github_token_status,
+            commands::github::github_token_import,
+            commands::github::github_token_set,
+            commands::github::github_token_clear,
             commands::line_comments::add_line_comment,
+            commands::line_comments::agent_add_line_comment,
             commands::line_comments::list_line_comments,
             commands::line_comments::resolve_line_comment,
             commands::line_comments::delete_line_comment,

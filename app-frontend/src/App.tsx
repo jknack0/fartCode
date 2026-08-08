@@ -19,6 +19,7 @@ import { useSidebar, wireSidebarEvents } from "./store/sidebar";
 import { useConversations, wireConversationEvents } from "./store/conversations";
 import { wireTabsEvents } from "./store/tabs";
 import { wireLineCommentEvents } from "./store/line-comments";
+import { wirePrEvents } from "./store/pr";
 
 function App() {
   const load = useSidebar((s) => s.load);
@@ -34,6 +35,7 @@ function App() {
     const unlistenChanges = wireChangesEvents();
     const unlistenDiffs = wireDiffsEvents();
     const unlistenComments = wireLineCommentEvents();
+    const unlistenPr = wirePrEvents();
     return () => {
       unlisten();
       unlistenTabs();
@@ -41,6 +43,7 @@ function App() {
       unlistenChanges();
       unlistenDiffs();
       unlistenComments();
+      unlistenPr();
     };
   }, [load]);
   const ensureConversations = useConversations((s) => s.ensure);

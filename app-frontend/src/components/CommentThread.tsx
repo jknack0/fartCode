@@ -7,7 +7,7 @@
 // click.
 import { useLineComments } from "../store/line-comments";
 import { useSidebar } from "../store/sidebar";
-import type { LineCommentDto } from "../lib/tauri";
+import { commentAuthor, type LineCommentDto } from "../lib/tauri";
 
 export default function CommentThread({
   taskId,
@@ -61,6 +61,9 @@ function CommentRow({
   const linked = comment.linkedTaskId ? taskById[comment.linkedTaskId] : null;
   const switchTo = useSidebar((s) => s.switchToTask);
   const tasksByProject = useSidebar((s) => s.tasksByProject);
+  // E4-11: agent-authored comments render an attribution chip ("user" is
+  // the implicit default and shows nothing).
+  const author = commentAuthor(comment.createdBy);
 
   return (
     <div className={`comment-row${comment.resolved ? " resolved" : ""}`}>
@@ -71,6 +74,14 @@ function CommentRow({
             ? `–${comment.lineEnd}`
             : ""}
         </span>
+        {author.kind === "agent" && (
+          <span
+            className="comment-author-badge agent"
+            title={`Added by ${author.provider ?? "agent"}`}
+          >
+            ⚡ {author.provider ?? "agent"}
+          </span>
+        )}
         {linked && (
           <button
             className={`comment-task-badge status-${linked.status}`}

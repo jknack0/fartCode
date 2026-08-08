@@ -13,6 +13,7 @@ import { hint } from "../lib/useCommands";
 import { provisionTask, type DiffSide, type GitChangeDto } from "../lib/tauri";
 import CommitCard from "./CommitCard";
 import GitFooter from "./GitFooter";
+import PullRequestPanel from "./PullRequestPanel";
 import CardDetail from "./board/CardDetail";
 import ProjectChatPanel from "./projectChat/ProjectChatPanel";
 import { IconBranch, IconClose, IconDiscard, IconMinus, IconPlus } from "./icons";
@@ -43,6 +44,7 @@ export default function ChangesSidebar() {
   const workspaceId = task?.workspaceId ?? project?.repositoryWorkspaceId ?? null;
   const entry = useChanges((s) => (workspaceId ? s.byWorkspace[workspaceId] : undefined));
   const [provisioning, setProvisioning] = useState(false);
+  const [panelTab, setPanelTab] = useState<"changes" | "prs">("changes");
 
   useEffect(() => {
     if (open && workspaceId) {
@@ -96,6 +98,27 @@ export default function ChangesSidebar() {
         </div>
       </div>
 
+      {workspaceId && (
+        <div className="changes-tabs">
+          <button
+            className={panelTab === "changes" ? "active" : ""}
+            onClick={() => setPanelTab("changes")}
+          >
+            Changed
+          </button>
+          <button
+            className={panelTab === "prs" ? "active" : ""}
+            onClick={() => setPanelTab("prs")}
+          >
+            Pull Requests
+          </button>
+        </div>
+      )}
+
+      {workspaceId && panelTab === "prs" ? (
+        <PullRequestPanel workspaceId={workspaceId} />
+      ) : (
+        <>
       {!workspaceId ? (
         <p className="changes-empty muted">
           This task has no workspace yet — changes appear once it's provisioned.
@@ -171,6 +194,8 @@ export default function ChangesSidebar() {
         <>
           <CommitCard workspaceId={workspaceId} />
           <GitFooter workspaceId={workspaceId} />
+        </>
+      )}
         </>
       )}
           </div>

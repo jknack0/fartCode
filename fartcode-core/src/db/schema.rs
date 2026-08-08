@@ -27,6 +27,8 @@ pub const DOMAIN_TABLES: &[&str] = &[
     "ssh_connections",
     "provider_accounts",
     "line_comments",
+    "issues",
+    "pull_requests",
 ];
 
 /// FTS tables created by the version-gated bootstrap (`ensure_fts_tables`).
