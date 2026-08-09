@@ -4,6 +4,27 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## UI-thread blocking found; DB re-entrancy RULED OUT (2026-08-09)
+
+Chasing three deadlocked agent `cargo test` runs (0% CPU, 45-75 min — all
+in agent worktrees, main is clean) turned up something bigger, filed as
+issue #80: **93 of 101 tauri commands are non-async, so they run inline on
+the macOS main thread and freeze the window** (non-async #[tauri::command]
+→ ExecutionContext::Blocking → inlined into the invoke handler → wry's
+main-queue callback). Verified to the tauri-macros source + 2 probe tests.
+Worst: create_task (git fetch, unbounded), delete_task (5s spin-sleep PER
+LEAF), git_push/pull/fetch/create_pr (Command::output with NO timeout),
+issue_enter_column/step_confirm (our new dispatch path). Only 8 commands
+are async. Fix is async + spawn_blocking (async alone just moves the block
+to a runtime worker).
+
+RULED OUT, do not re-investigate: DB `Mutex<Connection>` re-entrancy. 10
+candidate hazards raised, ALL 10 refuted — no reachable production path
+holds the guard across a re-acquiring call; the code scopes guards
+deliberately (see commands/git.rs:258). The mutex is a contention
+amplifier behind main-thread holders, not a deadlock source. The agent
+test deadlocks were test-authored (guard held across store.get()).
+
 ## E2E scenario catalogue + board fix round (2026-08-09)
 
 `docs/e2e-scenarios.md` (e535a1a): 449 scenarios over 8 journeys, 153
