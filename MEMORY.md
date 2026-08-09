@@ -4,6 +4,23 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## #68 templated confirms + park rehydration LANDED (2026-08-09, 63090ba + 508d00b) — #68 closed
+
+Most of §8c had landed with the render round; this closed the three real
+gaps. Blocked confirm names each blocker's column via blockerColumnName
+(multi-column: "#b (Quick), #c (In Review)" parentheticals — designer-
+bound deviation). ProposalCard derives "approve N → <landing>" from the
+columns store (generic copy while unloaded, never a wrong name).
+New `step_parked_list` read-only command (async + spawn_blocking) +
+store/steps.ts `hydrateParkedSteps`: parks survive webview reload;
+events win over hydration via PER-HYDRATION TOMBSTONE COLLECTORS —
+clearIssue/clearPark record into every in-flight hydration's set, so a
+park cleared between the IPC resolve and the seed can't resurrect as a
+ghost confirm (the review's one high). Suites: app lib 91, frontend 180.
+Review round: 6 deduped, 2 confirmed (the ghost-park race + unguarded
+BoardView mount wiring), 4 refuted. Pre-existing acp_e2e_integration
+failures are environment-dependent (fail identically on clean main).
+
 ## #66 AUTHORITY FLIP LANDED (2026-08-09) — column_id owns placement
 
 E18-07: `issues.column_id` is authoritative end-to-end; `lane` is a
