@@ -4,6 +4,32 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## Task view carries pipeline context (2026-08-09, 273cb68, #79 closed)
+
+E18-10: the task view had ZERO board awareness — a step settling in a hold
+column rendered only on the board while the user was in the terminal. Now
+the 46px header crumb reads `project / <column> / <ref>` (resolved via the
+board's own columnIdForIssue) and the actions row carries four key-labelled
+actions: advance ⌘⇧→ (advanceTo ?? next, matching settle_issues_for_task),
+confirm parked step ⌘⇧D (names provider·model·effort, never spends on the
+press), move-to-column ⌘⇧M (key-first picker through issueEnterColumn), open
+card detail ⌘⇧I. Agent dot re-derived from the live agent terminal, NOT
+task.status. `⌘N new task` added to the header because the flyout's button
+vanishes when collapsed (⌘N was always global — the gap was mouse-only).
+Cardless ad-hoc tasks render no pipeline chrome. Frontend suite: 146 tests.
+11 design judgments listed on #79 for the designer — this extends handoff v2
+§5a with no frame.
+
+## OPERATIONAL: agent worktrees start STALE (2026-08-09)
+
+Three agents this session branched from an old commit (34e26ff) rather than
+current main and had to be corrected mid-flight; one rsynced the shared
+checkout into its worktree to compensate. ALWAYS
+`git -C <worktree> reset --hard main` before dispatching work to a worktree
+agent, and tell the agent its base explicitly. Cherry-pick only the agent's
+own work commit — verify with `git show <sha>^:<file> | shasum` against
+main's copy before picking.
+
 ## UI-thread blocking found; DB re-entrancy RULED OUT (2026-08-09)
 
 Chasing three deadlocked agent `cargo test` runs (0% CPU, 45-75 min — all
