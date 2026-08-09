@@ -1,0 +1,419 @@
+//! E19-03 (#72; ADR-0038 item 4) — dossier sections as ⌘K `feature` rows.
+//!
+//! The parsing and set arithmetic are unit-tested in
+//! `fartcode_core::dossier_index`. What can only be proven here is the
+//! wiring: that a real settle indexes the WORKTREE copy, that a project
+//! pull indexes the MAIN-BRANCH copy, and that deleting a card or a project
+//! takes its rows with it — no orphan row whose Enter would open the card
+//! detail of a dead issue.
+//!
+//! Real provisioning runs (git init, `worktree add`) inside a tempdir, for
+//! the same reason E19-01's suite does: the two-copies premise is a
+//! filesystem fact.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::Arc;
+
+use fartcode_app_lib::app::App;
+use fartcode_app_lib::dossier_index;
+use fartcode_app_lib::step_engine;
+use fartcode_core::dossier_index as core_index;
+use fartcode_core::events::{EventBus, InternalEvent};
+use fartcode_core::issues::{Issue, NewIssue};
+use fartcode_core::projects::ProjectStore;
+use fartcode_core::search::{self, SearchResult};
+use fartcode_core::settings::{LocalProjectGroup, LOCAL_PROJECT};
+use fartcode_core::tasks::TaskStore;
+
+/// What an agent appends before settling (ADR-0038 item 2), including the
+/// hostile shapes E19-01 hardened the append path against: a `## ` heading
+/// inside a fenced sample, a `###` subheading, and CRLF line endings.
+const AGENT_SECTIONS: &str = concat!(
+    "\r\n## Plan — 2026-08-09\r\n\r\n",
+    "Chose PKCE over the implicit flow.\r\n\r\n",
+    "### Rejected\r\n\r\n",
+    "A session cookie: the mobile client cannot hold one.\r\n\r\n",
+    "The seeded skill documents the format:\r\n\r\n",
+    "```md\r\n## Verify — <date>\r\n\r\nnot a real section\r\n```\r\n\r\n",
+    "## Implement — 2026-08-09\r\n\r\n",
+    "Token refresh lives in the interceptor.\r\n",
+);
+
+fn git_ok(dir: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?} failed in {dir:?}");
+}
+
+fn make_repo(tmp: &tempfile::TempDir) -> PathBuf {
+    let repo = tmp.path().join("demo");
+    std::fs::create_dir_all(&repo).unwrap();
+    git_ok(&repo, &["init", "-q"]);
+    std::fs::write(repo.join("README.md"), "# demo\n").unwrap();
+    git_ok(&repo, &["add", "."]);
+    git_ok(
+        &repo,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=t@fartCode.dev",
+            "commit",
+            "-m",
+            "init",
+        ],
+    );
+    git_ok(&repo, &["branch", "-M", "main"]);
+    std::fs::canonicalize(&repo).unwrap()
+}
+
+struct Fixture {
+    _tmp: tempfile::TempDir,
+    app: Arc<App>,
+    project_id: String,
+}
+
+/// A project that has CONSENTED to dossiers — indexing follows the data, so
+/// without consent there is no file to index and nothing to test.
+fn fixture() -> Fixture {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::init(Some(":memory:")).unwrap();
+    app.settings
+        .set(
+            &LOCAL_PROJECT,
+            LocalProjectGroup {
+                default_projects_directory: tmp.path().join("repos").to_string_lossy().into_owned(),
+                default_worktree_directory: tmp
+                    .path()
+                    .join("worktrees")
+                    .to_string_lossy()
+                    .into_owned(),
+                write_agent_config_to_git_ignore: false,
+            },
+        )
+        .unwrap();
+    let repo = make_repo(&tmp);
+    let project = app.projects.create_local(&repo, false).unwrap();
+    let fx = Fixture {
+        _tmp: tmp,
+        app,
+        project_id: project.id,
+    };
+    fx.set_consent(true);
+    fx
+}
+
+impl Fixture {
+    fn set_consent(&self, value: bool) {
+        let project = self.app.projects.get(&self.project_id).unwrap().unwrap();
+        let mut settings = self
+            .app
+            .settings
+            .get_project_settings(&self.project_id, &project.path)
+            .unwrap();
+        settings.feature_dossiers = Some(value);
+        self.app
+            .settings
+            .update_project_settings(&self.project_id, &project.path, &settings)
+            .unwrap();
+    }
+
+    fn new_issue(&self, title: &str) -> Issue {
+        self.app
+            .issues
+            .create(NewIssue {
+                project_id: self.project_id.clone(),
+                title: title.into(),
+                body: Some("we need login".into()),
+                acceptance: vec!["it works".into()],
+                lane: None,
+                provider: None,
+                model: None,
+                prd_path: None,
+                prd_section: None,
+                external_ref: None,
+                dossier_path: None,
+            })
+            .unwrap()
+    }
+
+    fn column(&self, name: &str) -> fartcode_core::issues::columns::BoardColumn {
+        self.app
+            .columns
+            .list_for_project(&self.project_id)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name == name)
+            .unwrap_or_else(|| panic!("no column named {name}"))
+    }
+
+    fn issue(&self, id: &str) -> Issue {
+        self.app.issues.get(id).unwrap().unwrap()
+    }
+
+    fn worktree_of(&self, task_id: &str) -> PathBuf {
+        let task = self.app.tasks.get(task_id).unwrap().unwrap();
+        let workspace_id = task.workspace_id.expect("provisioned task has a workspace");
+        let path: String = self
+            .app
+            .db
+            .conn()
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT path FROM workspaces WHERE id = ?1",
+                [&workspace_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        PathBuf::from(path)
+    }
+
+    fn project_root(&self) -> PathBuf {
+        self.app
+            .projects
+            .get(&self.project_id)
+            .unwrap()
+            .unwrap()
+            .path
+    }
+
+    /// A card sitting in a step column with its dossier born in the
+    /// worktree, plus the agent's sections appended — the state a settle
+    /// finds.
+    fn card_mid_step(&self, title: &str) -> (Issue, String) {
+        let issue = self.new_issue(title);
+        step_engine::enter_column(&self.app, &issue.id, &self.column("In Progress").id, None)
+            .unwrap();
+        let stored = self.issue(&issue.id);
+        let rel = stored.dossier_path.clone().expect("dossier born");
+        let task_id = stored.linked_task_id.clone().expect("task linked");
+        let path = self.worktree_of(&task_id).join(&rel);
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str(AGENT_SECTIONS);
+        std::fs::write(&path, text).unwrap();
+        (self.issue(&issue.id), task_id)
+    }
+
+    fn feature_hits(&self, q: &str) -> Vec<SearchResult> {
+        search::query(&self.app.db, q, 20)
+            .unwrap()
+            .into_iter()
+            .filter(|h| h.item_type == core_index::ITEM_TYPE)
+            .collect()
+    }
+
+    fn feature_rows(&self) -> i64 {
+        self.app
+            .db
+            .conn()
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM search_index WHERE item_type = ?1",
+                [core_index::ITEM_TYPE],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    /// Everything the bus has emitted since `rx` was taken, fed through the
+    /// indexer's teardown arm — so the test exercises the events production
+    /// actually emits, not hand-built ones.
+    fn drain_into_indexer(&self, rx: &mut tokio::sync::broadcast::Receiver<InternalEvent>) {
+        while let Ok(event) = rx.try_recv() {
+            dossier_index::handle_event(&self.app, &event);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 1. Settle indexes the worktree copy
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_settle_indexes_the_agent_sections_and_search_opens_the_card() {
+    let fx = fixture();
+    let (issue, task_id) = fx.card_mid_step("Implement OAuth login");
+    assert_eq!(fx.feature_rows(), 0, "nothing indexed before the settle");
+
+    assert_eq!(
+        step_engine::settle_issues_for_task(&fx.app, &task_id, None),
+        1
+    );
+
+    // Exactly the two agent-written sections. The app's own skeleton —
+    // Context / Acceptance / References / Timeline — is not search material,
+    // and neither is the `## Verify` line inside the fenced sample.
+    let mut titles: Vec<String> = fx
+        .feature_hits("2026-08-09")
+        .into_iter()
+        .map(|h| h.title)
+        .collect();
+    titles.sort();
+    assert_eq!(
+        titles,
+        vec!["Implement — 2026-08-09", "Plan — 2026-08-09"],
+        "CRLF parsed, `###` did not split, the fenced heading is not a section"
+    );
+    assert_eq!(fx.feature_rows(), 2);
+
+    // Body text is searchable, and the subheading did not become its own row.
+    let hits = fx.feature_hits("cookie");
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert_eq!(hits[0].title, "Plan — 2026-08-09");
+
+    // §8h: Enter opens the card detail, so every row resolves to its issue.
+    for hit in fx.feature_hits("2026-08-09") {
+        assert_eq!(
+            core_index::issue_id_of(&hit.item_id),
+            Some(issue.id.as_str())
+        );
+        assert_eq!(hit.project_id.as_deref(), Some(fx.project_id.as_str()));
+        assert!(
+            fx.app.issues.get(&issue.id).unwrap().is_some(),
+            "the id the palette would navigate with is live"
+        );
+    }
+}
+
+#[test]
+fn resettling_does_not_duplicate_rows_and_a_removed_section_loses_its_row() {
+    let fx = fixture();
+    let (issue, task_id) = fx.card_mid_step("Implement OAuth login");
+    step_engine::settle_issues_for_task(&fx.app, &task_id, None);
+    assert_eq!(fx.feature_rows(), 2);
+
+    // Same file again: the deterministic rowid replaces, never appends.
+    dossier_index::reindex_issue(&fx.app, &fx.issue(&issue.id));
+    dossier_index::reindex_issue(&fx.app, &fx.issue(&issue.id));
+    assert_eq!(fx.feature_rows(), 2, "reindex is idempotent");
+
+    // Drop a section from the file (an agent rewriting history, or a merge
+    // resolution that lost one) — its row must go.
+    let stored = fx.issue(&issue.id);
+    let path = fx
+        .worktree_of(&task_id)
+        .join(stored.dossier_path.clone().unwrap());
+    let text = std::fs::read_to_string(&path).unwrap();
+    let trimmed = text.split("## Implement — 2026-08-09").next().unwrap();
+    std::fs::write(&path, trimmed).unwrap();
+
+    dossier_index::reindex_issue(&fx.app, &stored);
+    assert_eq!(fx.feature_rows(), 1);
+    assert!(
+        fx.feature_hits("interceptor").is_empty(),
+        "a section that no longer exists must not be findable"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 2. Project pull indexes the main-branch copy
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_project_pull_indexes_the_landed_copy_of_a_torn_down_feature() {
+    let fx = fixture();
+    let (issue, task_id) = fx.card_mid_step("Implement OAuth login");
+    step_engine::settle_issues_for_task(&fx.app, &task_id, None);
+    assert_eq!(fx.feature_rows(), 2);
+
+    // The feature lands: the dossier appears in the main checkout, with one
+    // more section than the worktree copy had.
+    let rel = fx.issue(&issue.id).dossier_path.unwrap();
+    let landed = fx.project_root().join(&rel);
+    std::fs::create_dir_all(landed.parent().unwrap()).unwrap();
+    let mut text = std::fs::read_to_string(fx.worktree_of(&task_id).join(&rel)).unwrap();
+    text.push_str("\n## Review — 2026-08-10\n\nShipped behind a flag.\n");
+    std::fs::write(&landed, text).unwrap();
+
+    // …and the worktree is torn down, so only the landed copy remains.
+    std::fs::remove_dir_all(fx.worktree_of(&task_id)).unwrap();
+
+    dossier_index::reindex_project(&fx.app, &fx.project_id);
+    assert_eq!(fx.feature_rows(), 3, "the landed copy is the source now");
+    let hits = fx.feature_hits("flag");
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert_eq!(hits[0].title, "Review — 2026-08-10");
+    assert_eq!(
+        core_index::issue_id_of(&hits[0].item_id),
+        Some(issue.id.as_str())
+    );
+}
+
+#[test]
+fn a_dossier_that_exists_in_neither_copy_loses_its_rows() {
+    let fx = fixture();
+    let (issue, task_id) = fx.card_mid_step("Implement OAuth login");
+    step_engine::settle_issues_for_task(&fx.app, &task_id, None);
+    assert_eq!(fx.feature_rows(), 2);
+
+    // The unmerged branch is deleted with its worktree: the dossier goes
+    // with it (ADR-0038 item 5) and never reached the main checkout.
+    std::fs::remove_dir_all(fx.worktree_of(&task_id)).unwrap();
+    dossier_index::reindex_issue(&fx.app, &fx.issue(&issue.id));
+
+    assert_eq!(fx.feature_rows(), 0, "no rows pointing at a vanished file");
+}
+
+// ---------------------------------------------------------------------------
+// 3. Rows die with the dossier's owner
+// ---------------------------------------------------------------------------
+
+#[test]
+fn deleting_the_card_drops_its_feature_rows_and_leaves_its_neighbours() {
+    let fx = fixture();
+    let (doomed, doomed_task) = fx.card_mid_step("Implement OAuth login");
+    step_engine::settle_issues_for_task(&fx.app, &doomed_task, None);
+    let (survivor, survivor_task) = fx.card_mid_step("Add dark mode");
+    step_engine::settle_issues_for_task(&fx.app, &survivor_task, None);
+    assert_eq!(fx.feature_rows(), 4);
+
+    let mut rx = fx.app.event_bus.subscribe();
+    fx.app.issues.delete(&doomed.id).unwrap();
+    fx.drain_into_indexer(&mut rx);
+
+    assert_eq!(fx.feature_rows(), 2, "only the deleted card's rows went");
+    for hit in fx.feature_hits("2026-08-09") {
+        assert_eq!(
+            core_index::issue_id_of(&hit.item_id),
+            Some(survivor.id.as_str()),
+            "no hit may open the card detail of a deleted issue"
+        );
+    }
+}
+
+#[test]
+fn deleting_the_project_drops_every_feature_row_it_owned() {
+    let fx = fixture();
+    let (_, task_id) = fx.card_mid_step("Implement OAuth login");
+    step_engine::settle_issues_for_task(&fx.app, &task_id, None);
+    assert_eq!(fx.feature_rows(), 2);
+
+    // A project delete cascades its issues in SQL, emitting one
+    // `ProjectDeleted` and no `IssueDeleted` — the case a per-card sweep
+    // would miss entirely.
+    let mut rx = fx.app.event_bus.subscribe();
+    fx.app.projects.delete(&fx.project_id).unwrap();
+    fx.drain_into_indexer(&mut rx);
+
+    assert_eq!(fx.feature_rows(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// 4. Nothing to index is not an error
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_card_without_a_dossier_indexes_nothing_and_never_fails() {
+    let fx = fixture();
+    let issue = fx.new_issue("No dossier here");
+    dossier_index::reindex_issue(&fx.app, &issue);
+    dossier_index::reindex_project(&fx.app, &fx.project_id);
+    dossier_index::reindex_all(&fx.app);
+    assert_eq!(fx.feature_rows(), 0);
+}

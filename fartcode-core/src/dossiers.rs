@@ -56,6 +56,24 @@ pub const TIMELINE_HEADING: &str = "## Timeline";
 /// adoption or append.
 pub const DOSSIER_MARKER: &str = "<!-- fartCode feature dossier";
 
+/// The sections the APP writes — [`backfilled_header`]'s skeleton plus
+/// `## Timeline`. Everything else in a dossier is the agent's own words.
+///
+/// ADR-0038 item 2 draws exactly this line ("app writes the skeleton;
+/// agents write the substance"), and item 4 indexes the substance: the
+/// ⌘K indexer (E19-03) skips these four. Kept HERE, beside the writer
+/// that emits them, so a new header section cannot start leaking into
+/// search without this list being looked at.
+///
+/// Matched exactly, so an agent section that merely starts with one of
+/// these words (`## Context — 2026-08-09`) is still indexed.
+pub const APP_SECTIONS: &[&str] = &["Context", "Acceptance", "References", "Timeline"];
+
+/// Whether a `## ` heading names an app-written section ([`APP_SECTIONS`]).
+pub fn is_app_section(heading: &str) -> bool {
+    APP_SECTIONS.contains(&heading.trim())
+}
+
 /// Machine anchor for the Timeline section, written directly under the
 /// heading. The append point is resolved by THIS, not by the visible
 /// heading text: card-supplied text is heading-demoted on the way in, but
@@ -612,6 +630,100 @@ fn worktree_file(worktree: &Path, rel_path: &str) -> PathBuf {
     path
 }
 
+// ---------------------------------------------------------------------------
+// Section parsing — ONE parser, shared
+// ---------------------------------------------------------------------------
+
+/// One `## ` block of a dossier: the heading text and everything under it
+/// up to the next `## ` heading (or EOF).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Section {
+    /// Heading text with the `## ` marker and surrounding whitespace
+    /// stripped, e.g. `Plan — 2026-08-09`.
+    pub heading: String,
+    /// The block's contents, trimmed. Never includes the heading line.
+    pub body: String,
+}
+
+/// A fence opener/closer on this line, as `(char, run length)`.
+///
+/// CommonMark-lite: three or more backticks or tildes, optionally
+/// indented. Enough to keep a fenced ```` ```md ```` sample containing
+/// `## Plan` from reading as document structure, which is the whole job.
+fn fence_run(line: &str) -> Option<(char, usize)> {
+    let trimmed = line.trim_start();
+    let marker = trimmed.chars().next()?;
+    if marker != '`' && marker != '~' {
+        return None;
+    }
+    let run = trimmed.chars().take_while(|c| *c == marker).count();
+    (run >= 3).then_some((marker, run))
+}
+
+/// Line indices of every REAL `## ` heading, skipping anything inside a
+/// fenced code block.
+///
+/// **The only place a dossier's structure is decided.** Both the Timeline
+/// append point ([`insert_under_timeline`]) and the ⌘K section indexer
+/// (E19-03) resolve headings through this, so the file the appender writes
+/// into and the file search reads can never disagree about where a section
+/// begins.
+///
+/// `## ` requires the trailing space, so `### Subheading` is not a
+/// section — a subheading belongs to the section above it. Line-initial
+/// only, matching [`demote_headings`]'s trust boundary: an indented
+/// `  ## x` inside quoted card text is not structure.
+pub fn section_heading_lines(lines: &[&str]) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut open: Option<(char, usize)> = None;
+    for (i, line) in lines.iter().enumerate() {
+        match open {
+            // Inside a fence: only a matching closer (same char, at least
+            // as long, no info string) gets us out. An UNCLOSED fence
+            // swallows the rest of the file, which is what a markdown
+            // renderer does too.
+            Some((open_char, open_run)) => {
+                if let Some((marker, run)) = fence_run(line) {
+                    let rest = line.trim_start().trim_start_matches(marker).trim();
+                    if marker == open_char && run >= open_run && rest.is_empty() {
+                        open = None;
+                    }
+                }
+            }
+            None => {
+                if let Some(fence) = fence_run(line) {
+                    open = Some(fence);
+                } else if line.starts_with("## ") {
+                    out.push(i);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Splits a dossier into its `## ` sections (see [`section_heading_lines`]).
+///
+/// CRLF-safe by construction: `str::lines` strips the carriage return, and
+/// heading/body text is trimmed. A file with no `## ` heading yields an
+/// empty vec.
+pub fn sections(content: &str) -> Vec<Section> {
+    let lines: Vec<&str> = content.lines().collect();
+    let heads = section_heading_lines(&lines);
+    heads
+        .iter()
+        .enumerate()
+        .map(|(n, &start)| {
+            let end = heads.get(n + 1).copied().unwrap_or(lines.len());
+            Section {
+                // `## ` is ASCII, so the byte slice is char-safe.
+                heading: lines[start][3..].trim().to_string(),
+                body: lines[start + 1..end].join("\n").trim().to_string(),
+            }
+        })
+        .collect()
+}
+
 /// Resolves the Timeline anchor: the line index the block starts after.
 ///
 /// Sentinel FIRST — [`TIMELINE_SENTINEL`] is machine-written and unforgeable
@@ -650,14 +762,14 @@ fn insert_under_timeline(content: &str, line: &str) -> String {
         return out;
     };
 
-    // The Timeline block ends at the next `## ` heading (the first
-    // agent-written section) or at EOF. `### ` subheadings do not end it.
-    let end = lines
-        .iter()
-        .enumerate()
-        .skip(start + 1)
-        .find(|(_, l)| l.starts_with("## "))
-        .map(|(i, _)| i)
+    // The Timeline block ends at the next REAL `## ` heading (the first
+    // agent-written section) or at EOF. `### ` subheadings do not end it,
+    // and neither does a `## ` line inside a fenced code block — the same
+    // scan the ⌘K indexer uses, so appends and search agree on where a
+    // section starts.
+    let end = section_heading_lines(&lines)
+        .into_iter()
+        .find(|i| *i > start)
         .unwrap_or(lines.len());
 
     // Back over the blank lines that separate the block from what follows,
@@ -816,6 +928,19 @@ mod tests {
         let plan = out.find("## Plan").unwrap();
         assert!(out[..plan].contains("- c"));
         assert!(out.contains("### note"));
+    }
+
+    /// The Timeline block used to end at ANY line starting `## `,
+    /// including one inside a fenced sample the seeded skill's own docs
+    /// would contain — breadcrumbs then landed above the sample instead of
+    /// at the end of the list. Sharing [`section_heading_lines`] with the
+    /// E19-03 indexer fixed both parsers at once.
+    #[test]
+    fn a_fenced_heading_does_not_end_the_timeline_block() {
+        let file = "## Timeline\n\n- a\n\n```md\n## Plan — not a section\n```\n\n- b\n";
+        let out = insert_under_timeline(file, "- c");
+        assert!(out.trim_end().ends_with("- b\n- c"), "{out}");
+        assert!(out.contains("## Plan — not a section"), "sample preserved");
     }
 
     #[test]

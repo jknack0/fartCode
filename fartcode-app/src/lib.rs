@@ -8,6 +8,7 @@ pub mod acp_runtime;
 pub mod app;
 pub mod commands;
 pub mod dispatch;
+pub mod dossier_index;
 pub mod dossiers;
 mod indexer;
 pub mod skills;
@@ -67,12 +68,7 @@ pub fn run() {
             let app_state = App::init(std::env::var("FARTCODE_DB_FILE").ok().as_deref())?;
             prune_view_state_on_boot(&app_state);
             app::spawn_event_forwarder(app.handle().clone(), app_state.event_bus.clone());
-            indexer::spawn_search_indexer(
-                app_state.db.clone(),
-                app_state.projects.clone(),
-                app_state.tasks.clone(),
-                app_state.event_bus.clone(),
-            );
+            indexer::spawn_search_indexer(app_state.clone());
             // E19-01: feature-dossier Timeline appender (ADR-0038 item 2) —
             // seeds its column map from the DB, then appends breadcrumbs
             // off the runtime worker for the app's lifetime.

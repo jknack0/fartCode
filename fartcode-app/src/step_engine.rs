@@ -867,6 +867,14 @@ pub fn settle_issues_for_task(app: &App, task_id: &str, session: Option<&str>) -
             }
             SettleDecision::Act => {}
         }
+        // E19-03 (#72; ADR-0038 item 4): reindex the dossier's sections for
+        // ⌘K. HERE rather than on the `StepSettled` event because only the
+        // hold branch emits one — an `advance` settle would otherwise leave
+        // the section the agent just wrote unsearchable until some later
+        // settle or pull. Bounded (one small file read), off the main
+        // thread (this runs on the PTY pump / ACP callback), and incapable
+        // of failing the settle: it returns `()` and logs.
+        crate::dossier_index::reindex_issue(app, &issue);
         match column.on_settle {
             OnSettle::Hold => {
                 app.event_bus.send(InternalEvent::StepSettled {

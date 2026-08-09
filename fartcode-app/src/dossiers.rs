@@ -71,8 +71,13 @@ pub(crate) fn consented(app: &App, project_id: &str) -> bool {
 }
 
 /// The materialized worktree root of a task, or `None` when it has no
-/// workspace row / no path / the directory is gone. Crate-visible since
-/// E19-02 (#71) — the skill scaffold is seeded into the same worktree.
+/// workspace row / no path / the directory is gone.
+///
+/// Crate-visible for the two consumers that must agree with the appender
+/// about where a feature's files live: the skill scaffold (E19-02, #71),
+/// seeded into the same worktree, and `crate::dossier_index` (E19-03),
+/// which reindexes the same worktree copy of the same dossier. One
+/// resolver, so writer and indexer can never disagree.
 pub(crate) fn task_worktree(app: &App, task_id: &str) -> Option<PathBuf> {
     let conn = app.db.conn().lock().ok()?;
     let path: Option<String> = conn

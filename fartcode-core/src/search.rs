@@ -82,6 +82,142 @@ pub fn update_title(
     Ok(())
 }
 
+/// One indexable document, for the bulk paths ([`replace_group`]).
+///
+/// The scalar [`upsert`] takes its fields positionally; a group write of
+/// N sections wants them named, and wants the keywords already joined
+/// (the caller decides how it extracts and caps them).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Document {
+    pub item_id: String,
+    pub project_id: Option<String>,
+    pub task_id: Option<String>,
+    pub title: String,
+    pub keywords: String,
+}
+
+/// Replaces every `item_type` row whose `item_id` starts with `prefix`
+/// with exactly `docs`, in one transaction.
+///
+/// This is the *set* operation the per-row [`upsert`] cannot express:
+/// re-running it is idempotent (the deterministic rowid makes each write a
+/// replace) AND it removes rows whose source has disappeared. Callers that
+/// derive many rows from one file — E19-03's dossier sections — need both
+/// halves or a deleted section lives on in ⌘K forever.
+///
+/// Prefix matching is `substr`, not `LIKE`: item ids are `iss_<uuid>`-ish
+/// and `_` is a `LIKE` wildcard, so `LIKE 'iss_…'` would quietly match ids
+/// this group does not own.
+///
+/// Returns the number of rows written.
+pub fn replace_group(
+    db: &Arc<dyn Db>,
+    item_type: &str,
+    prefix: &str,
+    docs: &[Document],
+) -> Result<usize, Error> {
+    let conn = db
+        .conn()
+        .lock()
+        .map_err(|_| Error::Internal("db connection mutex poisoned".into()))?;
+    let tx = conn.unchecked_transaction()?;
+    for doc in docs {
+        upsert_row(
+            &tx,
+            item_type,
+            &doc.item_id,
+            doc.project_id.as_deref(),
+            doc.task_id.as_deref(),
+            &doc.title,
+            &[doc.keywords.as_str()],
+        )?;
+    }
+    // Whatever carried the prefix before and is not in `docs` now is a
+    // source that vanished.
+    let stale: Vec<String> = ids_with_prefix(&tx, item_type, prefix)?
+        .into_iter()
+        .filter(|id| !docs.iter().any(|d| &d.item_id == id))
+        .collect();
+    delete_ids(&tx, item_type, &stale)?;
+    tx.commit()?;
+    Ok(docs.len())
+}
+
+/// Removes every `item_type` row whose `item_id` starts with `prefix`
+/// (see [`replace_group`] on why this is `substr`, not `LIKE`). Returns
+/// the number of rows removed.
+pub fn delete_group(db: &Arc<dyn Db>, item_type: &str, prefix: &str) -> Result<usize, Error> {
+    let conn = db
+        .conn()
+        .lock()
+        .map_err(|_| Error::Internal("db connection mutex poisoned".into()))?;
+    let tx = conn.unchecked_transaction()?;
+    let ids = ids_with_prefix(&tx, item_type, prefix)?;
+    let removed = delete_ids(&tx, item_type, &ids)?;
+    tx.commit()?;
+    Ok(removed)
+}
+
+/// Removes every `item_type` row belonging to a project — the
+/// project-teardown sweep for row families a project owns (E19-03's
+/// `feature` rows, which the `projects` FK cascade never sees because FTS5
+/// is not a relational table). `project_id` is UNINDEXED, so this scans;
+/// it runs once per project deletion.
+pub fn delete_by_project(
+    db: &Arc<dyn Db>,
+    item_type: &str,
+    project_id: &str,
+) -> Result<usize, Error> {
+    let conn = db
+        .conn()
+        .lock()
+        .map_err(|_| Error::Internal("db connection mutex poisoned".into()))?;
+    let tx = conn.unchecked_transaction()?;
+    let ids: Vec<String> = {
+        let mut stmt = tx
+            .prepare("SELECT item_id FROM search_index WHERE item_type = ?1 AND project_id = ?2")?;
+        let rows = stmt.query_map(rusqlite::params![item_type, project_id], |row| {
+            row.get::<_, String>(0)
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    let removed = delete_ids(&tx, item_type, &ids)?;
+    tx.commit()?;
+    Ok(removed)
+}
+
+fn ids_with_prefix(
+    conn: &rusqlite::Connection,
+    item_type: &str,
+    prefix: &str,
+) -> Result<Vec<String>, Error> {
+    let mut stmt = conn.prepare(
+        "SELECT item_id FROM search_index
+          WHERE item_type = ?1 AND substr(item_id, 1, ?2) = ?3",
+    )?;
+    let rows = stmt.query_map(
+        rusqlite::params![item_type, prefix.chars().count() as i64, prefix],
+        |row| row.get::<_, String>(0),
+    )?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Error::from)
+}
+
+/// Deletes by rowid — the same key the upsert writes, so the FTS index
+/// drops exactly the row a replace would have overwritten.
+fn delete_ids(
+    conn: &rusqlite::Connection,
+    item_type: &str,
+    ids: &[String],
+) -> Result<usize, Error> {
+    for id in ids {
+        conn.execute(
+            "DELETE FROM search_index WHERE rowid = ?1",
+            [rowid_for(item_type, id)],
+        )?;
+    }
+    Ok(ids.len())
+}
+
 /// Removes a document.
 pub fn delete(db: &Arc<dyn Db>, item_type: &str, item_id: &str) -> Result<(), Error> {
     let conn = db
