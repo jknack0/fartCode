@@ -72,8 +72,14 @@ dispatch packet), human gate, terminal]`; this ADR generalizes it.
    derivation, the dispatch prompt's finished-blocker summary, and any future
    terminal lane (Shipped, Won't do) key off the flag. Multiple terminal
    columns are legal.
-7. **One `is_landing` column per board.** GitHub import, PM proposal apply,
-   and manual add all target it. PM prompt prose and UI copy ("approve N →
+7. **One `is_landing` column per board, and it is never an `agent_step`.**
+   GitHub import, PM proposal apply, and manual add all target it. The
+   kind restriction is a spend guard found in review: entry paths create
+   rows directly and never run `on_enter`, so a run-mode landing column
+   would silently deposit inert cards — and if entry ever did fire steps,
+   a 50-issue GitHub import would launch 50 agents at once. Work is
+   dispatched by *moving* a card onto a step, never by its arrival.
+   Enforced with a typed error on column create/update. PM prompt prose and UI copy ("approve N →
    \<column\>") are generated from column config, and the prompt version bumps
    with the proposal-contract parser as ADR-0032 already requires.
 8. **Migration seeds the classic five plus Quick** for existing *and* new

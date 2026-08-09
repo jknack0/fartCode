@@ -4,6 +4,17 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## v2 WIP committed at last (2026-08-09, 3adb7a1)
+
+The design_handoff_v2 implementation had been sitting UNCOMMITTED (114
+files, +16k/−4.5k) while three stash dances rode over it. Now committed as
+one commit together with today's ADR-0037/0038 + design brief. `.claude/`
+(5.9 GB of agent worktrees, previously untracked-but-not-ignored) added to
+.gitignore — never commit it. `fartCode.zip` left untracked deliberately.
+Consequence for agents: the UI wave now branches from a base that CONTAINS
+the v2 board/task-view/PM-chat work — never rewrite those files from
+scratch, always read first.
+
 ## E18-04/05 STEP ENGINE LANDED (2026-08-09, 5e8c017) — E18 backend COMPLETE
 
 Squash of three worktree commits (build aa30918 + fix bf9a4a1 + final
