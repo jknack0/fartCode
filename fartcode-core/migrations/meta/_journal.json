@@ -43,6 +43,13 @@
       "when": 1800000000005,
       "tag": "0005_pull_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1800000000006,
+      "tag": "0006_board_columns",
+      "breakpoints": true
     }
   ]
 }

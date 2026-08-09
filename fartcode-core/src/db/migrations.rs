@@ -53,6 +53,7 @@ fn sql_for_tag(tag: &str) -> Option<&'static str> {
             "../../migrations/0004_provider_auth_method.sql"
         )),
         "0005_pull_requests" => Some(include_str!("../../migrations/0005_pull_requests.sql")),
+        "0006_board_columns" => Some(include_str!("../../migrations/0006_board_columns.sql")),
         _ => None,
     }
 }

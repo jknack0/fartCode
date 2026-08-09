@@ -52,6 +52,9 @@ pub struct App {
     pub pr_sync: Arc<fartcode_core::pr_sync::PrSyncStore>,
     /// E17-01 project board issues (§13).
     pub issues: Arc<fartcode_core::issues::IssueStore>,
+    /// E18-01 configurable pipeline columns (ADR-0037) — spike behind the
+    /// seeded default; lanes stay authoritative.
+    pub columns: Arc<fartcode_core::issues::columns::ColumnStore>,
 }
 
 impl App {
@@ -143,6 +146,10 @@ impl App {
             db.clone(),
             event_bus.clone() as Arc<dyn EventBus>,
         ));
+        // E18-01: pipeline column store (ADR-0037 spike) — seeded defaults
+        // come from migration 0006 (existing projects) and the project
+        // create hook (new projects).
+        let columns = Arc::new(fartcode_core::issues::columns::ColumnStore::new(db.clone()));
 
         Ok(Arc::new(Self {
             db,
@@ -159,6 +166,7 @@ impl App {
             line_comments,
             pr_sync,
             issues,
+            columns,
         }))
     }
 }

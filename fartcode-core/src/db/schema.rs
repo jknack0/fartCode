@@ -29,6 +29,7 @@ pub const DOMAIN_TABLES: &[&str] = &[
     "line_comments",
     "issues",
     "pull_requests",
+    "board_columns",
 ];
 
 /// FTS tables created by the version-gated bootstrap (`ensure_fts_tables`).

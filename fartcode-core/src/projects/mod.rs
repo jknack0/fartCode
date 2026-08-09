@@ -124,7 +124,10 @@ impl DbProjectStore {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| id.clone());
         self.with_conn(|conn| {
-            conn.execute(
+            // One transaction for the row + its board: a mid-seed failure
+            // must never leave a project without its default columns.
+            let tx = conn.unchecked_transaction()?;
+            tx.execute(
                 "INSERT INTO projects
                      (id, name, path, workspace_provider, base_ref, ssh_connection_id)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -137,6 +140,10 @@ impl DbProjectStore {
                     ssh_connection_id
                 ],
             )?;
+            // E18-01 (ADR-0037): every new project starts with the seeded
+            // default board (migration 0006 covers pre-existing projects).
+            crate::issues::columns::seed_default_columns(&tx, &id)?;
+            tx.commit()?;
             Ok(())
         })?;
         self.get(&id)?

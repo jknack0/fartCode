@@ -120,6 +120,18 @@ pub enum Error {
     #[error("invalid proposal: {0}")]
     InvalidProposal(String),
 
+    // -- Board columns (E18-01, ADR-0037) --
+    #[error("board column not found: {0}")]
+    BoardColumnNotFound(String),
+
+    #[error("invalid board column input: {0}")]
+    InvalidBoardColumnInput(String),
+
+    /// Deleting a column that still has issues is rejected — cards must be
+    /// moved first (no silent orphaning of the mirror pointer).
+    #[error("board column {id} still has {count} issue(s); move them before deleting")]
+    BoardColumnHasIssues { id: String, count: i64 },
+
     #[error("empty session id")]
     EmptySessionId,
 

@@ -1097,6 +1097,117 @@ export function issueDispatch(issueId: string): Promise<DispatchOutcomeDto> {
   return invoke("issue_dispatch", { issueId });
 }
 
+// -- E18 configurable pipeline columns (ADR-0037) -------------------------------
+// Spike behind the seeded default: `lane` stays authoritative on IssueDto;
+// columns are data the board does not render from yet.
+
+export type ColumnKind = "shelf" | "agent_step" | "human_gate";
+/** Step trigger: `run` fires on drop; `queue` confirms first. */
+export type ColumnOnEnter = "run" | "queue";
+/** Settle behavior: `hold` waits for a human drag; `advance` auto-moves. */
+export type ColumnOnSettle = "hold" | "advance";
+
+/** One board column (ADR-0037): kind + flags + agent-step config. */
+export interface BoardColumnDto {
+  id: string;
+  projectId: string;
+  name: string;
+  position: number;
+  kind: ColumnKind;
+  countsAsDone: boolean;
+  isLanding: boolean;
+  onEnter: ColumnOnEnter;
+  onSettle: ColumnOnSettle;
+  /** Explicit advance target (same-project column id); null = the next
+   * column by position. Seeded Quick targets Done. */
+  advanceTo: string | null;
+  /** null on an agent step = the built-in dispatch packet. */
+  stepPrompt: string | null;
+  stepProvider: string | null;
+  stepModel: string | null;
+  stepEffort: string | null;
+  /** Tool allowlist for the step's agent session. null = unrestricted;
+   * a list allows ONLY the listed tools (so [] allows none — a corrupt
+   * stored allowlist also reads as [], failing closed). */
+  stepTools: string[] | null;
+  /** The legacy lane a seeded column mirrors ("backlog" | "ready" |
+   * "in_progress" | "in_review" | "done"); null on Quick and user-created
+   * columns. Read-only. */
+  seedLane: Lane | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+/** Columns for a project in board order (position). */
+export function columnList(projectId: string): Promise<BoardColumnDto[]> {
+  return invoke("column_list", { projectId });
+}
+
+/** Creates a column appended to the end of the board. `isLanding: true`
+ * moves the landing flag onto the new column (never duplicates it).
+ * `advanceTo` must reference a same-project column. */
+export function columnCreate(args: {
+  projectId: string;
+  name: string;
+  kind: ColumnKind;
+  countsAsDone?: boolean;
+  isLanding?: boolean;
+  onEnter?: ColumnOnEnter;
+  onSettle?: ColumnOnSettle;
+  advanceTo?: string | null;
+  stepPrompt?: string | null;
+  stepProvider?: string | null;
+  stepModel?: string | null;
+  stepEffort?: string | null;
+  /** Omit/null = unrestricted; a list (even empty) = allowlist. */
+  stepTools?: string[] | null;
+}): Promise<BoardColumnDto> {
+  return invoke("column_create", { request: args });
+}
+
+/** Field patch — tri-state per clearable field: OMIT the key to leave the
+ * field alone; EXPLICIT null clears it (advanceTo → back to next-column,
+ * stepTools → back to unrestricted, step* → unset); a VALUE sets it. The
+ * backend distinguishes absent from null, so spreads that materialize
+ * undefined keys as null will clear fields. `name` is non-nullable.
+ * `isLanding: true` moves the landing flag; `false` on the landing column
+ * is rejected (move it instead). */
+export function columnUpdate(
+  columnId: string,
+  patch: {
+    name?: string;
+    kind?: ColumnKind;
+    countsAsDone?: boolean;
+    isLanding?: boolean;
+    onEnter?: ColumnOnEnter;
+    onSettle?: ColumnOnSettle;
+    advanceTo?: string | null;
+    stepPrompt?: string | null;
+    stepProvider?: string | null;
+    stepModel?: string | null;
+    stepEffort?: string | null;
+    stepTools?: string[] | null;
+  },
+): Promise<BoardColumnDto> {
+  return invoke("column_update", { columnId, patch });
+}
+
+/** Rejected while the column is occupied (derived from the authoritative
+ * lane for seeded columns, from the mirror pointer otherwise) and for the
+ * landing column; remaining positions compact to 0..n-1. */
+export function columnDelete(columnId: string): Promise<void> {
+  return invoke("column_delete", { columnId });
+}
+
+/** Full-board reorder: `columnIds` must list every column of the project
+ * exactly once, in the new order. Returns the reordered board. */
+export function columnReorder(
+  projectId: string,
+  columnIds: string[],
+): Promise<BoardColumnDto[]> {
+  return invoke("column_reorder", { projectId, columnIds });
+}
+
 /** Project-scoped (PM chat) conversations (E17-04). */
 export function listProjectConversations(projectId: string): Promise<ConversationDto[]> {
   return invoke("list_project_conversations", { projectId });

@@ -19,6 +19,10 @@
 //!
 //! Schema: migration 0002.
 
+/// Configurable pipeline columns (E18, ADR-0037) — spike behind the seeded
+/// default; `lane` above stays authoritative.
+pub mod columns;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
