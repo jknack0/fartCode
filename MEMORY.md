@@ -4,6 +4,30 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## E18-06 + E18-07 landed; board renders from config (2026-08-09)
+
+Commits: 5628ab0 (E18-06 entry paths → is_landing + PM prompt from column
+config), c340fbd (E18-07 board renders N columns — columnConfigSummary in
+lib/columnConfig.ts is THE shared formatter, #67 must reuse it; new
+store/columns.ts; consumes step:launch/queued/queue_cleared/settled),
+e2d1de1 (PM prompt regression fix), a789600 (E18-06 review fix round),
+f4116f1 (ADR amendment). #65 closed.
+
+REVIEW FINDINGS THAT CHANGED THE DESIGN: (1) ADR-0037 item 7 now says a
+landing column is NEVER an agent_step — entry paths write rows directly and
+never fire on_enter, so a run-mode landing column deposits inert cards, and
+routing creation through the engine would make a 50-issue import launch 50
+agents. Work dispatches by MOVING onto a step, never by arrival. (2) Delete
+guard ownership: the mirror owns a card whenever set; lane mapping covers
+only mirrorless pre-E18 rows (was double-counting). (3) PM prompt
+ticket-edit example was the exact shape parseTicketEdit rejects;
+PM_PROMPT_VERSION now 3.
+
+Still open on the board: E18-07's authority-flip half (column_id
+authoritative, BLOCKED_SQL join, delete-guard switch, lift the
+seeded-agent-step delete guard, In Review pin degradation) — deliberately
+split out of the render round; checklist is on #66.
+
 ## v2 WIP committed at last (2026-08-09, 3adb7a1)
 
 The design_handoff_v2 implementation had been sitting UNCOMMITTED (114

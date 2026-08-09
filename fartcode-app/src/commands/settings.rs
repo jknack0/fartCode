@@ -138,7 +138,7 @@ pub fn project_settings_provenance(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fartcode_core::events::{EventBus as _, InternalEvent};
+    use fartcode_core::events::InternalEvent;
     use fartcode_core::settings::DEFAULT_AGENT;
 
     #[test]
