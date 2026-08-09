@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 PATH := $(HOME)/.cargo/bin:$(PATH)
 
-.PHONY: dev build test lint fmt fmt-check clean frontend
+.PHONY: dev build test test-frontend lint fmt fmt-check clean frontend
 
 ## dev — launch the Tauri app (starts Vite dev server, then runs the Rust app)
 dev:
@@ -20,8 +20,13 @@ build:
 frontend:
 	cd app-frontend && npm install && npm run build
 
+## test-frontend — run the web UI test suite (vitest; no dist build needed)
+test-frontend:
+	@test -d app-frontend/node_modules || (echo "app-frontend/node_modules missing — run 'make frontend' first"; exit 1)
+	cd app-frontend && npm test
+
 ## test — run all workspace tests (requires app-frontend/dist for fartcode-app)
-test:
+test: test-frontend
 	@test -d app-frontend/dist || (echo "app-frontend/dist missing — run 'make frontend' first"; exit 1)
 	cargo test --workspace
 
