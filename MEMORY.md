@@ -22,24 +22,47 @@ column cannot mint a second file.
   slugifier. Unsluggable title → the issue id.
 - CONSENT: `BaseProjectSettings.feature_dossiers: Option<bool>` (base,
   NOT shareable — consent to write into a checkout is local).
-  `Some(false)` refuses; **`None` (never asked) WRITES** — interim until
-  #74's card, which must write `Some(_)` on both answers. Unreadable
-  settings → refuse.
+  **FAIL-CLOSED: `Some(false)` AND `None` (never asked) both refuse**, as
+  does an unreadable settings row. Unset is not an edge case — nothing
+  can set the field until #74, so it is every project. The first cut had
+  `unwrap_or(true)` and the review found it 8× independently: the
+  dispatch prompt tells the agent to commit as it goes, so an
+  unrequested dossier rides the branch into the user's PR. Feature is
+  inert until #74 writes `Some(_)` on BOTH answers. **Consent is
+  re-checked on every append**, not just at creation — an existing
+  dossier is not standing permission.
 - PROVENANCE is derived, not stored: `external_ref` → import, else
   `prd_path` → proposal, else manual. Known imprecision: a PRD-less
   proposal reads as manual. A real column is the fix if anything but the
   header ever wants it.
-- APPENDER (`TimelineAppender`) subscribes to StepLaunch (skips
-  reattach), StepSettled, IssueUpdated, PrUpdated; inserts under
-  `## Timeline` by scanning to the next `## ` heading, so agent sections
-  (#71) are never touched. Column moves need an in-memory last-column map
-  (IssueUpdated carries no column) seeded from the DB at boot. PR
-  open/merge dedupe via a `once_key` substring check against the file —
-  stateless and restart-safe. Missing dossier/worktree/file → append
-  nothing (post-teardown is unrecorded, by ADR).
-- Creation failure NEVER fails dispatch: logs, leaves `dossier_path`
-  NULL.
-Suites: core lib 229, app lib 91 + 13 new integration, frontend 180.
+- ADOPTION IS NARROW. `docs/features/` is a common hand-written
+  convention, so "the file exists" is never permission. `inspect()`
+  classifies Free / OurDossier / OtherDossier / Foreign; only a file
+  carrying `DOSSIER_MARKER` (or a Timeline section) AND this card's
+  `- card: \`<id>\`` line is adopted. Anything else → step aside onto
+  `<slug>-<short id>.md`, then random suffixes. Two same-titled cards get
+  two files instead of interleaving.
+- CARD TEXT IS DATA, NEVER STRUCTURE. Body is heading-demoted, one-line
+  fields are `inline()`d. The Timeline anchor is a machine sentinel
+  (`<!-- fartcode:timeline -->`) resolved before the visible heading, and
+  the heading fallback uses `rposition`. Without this a card body
+  containing `## Timeline` captured every breadcrumb.
+- WRITES ARE ATOMIC: temp-file (uuid-suffixed, same dir) + rename, so a
+  crash can't leave a truncated corpse that adoption then inherits. The
+  read-modify-write window is narrowed by len+mtime re-stat before the
+  rename; after 4 lost races it errors rather than clobbering. Not a
+  lock — documented as such.
+- APPENDER (`TimelineAppender`) is STATELESS: StepLaunch (skips
+  reattach), StepSettled, **`IssueColumnChanged`** (new event, emitted by
+  `enter_column`, carries from+to because only the emitter knows them),
+  PrUpdated. The old in-memory last-column map is gone — it read the
+  column at handler time, so rapid moves recorded the wrong "from". PR
+  once-key dedupe is LINE-ANCHORED (`ends_with`), not `contains`: PR #1
+  was being masked by an existing #12 line.
+- Creation failure NEVER fails dispatch: `create_for_task` returns the
+  UPDATED issue, so the caller has nothing fallible left to do (it used
+  to re-read and propagate the read's error).
+Suites: core lib 240, app lib 91 + 17 integration, frontend 180.
 Fixed in passing: `tests/migrations.rs` and `tests/db_integration.rs`
 migration COUNTS had been stale since #66 added 0008 (both binaries red
 on clean main); now 10.

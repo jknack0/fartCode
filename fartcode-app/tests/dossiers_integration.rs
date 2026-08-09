@@ -13,10 +13,12 @@ use std::sync::Arc;
 
 use fartcode_app_lib::app::App;
 use fartcode_app_lib::dispatch::issue_dispatch_core;
+use fartcode_app_lib::dossiers as dossiers_app;
 use fartcode_app_lib::dossiers::TimelineAppender;
 use fartcode_app_lib::step_engine;
 use fartcode_core::dossiers;
 use fartcode_core::events::{EventBus, InternalEvent};
+use fartcode_core::github::{PrDto, PrStatus};
 use fartcode_core::issues::columns::{ColumnKind, ColumnStore, NewColumn, OnEnter, OnSettle};
 use fartcode_core::issues::{Issue, NewIssue};
 use fartcode_core::projects::ProjectStore;
@@ -60,7 +62,18 @@ struct Fixture {
     project_id: String,
 }
 
+/// A project that has CONSENTED to dossiers — the state most of these
+/// tests are about. Consent is fail-closed (a fresh project writes
+/// nothing), so it has to be granted explicitly; `consent_*` tests below
+/// override it back.
 fn fixture() -> Fixture {
+    let fx = fixture_unasked();
+    fx.set_consent(Some(true));
+    fx
+}
+
+/// A project in its REAL default state: consent never asked.
+fn fixture_unasked() -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     let app = App::init(Some(":memory:")).unwrap();
     app.settings
@@ -169,6 +182,38 @@ impl Fixture {
             )
             .unwrap();
         PathBuf::from(path)
+    }
+
+    /// Drives the real PR sync cache, so the appender reads the status
+    /// through the same query production does.
+    fn upsert_pr(&self, workspace_id: &str, url: &str, status: PrStatus) {
+        let dto = PrDto {
+            number: 1,
+            title: "Implement OAuth login".into(),
+            url: url.into(),
+            status,
+            draft: false,
+            author: None,
+            base_ref: "main".into(),
+            head_ref: "feat/oauth".into(),
+            head_oid: "h1".into(),
+            additions: 1,
+            deletions: 0,
+            changed_files: 1,
+            commit_count: 1,
+            mergeable_state: None,
+            review_decision: None,
+            created_at: None,
+            updated_at: None,
+            files: vec![],
+            commits: vec![],
+            checks: vec![],
+            comments: vec![],
+        };
+        self.app
+            .pr_sync
+            .upsert(Some(workspace_id), "o", "r", &dto)
+            .unwrap();
     }
 
     fn dossier_text(&self, issue_id: &str) -> String {
@@ -296,6 +341,66 @@ fn a_failed_write_leaves_dispatch_succeeding_with_a_null_dossier_path() {
     );
 }
 
+/// `docs/features/` is a common hand-written convention. A card whose
+/// title slugs onto someone's existing document must step aside, and must
+/// leave that document byte-identical through creation AND breadcrumbs.
+#[test]
+fn a_hand_written_document_at_the_slug_is_never_touched() {
+    let fx = fixture();
+    const HUMAN_DOC: &str = "# Dark mode\n\nDesign notes, written by a person.\n";
+    let project = fx.app.projects.get(&fx.project_id).unwrap().unwrap();
+    let repo = Path::new(&project.path);
+    std::fs::create_dir_all(repo.join(dossiers::DOSSIER_DIR)).unwrap();
+    std::fs::write(
+        repo.join(dossiers::DOSSIER_DIR).join("dark-mode.md"),
+        HUMAN_DOC,
+    )
+    .unwrap();
+    git_ok(repo, &["add", "-A"]);
+    git_ok(
+        repo,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=t@fartCode.dev",
+            "commit",
+            "-m",
+            "design notes",
+        ],
+    );
+
+    let issue = fx.new_issue("Dark mode");
+    let in_progress = fx.column("In Progress");
+    step_engine::enter_column(&fx.app, &issue.id, &in_progress.id, None).unwrap();
+
+    let stored = fx.app.issues.get(&issue.id).unwrap().unwrap();
+    let rel = stored.dossier_path.clone().expect("a dossier was placed");
+    assert_ne!(
+        rel, "docs/features/dark-mode.md",
+        "the card stepped aside, not onto the human's file"
+    );
+    let task_id = stored.linked_task_id.clone().unwrap();
+    let worktree = fx.worktree_of(&task_id);
+    let human = worktree.join(dossiers::DOSSIER_DIR).join("dark-mode.md");
+    assert_eq!(std::fs::read_to_string(&human).unwrap(), HUMAN_DOC);
+
+    // Breadcrumbs go to OUR file; theirs stays untouched.
+    let appender = TimelineAppender::new(fx.app.clone());
+    appender.handle(&InternalEvent::StepSettled {
+        issue_id: issue.id.clone(),
+        project_id: fx.project_id.clone(),
+        column_id: in_progress.id.clone(),
+        task_id,
+    });
+    assert_eq!(
+        std::fs::read_to_string(&human).unwrap(),
+        HUMAN_DOC,
+        "no Timeline section bolted onto someone's design doc"
+    );
+    assert!(fx.dossier_text(&issue.id).contains("In Progress · settled"));
+}
+
 // ---------------------------------------------------------------------------
 // 2. Consent gate (ADR-0038 item 3; the card itself is #74)
 // ---------------------------------------------------------------------------
@@ -315,18 +420,65 @@ fn consent_off_writes_nothing_and_still_dispatches() {
         .exists());
 }
 
+/// THE fail-closed test. Unset is not a corner case: until #74's consent
+/// card ships, nothing can set this field, so unset is the state of every
+/// project in the shipped build. Writing here would put unrequested files
+/// in real users' pull requests.
 #[test]
-fn consent_unset_writes_the_interim_default() {
-    let fx = fixture();
-    fx.set_consent(None);
+fn consent_unset_writes_nothing_and_still_dispatches() {
+    let fx = fixture_unasked();
     let issue = fx.new_issue("Implement OAuth login");
 
-    issue_dispatch_core(&fx.app, &issue.id).unwrap();
+    let outcome = issue_dispatch_core(&fx.app, &issue.id).expect("never asked still dispatches");
     let stored = fx.app.issues.get(&issue.id).unwrap().unwrap();
     assert_eq!(
-        stored.dossier_path.as_deref(),
-        Some("docs/features/implement-oauth-login.md"),
-        "unset (not yet asked) writes until #74 lands the consent card"
+        stored.dossier_path, None,
+        "not yet asked must never be taken as yes"
+    );
+    assert!(
+        !fx.worktree_of(&outcome.task.id)
+            .join(dossiers::DOSSIER_DIR)
+            .exists(),
+        "no files written into the repo without an answer"
+    );
+    // The dispatch itself is untouched — the feature is memory, not a gate.
+    assert_eq!(
+        stored.linked_task_id.as_deref(),
+        Some(outcome.task.id.as_str())
+    );
+}
+
+/// Consent is not a one-time admission ticket: an existing dossier does
+/// not license further writes after the switch is turned off.
+#[test]
+fn consent_withdrawn_stops_the_breadcrumbs_too() {
+    let fx = fixture();
+    let issue = fx.new_issue("Implement OAuth login");
+    let in_progress = fx.column("In Progress");
+    step_engine::enter_column(&fx.app, &issue.id, &in_progress.id, None).unwrap();
+    let task_id = fx
+        .app
+        .issues
+        .get(&issue.id)
+        .unwrap()
+        .unwrap()
+        .linked_task_id
+        .unwrap();
+    let before = fx.dossier_text(&issue.id);
+
+    fx.set_consent(Some(false));
+    let appender = TimelineAppender::new(fx.app.clone());
+    appender.handle(&InternalEvent::StepSettled {
+        issue_id: issue.id.clone(),
+        project_id: fx.project_id.clone(),
+        column_id: in_progress.id.clone(),
+        task_id,
+    });
+
+    assert_eq!(
+        fx.dossier_text(&issue.id),
+        before,
+        "an existing dossier stops collecting once consent is withdrawn"
     );
 }
 
@@ -368,7 +520,6 @@ fn step_events_append_one_timeline_line_each() {
         .unwrap();
 
     let appender = TimelineAppender::new(fx.app.clone());
-    appender.seed();
 
     appender.handle(&InternalEvent::StepLaunch {
         issue_id: issue.id.clone(),
@@ -467,30 +618,56 @@ fn agent_written_sections_survive_an_append_untouched() {
     );
 }
 
+/// The move breadcrumb names BOTH endpoints, and they come from the
+/// emitter — not from re-reading the card when the handler happens to run.
+/// The two moves here are back to back; a handler-time reader would record
+/// the second one's "from" as wherever the card had already landed.
 #[test]
-fn a_column_move_appends_a_move_line() {
+fn a_column_move_records_both_endpoints_from_the_event() {
     let fx = fixture();
     let issue = fx.new_issue("Implement OAuth login");
-    step_engine::enter_column(&fx.app, &issue.id, &fx.column("In Progress").id, None).unwrap();
+    let in_progress = fx.column("In Progress");
+    step_engine::enter_column(&fx.app, &issue.id, &in_progress.id, None).unwrap();
 
-    let appender = TimelineAppender::new(fx.app.clone());
-    appender.seed(); // knows the card sits In Progress
-
+    let mut rx = fx.app.event_bus.subscribe();
     let review = fx.column("In Review");
+    let done = fx.column("Done");
     fx.app
         .issues
         .enter_column(&issue.id, &review.id, None)
         .unwrap();
-    appender.handle(&InternalEvent::IssueUpdated {
-        id: issue.id.clone(),
-        project_id: fx.project_id.clone(),
-    });
+    fx.app
+        .issues
+        .enter_column(&issue.id, &done.id, None)
+        .unwrap();
+
+    // Both moves are on the bus BEFORE either is handled — the card now
+    // reads as Done, so anything deriving "from" at handler time would get
+    // the first move wrong.
+    let appender = TimelineAppender::new(fx.app.clone());
+    let mut queued = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        queued.push(event);
+    }
+    for event in &queued {
+        appender.handle(event);
+    }
 
     let text = fx.dossier_text(&issue.id);
-    assert_eq!(text.matches("column → In Review").count(), 1, "{text}");
+    assert_eq!(
+        text.matches("column · In Progress → In Review").count(),
+        1,
+        "the first move remembers where it came from:\n{text}"
+    );
+    assert_eq!(
+        text.matches("column · In Review → Done").count(),
+        1,
+        "{text}"
+    );
 
-    // A non-column update (title edit) fires IssueUpdated too and must add
-    // nothing — the appender diffs columns, it does not echo events.
+    // A non-column update fires IssueUpdated but no move event, so it adds
+    // nothing — the appender records facts, it does not echo events.
+    let before = fx.dossier_text(&issue.id);
     fx.app
         .issues
         .update(
@@ -501,13 +678,12 @@ fn a_column_move_appends_a_move_line() {
             },
         )
         .unwrap();
-    appender.handle(&InternalEvent::IssueUpdated {
-        id: issue.id.clone(),
-        project_id: fx.project_id.clone(),
-    });
+    while let Ok(event) = rx.try_recv() {
+        appender.handle(&event);
+    }
     assert_eq!(
-        fx.dossier_text(&issue.id).matches("column → ").count(),
-        1,
+        fx.dossier_text(&issue.id),
+        before,
         "no line for a non-move update"
     );
 }
@@ -574,10 +750,129 @@ fn a_card_with_no_dossier_appends_nothing() {
         .exists());
 }
 
+/// PR lifecycle breadcrumbs. `PrUpdated` fires on every payload refresh
+/// (checks, comments), so "opened" and "merged" must each land exactly
+/// once no matter how often the sync engine re-upserts.
 #[test]
-fn the_bus_subscription_reaches_the_dossier() {
-    // The wiring itself, not just `handle`: an event published on the bus
-    // must land in the file without the emitter waiting on the write.
+fn pr_open_and_merge_append_one_timeline_line_each() {
+    let fx = fixture();
+    let issue = fx.new_issue("Implement OAuth login");
+    let in_progress = fx.column("In Progress");
+    step_engine::enter_column(&fx.app, &issue.id, &in_progress.id, None).unwrap();
+    let task_id = fx
+        .app
+        .issues
+        .get(&issue.id)
+        .unwrap()
+        .unwrap()
+        .linked_task_id
+        .unwrap();
+    let workspace_id = fx
+        .app
+        .tasks
+        .get(&task_id)
+        .unwrap()
+        .unwrap()
+        .workspace_id
+        .unwrap();
+
+    let appender = TimelineAppender::new(fx.app.clone());
+    let url = "https://github.com/o/r/pull/1";
+
+    fx.upsert_pr(&workspace_id, url, PrStatus::Open);
+    appender.handle(&InternalEvent::PrUpdated {
+        workspace_id: workspace_id.clone(),
+        pr_url: url.into(),
+    });
+    // A second refresh with the same status must not duplicate the line.
+    appender.handle(&InternalEvent::PrUpdated {
+        workspace_id: workspace_id.clone(),
+        pr_url: url.into(),
+    });
+
+    fx.upsert_pr(&workspace_id, url, PrStatus::Merged);
+    appender.handle(&InternalEvent::PrUpdated {
+        workspace_id: workspace_id.clone(),
+        pr_url: url.into(),
+    });
+
+    let text = fx.dossier_text(&issue.id);
+    assert_eq!(
+        text.matches(&format!("pr opened · {url}")).count(),
+        1,
+        "one opened line:\n{text}"
+    );
+    assert_eq!(
+        text.matches(&format!("pr merged · {url}")).count(),
+        1,
+        "one merged line:\n{text}"
+    );
+
+    // A `closed` (unmerged) PR is not a lifecycle fact worth recording.
+    let before = fx.dossier_text(&issue.id);
+    let other = "https://github.com/o/r/pull/2";
+    fx.upsert_pr(&workspace_id, other, PrStatus::Closed);
+    appender.handle(&InternalEvent::PrUpdated {
+        workspace_id: workspace_id.clone(),
+        pr_url: other.into(),
+    });
+    assert_eq!(fx.dossier_text(&issue.id), before);
+}
+
+/// The once-key dedupe must be line-anchored: PR #1's line is a prefix of
+/// PR #12's, and a substring check silently swallowed the second.
+#[test]
+fn a_pr_number_is_not_masked_by_a_longer_one() {
+    let fx = fixture();
+    let issue = fx.new_issue("Implement OAuth login");
+    step_engine::enter_column(&fx.app, &issue.id, &fx.column("In Progress").id, None).unwrap();
+    let task_id = fx
+        .app
+        .issues
+        .get(&issue.id)
+        .unwrap()
+        .unwrap()
+        .linked_task_id
+        .unwrap();
+    let workspace_id = fx
+        .app
+        .tasks
+        .get(&task_id)
+        .unwrap()
+        .unwrap()
+        .workspace_id
+        .unwrap();
+
+    let appender = TimelineAppender::new(fx.app.clone());
+    for url in [
+        "https://github.com/o/r/pull/12",
+        "https://github.com/o/r/pull/1",
+    ] {
+        fx.upsert_pr(&workspace_id, url, PrStatus::Merged);
+        appender.handle(&InternalEvent::PrUpdated {
+            workspace_id: workspace_id.clone(),
+            pr_url: url.into(),
+        });
+    }
+
+    let text = fx.dossier_text(&issue.id);
+    assert!(
+        text.contains("pr merged · https://github.com/o/r/pull/12"),
+        "{text}"
+    );
+    assert!(
+        text.lines().any(|l| l
+            .trim_end()
+            .ends_with("pr merged · https://github.com/o/r/pull/1")),
+        "PR #1 must not be masked by PR #12:\n{text}"
+    );
+}
+
+/// The REAL entry point, not a hand-rolled imitation of it: this fails if
+/// `spawn_dossier_timeline` is deleted from `lib.rs`'s setup, if it stops
+/// subscribing, or if it stops doing the work off the runtime worker.
+#[test]
+fn the_spawned_subscriber_reaches_the_dossier() {
     let fx = fixture();
     let issue = fx.new_issue("Implement OAuth login");
     let in_progress = fx.column("In Progress");
@@ -591,27 +886,32 @@ fn the_bus_subscription_reaches_the_dossier() {
         .linked_task_id
         .unwrap();
 
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let app = fx.app.clone();
-    let (issue_id, column_id) = (issue.id.clone(), in_progress.id.clone());
-    let project_id = fx.project_id.clone();
-    runtime.block_on(async move {
-        let appender = Arc::new(TimelineAppender::new(app.clone()));
-        let mut rx = app.event_bus.subscribe();
-        app.event_bus.send(InternalEvent::StepSettled {
-            issue_id,
-            project_id,
-            column_id,
-            task_id,
-        });
-        let event = rx.recv().await.unwrap();
-        tokio::task::spawn_blocking(move || appender.handle(&event))
-            .await
-            .unwrap();
-    });
+    // The production wiring verbatim — `spawn_dossier_timeline` brings its
+    // own runtime via `tauri::async_runtime`, exactly as `lib.rs` calls it.
+    dossiers_app::spawn_dossier_timeline(fx.app.clone());
 
-    assert!(fx.dossier_text(&issue.id).contains("In Progress · settled"));
+    // The bus is a broadcast channel: it delivers only to receivers that
+    // exist at send time, and the subscriber subscribes inside its spawned
+    // task. So re-send until one lands (or the deadline says the wiring is
+    // gone) rather than sleeping on a guess. Delivery is asserted by
+    // containment, not count — a resend after the first delivery may add a
+    // second line, which is a property of this test, not of the appender.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        fx.app.event_bus.send(InternalEvent::StepSettled {
+            issue_id: issue.id.clone(),
+            project_id: fx.project_id.clone(),
+            column_id: in_progress.id.clone(),
+            task_id: task_id.clone(),
+        });
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        if fx.dossier_text(&issue.id).contains("In Progress · settled") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the spawned subscriber never wrote the breadcrumb:\n{}",
+            fx.dossier_text(&issue.id)
+        );
+    }
 }

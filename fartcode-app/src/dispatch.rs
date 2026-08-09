@@ -189,17 +189,12 @@ pub(crate) fn provision_issue_task(app: &App, issue: &Issue) -> Result<(TaskDto,
         .set_linked_task(&issue.id, Some(&created.task.id))
         .map_err(String::from)?;
 
-    // Born with the worktree (ADR-0038 item 1). Returns None on every
-    // refusal/failure; the re-read below then simply carries a NULL
-    // dossier_path and the dispatch proceeds.
-    let linked = match crate::dossiers::create_for_task(app, &linked, &created.task.id) {
-        Some(_) => app
-            .issues
-            .get(&issue.id)
-            .map_err(String::from)?
-            .unwrap_or(linked),
-        None => linked,
-    };
+    // Born with the worktree (ADR-0038 item 1). Infallible from here on:
+    // the helper returns the UPDATED issue on success and `None` on every
+    // refusal or failure, so there is nothing left that could turn a
+    // dossier problem into a failed dispatch. (It could, before the fix
+    // round: this used to re-read the row and propagate the read's error.)
+    let linked = crate::dossiers::create_for_task(app, &linked, &created.task.id).unwrap_or(linked);
     Ok((TaskDto::from(&created.task), linked))
 }
 

@@ -11,7 +11,7 @@
 //! worktree resolution, `issues.dossier_path`, event subscription) lives in
 //! `fartcode-app::dossiers`, where the App's services are wired.
 //!
-//! Two rules the whole feature rests on:
+//! Three rules the whole feature rests on:
 //!
 //! - **Append-only, never rewrite.** The app owns exactly one section —
 //!   `## Timeline` — and inserts lines at its end. Agent-written sections
@@ -21,11 +21,26 @@
 //! - **Memory, never a gate.** Every entry point here returns a `Result`
 //!   the caller is expected to log and drop. A dossier that cannot be
 //!   written must not stop an agent from running.
+//! - **Only ever touch our own files.** `docs/features/` is a common
+//!   hand-written convention, so "the path exists" is never taken as
+//!   permission. A file is written to only when it carries
+//!   [`DOSSIER_MARKER`] (or a Timeline section) AND names this card;
+//!   anything else makes the card step aside onto a disambiguated path.
+//!   A human's document is never opened for writing, never appended to,
+//!   never adopted.
+//!
+//! **Nothing here trusts card text.** Title, body, acceptance criteria and
+//! PRD fields are user-controlled and are copied into the file, so they are
+//! heading-demoted ([`demote_headings`]) or flattened to one line
+//! ([`inline`]) on the way in. Otherwise a card body containing a literal
+//! `## Timeline` line would capture every future breadcrumb — the
+//! structure of a markdown file the app parses is part of its trust
+//! boundary.
 
 use std::path::{Path, PathBuf};
 
 use crate::issues::Issue;
-use crate::tasks::naming::generate_task_name;
+use crate::tasks::naming::{generate_task_name, random_suffix};
 use crate::Error;
 
 /// Repo-relative directory every dossier lives in (ADR-0038 item 1).
@@ -35,6 +50,27 @@ pub const DOSSIER_DIR: &str = "docs/features";
 /// whitespace trimmed), so an agent section that merely starts with the
 /// word is not mistaken for it.
 pub const TIMELINE_HEADING: &str = "## Timeline";
+
+/// Proof a file is a fartCode dossier rather than a document that merely
+/// shares its path. Written into the header at birth; checked before any
+/// adoption or append.
+pub const DOSSIER_MARKER: &str = "<!-- fartCode feature dossier";
+
+/// Machine anchor for the Timeline section, written directly under the
+/// heading. The append point is resolved by THIS, not by the visible
+/// heading text: card-supplied text is heading-demoted on the way in, but
+/// the sentinel makes the anchor unforgeable rather than merely unlikely
+/// to be forged.
+pub const TIMELINE_SENTINEL: &str = "<!-- fartcode:timeline -->";
+
+/// How many times [`append_timeline`] will recompute after losing a race
+/// with another writer before giving up. Giving up is correct: the
+/// alternative is clobbering whatever the other writer just produced.
+const APPEND_ATTEMPTS: u32 = 4;
+
+/// How many disambiguated filenames [`place_dossier`] will try before
+/// declining to create one.
+const PLACEMENT_ATTEMPTS: usize = 8;
 
 /// How the card got onto the board. The app records no explicit source
 /// column, so provenance is DERIVED from the fields each entry path fills
@@ -149,9 +185,60 @@ pub fn now_stamp() -> String {
     format_stamp(secs)
 }
 
-/// One Timeline entry: `- <stamp> · <fact>`.
+/// One Timeline entry: `- <stamp> · <fact>`. The fact is flattened to one
+/// line so a breadcrumb can never introduce structure.
 pub fn timeline_line(fact: &str) -> String {
-    format!("- {} · {fact}", now_stamp())
+    format!("- {} · {}", now_stamp(), inline(fact))
+}
+
+/// Flattens user text to a single line for inline rendering (titles, PRD
+/// paths and sections, tracker URLs, column and blocker names). Any
+/// embedded newline would otherwise let a field start a line — and a line
+/// is all it takes to forge a heading.
+pub fn inline(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last_space = false;
+    for c in text.chars() {
+        if c == '\n' || c == '\r' {
+            if !last_space {
+                out.push(' ');
+                last_space = true;
+            }
+        } else {
+            out.push(c);
+            last_space = c == ' ';
+        }
+    }
+    out.trim().to_string()
+}
+
+/// Demotes every ATX heading in copied card text by one level, so quoted
+/// user content cannot emit a `## ` line.
+///
+/// This protects two parsers at once: the Timeline anchor (a body-borne
+/// `## Timeline` would otherwise capture the append point) and the
+/// section-end scan (a body-borne `## anything` would truncate the
+/// Timeline block early). Demoting rather than escaping keeps the text
+/// readable and the document's outline intact — the user's `# Overview`
+/// still renders as a heading, one level down, nested under the section
+/// that quotes it, which is where it belongs.
+pub fn demote_headings(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            if line.trim_start().starts_with('#') && line.starts_with('#') {
+                format!("#{line}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The `- card:` line that proves a dossier belongs to a given card. The
+/// ownership check for adoption keys off this exact string.
+pub fn card_marker(issue_id: &str) -> String {
+    format!("- card: `{issue_id}`")
 }
 
 /// The backfilled header the dossier is born with (ADR-0038 item 1): issue
@@ -171,14 +258,17 @@ pub fn timeline_line(fact: &str) -> String {
 pub fn backfilled_header(issue: &Issue, column_name: Option<&str>) -> String {
     let mut out = String::new();
     out.push_str("# ");
-    out.push_str(issue.title.trim());
+    out.push_str(&inline(&issue.title));
     out.push_str("\n\n");
+    out.push_str(DOSSIER_MARKER);
     out.push_str(
-        "<!-- fartCode feature dossier (ADR-0038). Append-only: add sections, \
-         never rewrite existing ones. The app owns `## Timeline`; agents add \
-         `## <Column> — <date>` sections below it. -->\n\n",
+        " (ADR-0038). Append-only: add sections, never rewrite existing \
+         ones. The app owns `## Timeline`; agents add `## <Column> — <date>` \
+         sections below it. -->\n\n",
     );
 
+    // Card text is quoted, never trusted: headings are demoted so user
+    // content cannot forge the structure this file's parsers key off.
     if let Some(body) = issue
         .body
         .as_deref()
@@ -186,7 +276,7 @@ pub fn backfilled_header(issue: &Issue, column_name: Option<&str>) -> String {
         .filter(|b| !b.is_empty())
     {
         out.push_str("## Context\n\n");
-        out.push_str(body);
+        out.push_str(&demote_headings(body));
         out.push_str("\n\n");
     }
 
@@ -194,43 +284,54 @@ pub fn backfilled_header(issue: &Issue, column_name: Option<&str>) -> String {
         out.push_str("## Acceptance\n\n");
         for item in &issue.acceptance {
             out.push_str("- ");
-            out.push_str(item.trim());
+            out.push_str(&inline(item));
             out.push('\n');
         }
         out.push('\n');
     }
 
     out.push_str("## References\n\n");
-    out.push_str(&format!("- card: `{}`\n", issue.id));
+    out.push_str(&card_marker(&issue.id));
+    out.push('\n');
     out.push_str(&format!("- source: {}\n", provenance(issue).label()));
     if let Some(prd) = issue.prd_path.as_deref().filter(|p| !p.is_empty()) {
         match issue.prd_section.as_deref().filter(|s| !s.is_empty()) {
-            Some(section) => out.push_str(&format!("- PRD: `{prd}` — {section}\n")),
-            None => out.push_str(&format!("- PRD: `{prd}`\n")),
+            Some(section) => {
+                out.push_str(&format!("- PRD: `{}` — {}\n", inline(prd), inline(section)))
+            }
+            None => out.push_str(&format!("- PRD: `{}`\n", inline(prd))),
         }
     }
     if let Some(url) = issue.external_ref.as_deref().filter(|u| !u.is_empty()) {
-        out.push_str(&format!("- tracker: {url}\n"));
+        out.push_str(&format!("- tracker: {}\n", inline(url)));
     }
     out.push('\n');
 
+    // Heading + machine sentinel: the append point is resolved by the
+    // sentinel, so it survives an agent retitling the heading and cannot
+    // be captured by text quoted above.
     out.push_str(TIMELINE_HEADING);
+    out.push('\n');
+    out.push_str(TIMELINE_SENTINEL);
     out.push_str("\n\n");
-    let created = issue
-        .created_at
-        .as_deref()
-        .map(|c| c.trim().to_string())
-        .unwrap_or_else(now_stamp);
+    let created = inline(
+        issue
+            .created_at
+            .as_deref()
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .unwrap_or(&now_stamp()),
+    );
     out.push_str(&format!(
         "- {created} · created · {}\n",
         provenance(issue).label()
     ));
     if !issue.blockers.is_empty() {
-        let open: Vec<&str> = issue
+        let open: Vec<String> = issue
             .blockers
             .iter()
             .filter(|b| !b.counts_as_done)
-            .map(|b| b.title.as_str())
+            .map(|b| inline(&b.title))
             .collect();
         if !open.is_empty() {
             out.push_str(&format!("- {created} · blocked by: {}\n", open.join(", ")));
@@ -238,7 +339,8 @@ pub fn backfilled_header(issue: &Issue, column_name: Option<&str>) -> String {
     }
     match column_name {
         Some(name) => out.push_str(&timeline_line(&format!(
-            "dossier created with the worktree · {name}"
+            "dossier created with the worktree · {}",
+            inline(name)
         ))),
         None => out.push_str(&timeline_line("dossier created with the worktree")),
     }
@@ -246,37 +348,162 @@ pub fn backfilled_header(issue: &Issue, column_name: Option<&str>) -> String {
     out
 }
 
-/// Creates the dossier at `<worktree>/<rel_path>` unless a file is already
-/// there.
+/// What is already sitting at a candidate dossier path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Occupant {
+    /// Nothing there — free to write.
+    Free,
+    /// A fartCode dossier naming THIS card. Adopt it: a re-provisioned
+    /// card keeps the history it already accumulated.
+    OurDossier,
+    /// A fartCode dossier naming a DIFFERENT card — two same-titled cards
+    /// racing for one slug. Step aside; interleaving two features'
+    /// histories in one file helps neither.
+    OtherDossier,
+    /// Anything else: a human's document that happens to live at the path
+    /// our slug produced (`docs/features/` is a common hand-written
+    /// convention). Never read for adoption, never written to, never
+    /// appended to.
+    Foreign,
+}
+
+/// Classifies whatever occupies `path` with respect to `issue_id`.
 ///
-/// Returns `true` when this call wrote the file, `false` when it ADOPTED an
-/// existing one. Adoption is the deliberate collision rule (ADR-0038 /
-/// #70): a re-provisioned card keeps the dossier it already accumulated,
-/// and a slug that collides with a landed feature's dossier appends to that
-/// history rather than destroying it. Nothing here ever truncates.
-pub fn create_dossier(worktree: &Path, rel_path: &str, header: &str) -> Result<bool, Error> {
-    let target = worktree_file(worktree, rel_path);
-    if target.exists() {
-        return Ok(false);
+/// Recognition is deliberately narrow. A file counts as a dossier only if
+/// it carries [`DOSSIER_MARKER`] or a real Timeline section, and counts as
+/// OURS only if it also carries this card's [`card_marker`]. An unreadable
+/// file (permissions, binary, mid-write) is [`Occupant::Foreign`] — the
+/// safe answer when we cannot tell.
+pub fn inspect(path: &Path, issue_id: &str) -> Occupant {
+    if !path.exists() {
+        return Occupant::Free;
     }
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent)?;
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return Occupant::Foreign;
+    };
+    let looks_like_a_dossier = content.contains(DOSSIER_MARKER)
+        || timeline_anchor(&content.lines().collect::<Vec<_>>()).is_some();
+    if !looks_like_a_dossier {
+        return Occupant::Foreign;
     }
-    std::fs::write(&target, header)?;
-    Ok(true)
+    if content.contains(&card_marker(issue_id)) {
+        Occupant::OurDossier
+    } else {
+        Occupant::OtherDossier
+    }
+}
+
+/// Where a card's dossier goes, and whether this call created it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Placement {
+    /// Repo-relative path, for `issues.dossier_path`.
+    pub rel_path: String,
+    /// `true` when this call wrote the header; `false` when it adopted the
+    /// card's own existing dossier.
+    pub created: bool,
+}
+
+/// Places the card's dossier inside `worktree`, creating or adopting, and
+/// never touching a file that is not ours.
+///
+/// Candidate order: the path already recorded on the card (so a
+/// re-provisioned card returns to its own file even if the title changed),
+/// then `<slug>.md`, then `<slug>-<short card id>.md`, then randomly
+/// suffixed variants. The first candidate that is [`Occupant::Free`] gets
+/// the header; the first that is [`Occupant::OurDossier`] is adopted
+/// as-is. `OtherDossier` and `Foreign` move to the next candidate — that
+/// is the whole point: a hand-written `docs/features/dark-mode.md` must
+/// survive a card called "Dark mode" untouched.
+pub fn place_dossier(
+    worktree: &Path,
+    issue: &Issue,
+    header: &str,
+    stored_rel: Option<&str>,
+) -> Result<Placement, Error> {
+    for candidate in candidate_paths(issue, stored_rel) {
+        let target = worktree_file(worktree, &candidate);
+        match inspect(&target, &issue.id) {
+            Occupant::OurDossier => {
+                return Ok(Placement {
+                    rel_path: candidate,
+                    created: false,
+                })
+            }
+            Occupant::Free => {
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                atomic_write(&target, header)?;
+                return Ok(Placement {
+                    rel_path: candidate,
+                    created: true,
+                });
+            }
+            // Someone else's file. Try the next name; never clobber.
+            Occupant::OtherDossier | Occupant::Foreign => continue,
+        }
+    }
+    Err(Error::Internal(format!(
+        "no free dossier path for issue {} after {PLACEMENT_ATTEMPTS} attempts",
+        issue.id
+    )))
+}
+
+/// Candidate filenames in priority order (see [`place_dossier`]).
+fn candidate_paths(issue: &Issue, stored_rel: Option<&str>) -> Vec<String> {
+    let slug = dossier_slug(issue);
+    let short = short_id(&issue.id);
+    let mut out: Vec<String> = Vec::with_capacity(PLACEMENT_ATTEMPTS + 2);
+    if let Some(stored) = stored_rel.map(str::trim).filter(|s| !s.is_empty()) {
+        out.push(stored.to_string());
+    }
+    out.push(format!("{DOSSIER_DIR}/{slug}.md"));
+    // Deterministic first, so two same-titled cards land on stable,
+    // greppable names rather than a pair of random ones.
+    out.push(format!("{DOSSIER_DIR}/{slug}-{short}.md"));
+    while out.len() < PLACEMENT_ATTEMPTS {
+        out.push(format!(
+            "{DOSSIER_DIR}/{slug}-{short}-{}.md",
+            random_suffix()
+        ));
+    }
+    out.dedup();
+    out
+}
+
+/// First 8 sanitized chars of the card id — enough to disambiguate two
+/// same-titled cards, short enough to keep the filename readable.
+fn short_id(issue_id: &str) -> String {
+    let sanitized = generate_task_name(Some(issue_id), None, false);
+    // `iss_<uuid>` sanitizes to `iss-<uuid>`; skip the constant prefix so
+    // the 8 chars carry actual entropy.
+    let tail = sanitized.strip_prefix("iss-").unwrap_or(&sanitized);
+    tail.chars().take(8).collect()
 }
 
 /// Appends one line to the dossier's `## Timeline` section.
 ///
-/// `once_key`, when set, makes the append idempotent: if the file already
-/// contains that substring the call is a no-op returning `false`. It exists
-/// for facts that are true once but arrive repeatedly — `PrUpdated` fires
-/// on every check/comment refresh, not only on open and merge.
+/// `once_key`, when set, makes the append idempotent: if a Timeline line
+/// already ENDS WITH that key the call is a no-op returning `false`. It
+/// exists for facts that are true once but arrive repeatedly — `PrUpdated`
+/// fires on every check/comment refresh, not only on open and merge. The
+/// match is line-suffix rather than substring so `…/pull/1` cannot be
+/// found inside an existing `…/pull/12`.
 ///
-/// Everything below the Timeline section is preserved byte for byte: the
-/// insert point is the last non-blank line of the Timeline block, found by
-/// scanning to the next `## ` heading. Agent sections are never parsed,
-/// moved, or rewritten.
+/// Everything outside the Timeline section is preserved byte for byte: the
+/// insert point is the last non-blank line of the Timeline block, found
+/// from the sentinel and bounded by the next `## ` heading. Agent sections
+/// are never parsed, moved, or rewritten.
+///
+/// **Durability.** The rewrite is temp-file + rename, so a crash leaves
+/// either the old file or the new one and never a truncated corpse (which
+/// adoption would then inherit). The read-modify-write window is narrowed
+/// by re-stat'ing before the rename and recomputing when the file moved
+/// under us; after [`APPEND_ATTEMPTS`] losses it errors rather than
+/// overwriting a concurrent writer's work. This is not a lock — an agent
+/// editing the file in the same millisecond can still lose its edit to the
+/// rename — but it converts the failure mode from "dossier destroyed" to
+/// "one breadcrumb missing", which is the trade ADR-0038 asks for.
 ///
 /// Errors when the file does not exist — a missing dossier means the
 /// worktree was torn down (or the branch deleted), and ADR-0038 item 2 says
@@ -288,14 +515,62 @@ pub fn append_timeline(
     once_key: Option<&str>,
 ) -> Result<bool, Error> {
     let target = worktree_file(worktree, rel_path);
-    let content = std::fs::read_to_string(&target)?;
-    if let Some(key) = once_key {
-        if content.contains(key) {
-            return Ok(false);
+    for _ in 0..APPEND_ATTEMPTS {
+        let before = fingerprint(&target)?;
+        let content = std::fs::read_to_string(&target)?;
+        if let Some(key) = once_key {
+            if already_recorded(&content, key) {
+                return Ok(false);
+            }
         }
+        let next = insert_under_timeline(&content, line);
+        if fingerprint(&target)? != before {
+            continue; // changed under us — re-read rather than clobber
+        }
+        atomic_write(&target, &next)?;
+        return Ok(true);
     }
-    std::fs::write(&target, insert_under_timeline(&content, line))?;
-    Ok(true)
+    Err(Error::Internal(format!(
+        "dossier {rel_path} kept changing under the append — breadcrumb dropped \
+         rather than overwrite a concurrent writer"
+    )))
+}
+
+/// True when some Timeline line already ends with `key`. Line-anchored on
+/// purpose: a bare `contains` would treat `pr merged · …/pull/1` as
+/// already present because `…/pull/12` contains it.
+fn already_recorded(content: &str, key: &str) -> bool {
+    content.lines().any(|l| l.trim_end().ends_with(key))
+}
+
+/// Cheap change detector for the read-modify-write window: size plus mtime.
+/// Coarse mtime resolution means this can miss a same-millisecond
+/// same-length edit; it is a narrowing, not a guarantee (see
+/// [`append_timeline`]).
+fn fingerprint(path: &Path) -> Result<(u64, Option<std::time::SystemTime>), Error> {
+    let meta = std::fs::metadata(path)?;
+    Ok((meta.len(), meta.modified().ok()))
+}
+
+/// Writes via a uniquely-named temp file in the SAME directory + rename,
+/// so the replacement is atomic on the target filesystem and two
+/// concurrent writers can never share a temp path. A failed rename cleans
+/// up after itself rather than littering the user's repo.
+fn atomic_write(target: &Path, content: &str) -> Result<(), Error> {
+    let dir = target
+        .parent()
+        .ok_or_else(|| Error::Internal(format!("dossier path has no parent: {target:?}")))?;
+    let name = target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("dossier.md");
+    let tmp = dir.join(format!(".{name}.{}.tmp", uuid::Uuid::new_v4().simple()));
+    std::fs::write(&tmp, content)?;
+    if let Err(e) = std::fs::rename(&tmp, target) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(Error::Io(e));
+    }
+    Ok(())
 }
 
 /// Joins a repo-relative dossier path onto a worktree root. The path is
@@ -310,21 +585,38 @@ fn worktree_file(worktree: &Path, rel_path: &str) -> PathBuf {
     path
 }
 
+/// Resolves the Timeline anchor: the line index the block starts after.
+///
+/// Sentinel FIRST — [`TIMELINE_SENTINEL`] is machine-written and unforgeable
+/// by card text. Falling back to the visible heading, `rposition` (not
+/// `position`) is deliberate: on a pre-sentinel dossier, or one an agent
+/// hand-edited, the LAST `## Timeline` wins, so a copy quoted earlier in the
+/// document cannot capture the append point. Returns `None` when the file
+/// has no Timeline section at all.
+fn timeline_anchor(lines: &[&str]) -> Option<usize> {
+    lines
+        .iter()
+        .rposition(|l| l.trim() == TIMELINE_SENTINEL)
+        .or_else(|| lines.iter().rposition(|l| l.trim_end() == TIMELINE_HEADING))
+}
+
 /// Pure text surgery behind [`append_timeline`] — the whole append-safety
 /// contract lives here, so it is unit-testable without a filesystem.
 fn insert_under_timeline(content: &str, line: &str) -> String {
     let lines: Vec<&str> = content.lines().collect();
-    let heading = lines.iter().position(|l| l.trim_end() == TIMELINE_HEADING);
 
-    let Some(start) = heading else {
-        // No Timeline section: an agent removed it, or the file was adopted
-        // from a hand-written dossier. Start one at the end rather than
-        // guessing where it belonged — appending is always safe.
+    let Some(start) = timeline_anchor(&lines) else {
+        // No Timeline section: an agent removed it. Start one at the end
+        // rather than guessing where it belonged — appending is always safe.
+        // (Only reachable on a file already proven ours: `inspect` keeps
+        // foreign documents out of this path entirely.)
         let mut out = content.trim_end().to_string();
         if !out.is_empty() {
             out.push_str("\n\n");
         }
         out.push_str(TIMELINE_HEADING);
+        out.push('\n');
+        out.push_str(TIMELINE_SENTINEL);
         out.push_str("\n\n");
         out.push_str(line);
         out.push('\n');
@@ -500,25 +792,114 @@ mod tests {
     }
 
     #[test]
-    fn create_adopts_an_existing_file_instead_of_clobbering() {
+    fn place_creates_then_adopts_the_same_cards_dossier() {
         let tmp = tempfile::tempdir().unwrap();
-        let rel = "docs/features/thing.md";
-        assert!(create_dossier(tmp.path(), rel, "# fresh\n").unwrap());
-        assert!(!create_dossier(tmp.path(), rel, "# SECOND\n").unwrap());
-        let on_disk = std::fs::read_to_string(tmp.path().join(rel)).unwrap();
-        assert_eq!(on_disk, "# fresh\n");
+        let i = issue("Thing");
+        let header = backfilled_header(&i, None);
+
+        let first = place_dossier(tmp.path(), &i, &header, None).unwrap();
+        assert!(first.created);
+        assert_eq!(first.rel_path, "docs/features/thing.md");
+
+        // Re-provision: same card, same file, contents untouched.
+        let before = std::fs::read_to_string(tmp.path().join(&first.rel_path)).unwrap();
+        let second = place_dossier(tmp.path(), &i, "# SECOND\n", Some(&first.rel_path)).unwrap();
+        assert!(!second.created, "adopted, not rewritten");
+        assert_eq!(second.rel_path, first.rel_path);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join(&second.rel_path)).unwrap(),
+            before
+        );
+    }
+
+    /// The defect that made adoption dangerous: `docs/features/` is a
+    /// common hand-written convention, so "a file exists here" is not
+    /// permission to write to it.
+    #[test]
+    fn a_foreign_document_is_never_adopted_or_touched() {
+        let tmp = tempfile::tempdir().unwrap();
+        const HUMAN_DOC: &str = "# Dark mode\n\nOur design spec. Not a dossier.\n";
+        std::fs::create_dir_all(tmp.path().join(DOSSIER_DIR)).unwrap();
+        let taken = tmp.path().join(DOSSIER_DIR).join("dark-mode.md");
+        std::fs::write(&taken, HUMAN_DOC).unwrap();
+
+        let i = issue("Dark mode");
+        assert_eq!(inspect(&taken, &i.id), Occupant::Foreign);
+
+        let placed = place_dossier(tmp.path(), &i, &backfilled_header(&i, None), None).unwrap();
+        assert!(placed.created);
+        assert_ne!(
+            placed.rel_path, "docs/features/dark-mode.md",
+            "the card stepped aside onto {}",
+            placed.rel_path
+        );
+        assert_eq!(
+            std::fs::read_to_string(&taken).unwrap(),
+            HUMAN_DOC,
+            "the human's document is byte-identical"
+        );
+
+        // …and stays that way once breadcrumbs start flowing.
+        append_timeline(tmp.path(), &placed.rel_path, "- later · settled", None).unwrap();
+        assert_eq!(std::fs::read_to_string(&taken).unwrap(), HUMAN_DOC);
+    }
+
+    #[test]
+    fn two_same_titled_cards_get_two_dossiers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut a = issue("Dark mode");
+        a.id = "iss_aaaaaaaa-1111".into();
+        let mut b = issue("Dark mode");
+        b.id = "iss_bbbbbbbb-2222".into();
+
+        let pa = place_dossier(tmp.path(), &a, &backfilled_header(&a, None), None).unwrap();
+        let pb = place_dossier(tmp.path(), &b, &backfilled_header(&b, None), None).unwrap();
+        assert!(pa.created && pb.created);
+        assert_ne!(pa.rel_path, pb.rel_path, "histories must not interleave");
+        // Each file names its own card.
+        assert!(std::fs::read_to_string(tmp.path().join(&pa.rel_path))
+            .unwrap()
+            .contains(&card_marker(&a.id)));
+        assert!(std::fs::read_to_string(tmp.path().join(&pb.rel_path))
+            .unwrap()
+            .contains(&card_marker(&b.id)));
+    }
+
+    #[test]
+    fn inspect_classifies_ours_theirs_and_free() {
+        let tmp = tempfile::tempdir().unwrap();
+        let i = issue("Thing");
+        let path = tmp.path().join("d.md");
+        assert_eq!(inspect(&path, &i.id), Occupant::Free);
+
+        std::fs::write(&path, backfilled_header(&i, None)).unwrap();
+        assert_eq!(inspect(&path, &i.id), Occupant::OurDossier);
+        assert_eq!(inspect(&path, "iss_other"), Occupant::OtherDossier);
     }
 
     #[test]
     fn once_key_makes_an_append_idempotent() {
         let tmp = tempfile::tempdir().unwrap();
-        let rel = "docs/features/thing.md";
-        create_dossier(tmp.path(), rel, "# f\n\n## Timeline\n\n- created\n").unwrap();
-        let key = "pr merged · https://x/1";
+        let i = issue("Thing");
+        let placed = place_dossier(tmp.path(), &i, &backfilled_header(&i, None), None).unwrap();
+        let key = "pr merged · https://x/pull/1";
+        let rel = &placed.rel_path;
         assert!(append_timeline(tmp.path(), rel, &timeline_line(key), Some(key)).unwrap());
         assert!(!append_timeline(tmp.path(), rel, &timeline_line(key), Some(key)).unwrap());
         let on_disk = std::fs::read_to_string(tmp.path().join(rel)).unwrap();
         assert_eq!(on_disk.matches(key).count(), 1);
+    }
+
+    /// A bare `contains` treated `…/pull/1` as already recorded because
+    /// `…/pull/12` contains it — silently dropping the second PR's line.
+    #[test]
+    fn once_key_does_not_match_a_longer_line_it_is_a_prefix_of() {
+        let content = "## Timeline\n- 2026 · pr merged · https://x/pull/12\n";
+        assert!(already_recorded(content, "pr merged · https://x/pull/12"));
+        assert!(
+            !already_recorded(content, "pr merged · https://x/pull/1"),
+            "PR #1 must not be masked by PR #12"
+        );
     }
 
     #[test]
@@ -526,6 +907,108 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let err = append_timeline(tmp.path(), "docs/features/gone.md", "- x", None);
         assert!(err.is_err(), "a torn-down worktree records nothing");
+    }
+
+    #[test]
+    fn writes_leave_no_temp_files_behind() {
+        let tmp = tempfile::tempdir().unwrap();
+        let i = issue("Thing");
+        let placed = place_dossier(tmp.path(), &i, &backfilled_header(&i, None), None).unwrap();
+        append_timeline(tmp.path(), &placed.rel_path, "- a · b", None).unwrap();
+        let stray: Vec<_> = std::fs::read_dir(tmp.path().join(DOSSIER_DIR))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(stray.is_empty(), "temp files left behind: {stray:?}");
+    }
+
+    // -- card text is data, never structure --------------------------------
+
+    /// The forgeable-anchor defect: a body containing a literal
+    /// `## Timeline` used to capture every breadcrumb, because the header
+    /// copied the body raw and the anchor took the FIRST match.
+    #[test]
+    fn a_card_body_cannot_forge_the_timeline_anchor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut i = issue("Sneaky");
+        i.body = Some("Notes:\n\n## Timeline\n\n- 1999 · fake\n\n## Acceptance\n\nnope".into());
+        let header = backfilled_header(&i, None);
+
+        // The body's headings were demoted on the way in.
+        assert!(header.contains("### Timeline"), "{header}");
+        assert!(!header.contains("\n## Timeline\n- 1999"), "{header}");
+
+        let placed = place_dossier(tmp.path(), &i, &header, None).unwrap();
+        append_timeline(tmp.path(), &placed.rel_path, "- now · real", None).unwrap();
+        let text = std::fs::read_to_string(tmp.path().join(&placed.rel_path)).unwrap();
+
+        // The breadcrumb landed under the REAL section (after the
+        // sentinel), not inside the quoted body.
+        let sentinel = text.find(TIMELINE_SENTINEL).unwrap();
+        let fake = text.find("- 1999 · fake").unwrap();
+        let real = text.find("- now · real").unwrap();
+        assert!(fake < sentinel, "the body's copy stays where it was quoted");
+        assert!(real > sentinel, "the breadcrumb lands in the real section");
+    }
+
+    #[test]
+    fn the_sentinel_wins_over_a_stray_heading_and_rposition_is_the_fallback() {
+        // Sentinel anchors even when a `## Timeline` line appears earlier.
+        let with_sentinel = format!(
+            "# F\n\n## Context\n\n## Timeline\n\n- decoy\n\n{TIMELINE_HEADING}\n{TIMELINE_SENTINEL}\n\n- real\n"
+        );
+        let out = insert_under_timeline(&with_sentinel, "- new");
+        let decoy = out.find("- decoy").unwrap();
+        let new = out.find("- new").unwrap();
+        assert!(
+            new > decoy,
+            "anchored on the sentinel, not the first heading"
+        );
+
+        // Pre-sentinel dossier: the LAST heading wins.
+        let legacy = "## Timeline\n\n- decoy\n\n## Plan — x\n\n## Timeline\n\n- real\n";
+        let out = insert_under_timeline(legacy, "- new");
+        assert!(out.find("- new").unwrap() > out.find("- real").unwrap());
+    }
+
+    #[test]
+    fn demote_headings_only_touches_line_initial_hashes() {
+        assert_eq!(demote_headings("## a\ntext\n# b"), "### a\ntext\n## b");
+        assert_eq!(demote_headings("no # mid-line"), "no # mid-line");
+        assert_eq!(demote_headings("  ## indented"), "  ## indented");
+    }
+
+    #[test]
+    fn inline_flattens_multiline_fields() {
+        assert_eq!(inline("a\n## Timeline\nb"), "a ## Timeline b");
+        assert_eq!(inline("  spaced  "), "spaced");
+    }
+
+    #[test]
+    fn acceptance_items_and_titles_cannot_inject_a_heading() {
+        let mut i = issue("X\n## Timeline\n- forged title");
+        i.acceptance = vec!["works\n## Timeline\n- forged ac".into()];
+        i.prd_section = Some("## Flow\n## Timeline".into());
+        i.prd_path = Some("docs/prds/x.md".into());
+        let header = backfilled_header(&i, None);
+
+        // Exactly one line-initial `## Timeline` in the whole file: ours.
+        let headings = header
+            .lines()
+            .filter(|l| l.trim_end() == TIMELINE_HEADING)
+            .count();
+        assert_eq!(headings, 1, "one real anchor only:\n{header}");
+        // The forged text survives as readable content, flattened.
+        assert!(
+            header.contains("- works ## Timeline - forged ac"),
+            "{header}"
+        );
+        assert!(
+            header.contains("# X ## Timeline - forged title"),
+            "{header}"
+        );
     }
 
     #[test]
