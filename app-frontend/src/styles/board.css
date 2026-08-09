@@ -690,6 +690,34 @@
   color: #a4a4ab;
 }
 
+/* -- first-dispatch dossier consent (§8e, #74) ---------------------------
+   The board confirm's chrome, three additions: body-lg copy, the mono-body
+   file list, and the provenance line on the meta floor. No new tokens. */
+
+.board-consent-body {
+  font-size: 13.5px;
+  line-height: 1.65;
+  padding-bottom: 10px;
+}
+
+.board-consent-files {
+  margin: 0;
+  padding: 0 16px;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: var(--text-mid);
+}
+
+.board-consent-note {
+  padding: 8px 16px 12px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--meta);
+}
+
 /* -- card detail (right-sheet inspector) ---------------------------------- */
 
 .card-detail {
