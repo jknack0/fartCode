@@ -221,6 +221,22 @@ impl Fixture {
             .unwrap()
     }
 
+    /// Every `feature` item_id, sorted — the identity of the row set, for
+    /// asserting that a wipe-and-restore round trip is lossless.
+    fn feature_item_ids(&self) -> Vec<String> {
+        let conn = self.app.db.conn().lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT item_id FROM search_index WHERE item_type = ?1")
+            .unwrap();
+        let mut ids: Vec<String> = stmt
+            .query_map([core_index::ITEM_TYPE], |row| row.get::<_, String>(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        ids.sort();
+        ids
+    }
+
     /// Everything the bus has emitted since `rx` was taken, fed through the
     /// indexer's teardown arm — so the test exercises the events production
     /// actually emits, not hand-built ones.
@@ -405,7 +421,158 @@ fn deleting_the_project_drops_every_feature_row_it_owned() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Nothing to index is not an error
+// 4. Only OUR file, and only the FRESHER copy
+// ---------------------------------------------------------------------------
+
+/// `docs/features/` is a common hand-written convention, so a file at the
+/// card's slug path in the main checkout is not evidence that it is the
+/// card's dossier. Indexing it on existence alone turned a stranger's prose
+/// into ⌘K hits that opened an unrelated card — the same adopt-any-file
+/// defect E19-01's review fixed for the write path.
+#[test]
+fn a_foreign_file_at_the_landed_path_is_never_indexed() {
+    const HUMAN_DOC: &str =
+        "# OAuth login\n\n## Design spec — v2\n\nNot a dossier. Mentions fenugreek.\n";
+    let fx = fixture();
+    let (issue, task_id) = fx.card_mid_step("Implement OAuth login");
+    step_engine::settle_issues_for_task(&fx.app, &task_id, None);
+    assert_eq!(fx.feature_rows(), 2);
+
+    let rel = fx.issue(&issue.id).dossier_path.unwrap();
+    let landed = fx.project_root().join(&rel);
+    std::fs::create_dir_all(landed.parent().unwrap()).unwrap();
+    std::fs::write(&landed, HUMAN_DOC).unwrap();
+    // Tear the worktree down so the foreign file is the only candidate.
+    std::fs::remove_dir_all(fx.worktree_of(&task_id)).unwrap();
+
+    dossier_index::reindex_issue(&fx.app, &fx.issue(&issue.id));
+
+    assert!(
+        fx.feature_hits("fenugreek").is_empty(),
+        "someone's document must not become this card's search rows"
+    );
+    assert_eq!(fx.feature_rows(), 0, "and the vanished dossier's rows went");
+    assert_eq!(
+        std::fs::read_to_string(&landed).unwrap(),
+        HUMAN_DOC,
+        "byte-identical"
+    );
+}
+
+/// Preferring the worktree copy whenever it EXISTS pinned the index to a
+/// stale file after a merge: the pull writes the newer copy into the
+/// checkout while the worktree is still live.
+#[test]
+fn the_fresher_copy_wins_so_a_merge_and_pull_is_not_ignored() {
+    let fx = fixture();
+    let (issue, task_id) = fx.card_mid_step("Implement OAuth login");
+    step_engine::settle_issues_for_task(&fx.app, &task_id, None);
+    assert_eq!(fx.feature_rows(), 2);
+
+    let rel = fx.issue(&issue.id).dossier_path.unwrap();
+    let in_worktree = fx.worktree_of(&task_id).join(&rel);
+    let landed = fx.project_root().join(&rel);
+    std::fs::create_dir_all(landed.parent().unwrap()).unwrap();
+    let mut text = std::fs::read_to_string(&in_worktree).unwrap();
+    text.push_str("\n## Review — 2026-08-10\n\nShipped behind a flag.\n");
+    std::fs::write(&landed, &text).unwrap();
+
+    // Stamped explicitly rather than slept on: filesystem timestamp
+    // granularity is not something a test should race.
+    set_mtime(&landed, 600);
+    set_mtime(&in_worktree, -600);
+    dossier_index::reindex_issue(&fx.app, &fx.issue(&issue.id));
+    assert_eq!(fx.feature_rows(), 3, "the newer landed copy won");
+    assert_eq!(fx.feature_hits("flag").len(), 1);
+
+    // Flip the ordering: an agent writing in the live worktree wins again.
+    set_mtime(&in_worktree, 1_200);
+    dossier_index::reindex_issue(&fx.app, &fx.issue(&issue.id));
+    assert_eq!(fx.feature_rows(), 2, "the newer worktree copy won");
+    assert!(fx.feature_hits("flag").is_empty());
+    assert_eq!(
+        core_index::issue_id_of(&fx.feature_hits("PKCE")[0].item_id),
+        Some(issue.id.as_str())
+    );
+}
+
+/// Sets a file's mtime `offset_secs` from now (negative for the past).
+fn set_mtime(path: &Path, offset_secs: i64) {
+    let now = std::time::SystemTime::now();
+    let when = if offset_secs >= 0 {
+        now + std::time::Duration::from_secs(offset_secs as u64)
+    } else {
+        now - std::time::Duration::from_secs(offset_secs.unsigned_abs())
+    };
+    let file = std::fs::File::options().write(true).open(path).unwrap();
+    file.set_times(std::fs::FileTimes::new().set_modified(when))
+        .unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 5. The production wiring, not just the handlers
+// ---------------------------------------------------------------------------
+
+/// Polls `check` until it holds or the deadline passes. Bounded on purpose:
+/// the event bus is a broadcast channel and the boot sweep runs on the
+/// blocking pool, so "wait for the real wiring" must never mean "hang".
+fn await_until(mut check: impl FnMut() -> bool, what: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !check() {
+        assert!(std::time::Instant::now() < deadline, "{what}");
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
+/// The boot backfill CLEARS the whole `search_index` table, so the feature
+/// rows only survive a launch because the sweep rebuilds them from the
+/// files. Pin the round trip: same ids in, same ids out.
+#[test]
+fn the_boot_sweep_restores_exactly_the_rows_the_backfill_wiped() {
+    let fx = fixture();
+    let (_, task_id) = fx.card_mid_step("Implement OAuth login");
+    step_engine::settle_issues_for_task(&fx.app, &task_id, None);
+    let before = fx.feature_item_ids();
+    assert_eq!(before.len(), 2);
+
+    // The production wiring verbatim, exactly as `lib.rs` calls it.
+    fartcode_app_lib::indexer::spawn_search_indexer(fx.app.clone());
+    assert_eq!(
+        fx.feature_rows(),
+        0,
+        "the synchronous backfill wipes the table — that is the hazard"
+    );
+
+    await_until(
+        || fx.feature_item_ids() == before,
+        "the boot sweep never restored the feature rows",
+    );
+}
+
+/// The delete arms only protect anything if the real subscription is wired
+/// to them — driving `handle_event` by hand would pass with
+/// `spawn_search_indexer` deleted.
+#[test]
+fn the_spawned_indexer_drops_the_rows_when_a_card_is_deleted() {
+    let fx = fixture();
+    let (issue, task_id) = fx.card_mid_step("Implement OAuth login");
+    step_engine::settle_issues_for_task(&fx.app, &task_id, None);
+
+    fartcode_app_lib::indexer::spawn_search_indexer(fx.app.clone());
+    // The sweep runs AFTER the subscriber subscribes, so waiting for the
+    // rows to come back also proves the subscription exists — no need to
+    // resend the deletion into a channel nobody is listening on yet.
+    await_until(|| fx.feature_rows() == 2, "boot sweep never ran");
+
+    fx.app.issues.delete(&issue.id).unwrap();
+    await_until(
+        || fx.feature_rows() == 0,
+        "the spawned subscriber never dropped the deleted card's rows",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 6. Nothing to index is not an error
 // ---------------------------------------------------------------------------
 
 #[test]

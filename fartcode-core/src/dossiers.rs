@@ -240,8 +240,22 @@ pub fn inline(text: &str) -> String {
 /// readable and the document's outline intact — the user's `# Overview`
 /// still renders as a heading, one level down, nested under the section
 /// that quotes it, which is where it belongs.
+///
+/// **Fences are structure too, since E19-03.** The section scan
+/// ([`section_heading_lines`]) skips headings inside fenced code blocks, so
+/// a card body that OPENS a fence and never closes it — a pasted stack
+/// trace beginning ```` ```text ```` is enough — would make every heading
+/// below the quote invisible. So an unbalanced fence is CLOSED here.
+///
+/// Closing rather than mangling is deliberate: it preserves the user's
+/// bytes exactly (their code block simply ends where the quote does, which
+/// is also how it should render), where escaping or indenting the fence
+/// markers would corrupt a legitimate paste. The neutralization the
+/// structure needs is "the fence does not escape the quote", not "the
+/// fence characters are gone".
 pub fn demote_headings(text: &str) -> String {
-    text.lines()
+    let mut out: Vec<String> = text
+        .lines()
         .map(|line| {
             if line.trim_start().starts_with('#') && line.starts_with('#') {
                 format!("#{line}")
@@ -249,8 +263,20 @@ pub fn demote_headings(text: &str) -> String {
                 line.to_string()
             }
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect();
+    // Belt to the anchor scan's braces: even with the append point scanned
+    // from the sentinel, an unclosed fence here would swallow the header's
+    // own `## Acceptance` / `## References` for every other reader.
+    let closer = {
+        let lines: Vec<&str> = out.iter().map(String::as_str).collect();
+        scan_sections(&lines)
+            .1
+            .map(|(marker, run)| marker.to_string().repeat(run))
+    };
+    if let Some(closer) = closer {
+        out.push(closer);
+    }
+    out.join("\n")
 }
 
 /// The `- card:` line that proves a dossier belongs to a given card. The
@@ -647,14 +673,33 @@ fn fence_run(line: &str) -> Option<(char, usize)> {
 /// only, matching [`demote_headings`]'s trust boundary: an indented
 /// `  ## x` inside quoted card text is not structure.
 pub fn section_heading_lines(lines: &[&str]) -> Vec<usize> {
+    section_heading_lines_checked(lines).0
+}
+
+/// [`section_heading_lines`] plus the fact callers need to act on: whether
+/// the scan ENDED INSIDE an unclosed fence.
+///
+/// A fence with no closer swallows every heading below it — the same thing
+/// a markdown renderer does, so the parse is not "wrong". But it means the
+/// empty tail is an artifact of one stray line, not evidence that the
+/// sections are gone, and a caller that PRUNES on absence (the ⌘K indexer)
+/// must be able to tell those apart. It is the same distinction the app
+/// draws for an unreadable file: never delete a list you could not confirm
+/// is gone.
+pub fn section_heading_lines_checked(lines: &[&str]) -> (Vec<usize>, bool) {
+    let (heads, open) = scan_sections(lines);
+    (heads, open.is_some())
+}
+
+/// The scan itself: heading lines, plus the fence left open at the end (as
+/// `(char, run)` so a caller can emit a matching closer).
+fn scan_sections(lines: &[&str]) -> (Vec<usize>, Option<(char, usize)>) {
     let mut out = Vec::new();
     let mut open: Option<(char, usize)> = None;
     for (i, line) in lines.iter().enumerate() {
         match open {
             // Inside a fence: only a matching closer (same char, at least
-            // as long, no info string) gets us out. An UNCLOSED fence
-            // swallows the rest of the file, which is what a markdown
-            // renderer does too.
+            // as long, no info string) gets us out.
             Some((open_char, open_run)) => {
                 if let Some((marker, run)) = fence_run(line) {
                     let rest = line.trim_start().trim_start_matches(marker).trim();
@@ -672,7 +717,7 @@ pub fn section_heading_lines(lines: &[&str]) -> Vec<usize> {
             }
         }
     }
-    out
+    (out, open)
 }
 
 /// Splits a dossier into its `## ` sections (see [`section_heading_lines`]).
@@ -681,9 +726,16 @@ pub fn section_heading_lines(lines: &[&str]) -> Vec<usize> {
 /// heading/body text is trimmed. A file with no `## ` heading yields an
 /// empty vec.
 pub fn sections(content: &str) -> Vec<Section> {
+    sections_checked(content).0
+}
+
+/// [`sections`] plus [`section_heading_lines_checked`]'s unclosed-fence
+/// flag — `true` means "sections below here may have been swallowed", not
+/// "there are no more sections".
+pub fn sections_checked(content: &str) -> (Vec<Section>, bool) {
     let lines: Vec<&str> = content.lines().collect();
-    let heads = section_heading_lines(&lines);
-    heads
+    let (heads, ended_open) = section_heading_lines_checked(&lines);
+    let sections = heads
         .iter()
         .enumerate()
         .map(|(n, &start)| {
@@ -694,7 +746,8 @@ pub fn sections(content: &str) -> Vec<Section> {
                 body: lines[start + 1..end].join("\n").trim().to_string(),
             }
         })
-        .collect()
+        .collect();
+    (sections, ended_open)
 }
 
 /// Resolves the Timeline anchor: the line index the block starts after.
@@ -740,8 +793,19 @@ fn insert_under_timeline(content: &str, line: &str) -> String {
     // and neither does a `## ` line inside a fenced code block — the same
     // scan the ⌘K indexer uses, so appends and search agree on where a
     // section starts.
-    let end = section_heading_lines(&lines)
+    //
+    // Scanned FROM THE ANCHOR with fresh fence state, which is the whole
+    // trust boundary: everything above the sentinel includes quoted card
+    // text, and a card body that opens a fence and never closes it (a
+    // pasted stack trace starting ```text is enough) would otherwise make
+    // the scan treat the entire rest of the document as code — no `## `
+    // heading found, `end` falling back to EOF, and every breadcrumb
+    // landing at the bottom of the file instead of under Timeline. The
+    // sentinel is machine-written territory; a fence opened in user text
+    // above it does not reach past it.
+    let end = section_heading_lines(&lines[start..])
         .into_iter()
+        .map(|i| i + start)
         .find(|i| *i > start)
         .unwrap_or(lines.len());
 
@@ -1096,6 +1160,76 @@ mod tests {
         let legacy = "## Timeline\n\n- decoy\n\n## Plan — x\n\n## Timeline\n\n- real\n";
         let out = insert_under_timeline(legacy, "- new");
         assert!(out.find("- new").unwrap() > out.find("- real").unwrap());
+    }
+
+    /// The regression the E19-03 parser factoring introduced: fences became
+    /// structural, but `demote_headings` only neutralized `#`. A card body
+    /// with an UNCLOSED fence — a pasted stack trace is enough — made the
+    /// scan treat the whole rest of the document as code, so no `## `
+    /// heading was found, `end` fell back to EOF, and every breadcrumb
+    /// landed at the bottom of the file instead of under Timeline.
+    #[test]
+    fn an_unclosed_fence_in_a_card_body_cannot_swallow_the_document() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut i = issue("Crashy");
+        i.body = Some("Stack trace:\n\n```text\nthread 'main' panicked at src/main.rs:1".into());
+        let header = backfilled_header(&i, None);
+
+        // The quote is closed on the way in, so the header's own structure
+        // is still visible to every reader of the file.
+        let lines: Vec<&str> = header.lines().collect();
+        let headings: Vec<&str> = section_heading_lines(&lines)
+            .into_iter()
+            .map(|n| lines[n])
+            .collect();
+        assert!(
+            headings.contains(&TIMELINE_HEADING),
+            "the Timeline heading survived the quoted fence: {headings:?}"
+        );
+        assert!(header.contains("thread 'main' panicked"), "bytes preserved");
+
+        // …and a breadcrumb still lands under Timeline, above the agent's
+        // sections rather than at EOF.
+        let placed = place_dossier(tmp.path(), &i, &header, None).unwrap();
+        let path = tmp.path().join(&placed.rel_path);
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str("\n## Plan — 2026-08-09\n\nDecided X.\n");
+        std::fs::write(&path, text).unwrap();
+
+        append_timeline(tmp.path(), &placed.rel_path, "- now · settled", None).unwrap();
+        let out = std::fs::read_to_string(&path).unwrap();
+        let plan = out.find("## Plan").unwrap();
+        assert!(
+            out[..plan].contains("- now · settled"),
+            "breadcrumb landed under Timeline, not at EOF:\n{out}"
+        );
+    }
+
+    /// Second half of the same defect, for a file the app did not write the
+    /// header of (a hand-edited dossier, or one from before the fix): the
+    /// anchor scan starts at the SENTINEL with fresh fence state, so a fence
+    /// opened in quoted text above it cannot reach past it.
+    #[test]
+    fn the_anchor_scan_starts_fresh_so_a_fence_above_it_is_irrelevant() {
+        let file = format!(
+            "# F\n\n## Context\n\n```text\npanic!\n\n{TIMELINE_HEADING}\n{TIMELINE_SENTINEL}\n\n\
+             - a\n\n## Plan — x\n\ncontent\n"
+        );
+        let out = insert_under_timeline(&file, "- b");
+        let plan = out.find("## Plan").unwrap();
+        assert!(
+            out[..plan].contains("- b"),
+            "the unclosed fence above the sentinel swallowed the scan:\n{out}"
+        );
+    }
+
+    #[test]
+    fn demote_headings_closes_a_fence_the_quoted_text_left_open() {
+        assert_eq!(demote_headings("```rs\nfn x() {}"), "```rs\nfn x() {}\n```");
+        assert_eq!(demote_headings("~~~~\nstuff"), "~~~~\nstuff\n~~~~");
+        // A balanced block is left exactly as it was.
+        assert_eq!(demote_headings("```\nok\n```"), "```\nok\n```");
+        assert_eq!(demote_headings("no fences here"), "no fences here");
     }
 
     #[test]
