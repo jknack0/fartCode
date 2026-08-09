@@ -45,7 +45,7 @@ vi.mock("../../lib/tauri", () => ({
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: vi.fn() }));
 
 import BoardView from "./BoardView";
-import { columnList, issueList } from "../../lib/tauri";
+import { columnList, issueList, stepParkedList } from "../../lib/tauri";
 import type { BoardColumnDto, IssueDto } from "../../lib/tauri";
 import { useColumns } from "../../store/columns";
 import { useSteps } from "../../store/steps";
@@ -225,6 +225,16 @@ describe("h/l walks every column", () => {
 // §8c binding copy: "#a is blocked by #b, still in <blocker's column>.
 // Send to <Column> anyway?" — the blocker's column comes from config
 // (blockerColumnName), never a hardcoded phrase.
+// E18-09: parks live in the backend's in-memory registry, so the board's
+// mount must re-seed them — this pins the wiring (deleting the
+// hydrateParkedSteps call from BoardView's mount effect fails here).
+describe("parked-step rehydration wiring", () => {
+  it("queries step_parked_list for the project on mount", async () => {
+    await renderBoard();
+    expect(stepParkedList).toHaveBeenCalledWith("p1");
+  });
+});
+
 describe("blocked confirm copy", () => {
   const BLOCK_COLUMNS = [
     column({ id: "c-backlog", name: "Backlog", position: 0, isLanding: true }),

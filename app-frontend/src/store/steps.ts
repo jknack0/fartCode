@@ -68,6 +68,21 @@ interface StepsState {
   clearIssue: (issueId: string) => void;
 }
 
+/** Clears observed while a `hydrateParkedSteps` query is in flight — one
+ * collector per in-flight hydration, so overlapping hydrations (two
+ * projects, or a retry) each see exactly the clears that raced THEM.
+ *
+ * The seed's byIssue dedupe cannot catch these: `clearIssue` (step:launch,
+ * issue:deleted) deletes the key outright, so an event landing between
+ * the IPC resolve and the seed loop leaves no trace, and the seed would
+ * resurrect a park the backend no longer holds — a ghost overlay whose
+ * confirm would fire against nothing. */
+const inFlightHydrationClears = new Set<Set<string>>();
+
+function noteClearedWhileHydrating(issueId: string): void {
+  for (const cleared of inFlightHydrationClears) cleared.add(issueId);
+}
+
 export const useSteps = create<StepsState>((set) => ({
   byIssue: {},
   hydrated: {},
@@ -90,6 +105,7 @@ export const useSteps = create<StepsState>((set) => ({
 
   clearPark: (issueId) =>
     set((s) => {
+      noteClearedWhileHydrating(issueId);
       const flags = s.byIssue[issueId];
       if (!flags?.queuedColumnId) return s;
       const next = { ...flags };
@@ -102,6 +118,7 @@ export const useSteps = create<StepsState>((set) => ({
 
   clearIssue: (issueId) =>
     set((s) => {
+      noteClearedWhileHydrating(issueId);
       if (!(issueId in s.byIssue)) return s;
       const byIssue = { ...s.byIssue };
       delete byIssue[issueId];
@@ -125,12 +142,20 @@ export async function hydrateParkedSteps(projectId: string): Promise<void> {
   const store = useSteps.getState();
   if (store.hydrated[projectId]) return;
   useSteps.setState((s) => ({ hydrated: { ...s.hydrated, [projectId]: true } }));
+  // Tombstones for the query's flight window: a step:launch or
+  // issue:deleted arriving between the IPC call and the seed loop DELETES
+  // the byIssue key, so the dedupe below would not see it — the collector
+  // does, and the seed skips those issues instead of resurrecting a park
+  // the backend has already consumed.
+  const clearedInFlight = new Set<string>();
+  inFlightHydrationClears.add(clearedInFlight);
   try {
     const parks = await stepParkedList(projectId);
     useSteps.setState((s) => {
       const byIssue = { ...s.byIssue };
       for (const park of parks) {
         if (byIssue[park.issueId]) continue; // an event already spoke
+        if (clearedInFlight.has(park.issueId)) continue; // cleared mid-flight
         byIssue[park.issueId] = {
           queuedColumnId: park.columnId,
           queuedProvider: park.provider,
@@ -147,6 +172,8 @@ export async function hydrateParkedSteps(projectId: string): Promise<void> {
       delete hydrated[projectId];
       return { hydrated };
     });
+  } finally {
+    inFlightHydrationClears.delete(clearedInFlight);
   }
 }
 
