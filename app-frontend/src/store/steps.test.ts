@@ -348,6 +348,66 @@ describe("wireStepEvents", () => {
     expect(useSteps.getState().byIssue["iss-3"]?.queuedColumnId).toBeUndefined();
   });
 
+  // Fix round: clearIssue DELETES the byIssue key, so an event landing
+  // between the query's IPC resolve and the seed loop left no trace for
+  // the byIssue dedupe — the seed resurrected a park the backend had
+  // already consumed (ghost overlay whose confirm fires against nothing).
+  it("does not resurrect a park cleared while the query was in flight", async () => {
+    let resolveQuery!: (parks: unknown[]) => void;
+    vi.mocked(stepParkedList).mockReturnValue(
+      new Promise((r) => {
+        resolveQuery = r as (parks: unknown[]) => void;
+      }) as ReturnType<typeof stepParkedList>,
+    );
+
+    const hydration = hydrateParkedSteps("p1");
+    // The parked step launches (step:launch clears via clearIssue) while
+    // the query is still on the wire…
+    emit({ ...LAUNCH, issueId: "iss-3" });
+    await flush();
+    expect(useSteps.getState().byIssue["iss-3"]).toBeUndefined();
+
+    // …and the query then answers with its stale pre-launch snapshot.
+    resolveQuery([
+      {
+        issueId: "iss-3",
+        projectId: "p1",
+        columnId: "col-plan",
+        provider: "fable",
+        model: null,
+        effort: null,
+      },
+    ]);
+    await hydration;
+
+    expect(useSteps.getState().byIssue["iss-3"]).toBeUndefined();
+  });
+
+  it("an in-flight clear on one issue does not block seeding the others", async () => {
+    let resolveQuery!: (parks: unknown[]) => void;
+    vi.mocked(stepParkedList).mockReturnValue(
+      new Promise((r) => {
+        resolveQuery = r as (parks: unknown[]) => void;
+      }) as ReturnType<typeof stepParkedList>,
+    );
+
+    const hydration = hydrateParkedSteps("p1");
+    emit({ type: "issue:deleted", id: "iss-3" });
+    const park = (issueId: string) => ({
+      issueId,
+      projectId: "p1",
+      columnId: "col-plan",
+      provider: "fable",
+      model: null,
+      effort: null,
+    });
+    resolveQuery([park("iss-3"), park("iss-4")]);
+    await hydration;
+
+    expect(useSteps.getState().byIssue["iss-3"]).toBeUndefined();
+    expect(useSteps.getState().byIssue["iss-4"]?.queuedColumnId).toBe("col-plan");
+  });
+
   it("a failed hydration retries on the next call", async () => {
     vi.mocked(stepParkedList).mockRejectedValueOnce(new Error("ipc down"));
     await hydrateParkedSteps("p1");
