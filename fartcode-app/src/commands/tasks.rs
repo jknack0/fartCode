@@ -1,5 +1,17 @@
 //! Task commands (E1-04 sidebar: list, pin toggle; E2-09 delete; E2-04
 //! create+provision).
+//!
+//! **Threading (#80):** a non-async `#[tauri::command]` compiles to
+//! `ExecutionContext::Blocking` — its body is inlined into the invoke
+//! handler and runs on the IPC thread, which on macOS is the main thread.
+//! Blocking there stalls the NSRunLoop and the window stops repainting. The
+//! commands here that touch git, the network, PTY spawns or tmux
+//! (`create_task`, `list_project_branches`, `provision_task`,
+//! `delete_task`) are therefore `async fn` whose whole body runs inside
+//! `tauri::async_runtime::spawn_blocking`. The bodies live in the
+//! `*_blocking` fns below (same code, same order of side effects) so tests
+//! can drive them directly, and so no DB guard is ever held across an
+//! await: everything between `spawn_blocking` and the join is synchronous.
 
 use fartcode_core::projects::ProjectStore;
 use fartcode_core::settings::DEFAULT_AGENT;
@@ -27,7 +39,7 @@ use crate::terminals::{TerminalManager, TerminalSpec};
 /// current checkout — the dogfood mode). `branch` picks an existing branch
 /// for the worktree instead of creating one.
 #[tauri::command]
-pub fn create_task(
+pub async fn create_task(
     app: State<'_, Arc<App>>,
     terminals: State<'_, Arc<TerminalManager>>,
     project_id: String,
@@ -35,14 +47,42 @@ pub fn create_task(
     workspace: Option<String>,
     branch: Option<String>,
 ) -> Result<TaskDto, String> {
+    let app = app.inner().clone();
+    let terminals = terminals.inner().clone();
+    // Off the IPC (macOS main) thread: the body fetches, spawns git, walks
+    // the fs and forks PTYs — unbounded work behind an un-timed `git fetch`.
+    tauri::async_runtime::spawn_blocking(move || {
+        create_task_blocking(
+            &app,
+            &terminals,
+            &project_id,
+            &name,
+            workspace.as_deref(),
+            branch.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// `create_task`'s body, off the IPC thread. Generic over the Tauri runtime
+/// so tests can drive it with `tauri::test::MockRuntime`.
+pub fn create_task_blocking<R: tauri::Runtime>(
+    app: &Arc<App>,
+    terminals: &Arc<TerminalManager<R>>,
+    project_id: &str,
+    name: &str,
+    workspace: Option<&str>,
+    branch: Option<&str>,
+) -> Result<TaskDto, String> {
     let params = create_task_params(
-        &app,
-        &project_id,
-        &name,
-        workspace.as_deref(),
-        branch.as_deref(),
+        app,
+        project_id,
+        name,
+        workspace,
+        branch,
         TaskConfigParams {
-            name: name.clone(),
+            name: name.to_string(),
             initial_status: None,
             linked_issue: None,
             initial_conversation: None,
@@ -54,7 +94,7 @@ pub fn create_task(
         .map_err(|e| e.to_string())?;
     // E1-06: auto-run setup/run scripts on task creation when the project
     // configured them. Best-effort — the task stands either way.
-    let setup_terminal = run_auto_lifecycle_scripts(&terminals, &app, &created.task.id);
+    let setup_terminal = run_auto_lifecycle_scripts(terminals.as_ref(), app, &created.task.id);
     // PRD workflow: Add Task → spawn the chosen agent in its worktree.
     // Best-effort — without the agent binary the frontend's terminal
     // fallback covers the surface; with it, the agent tab IS the task.
@@ -63,15 +103,15 @@ pub fn create_task(
         // setup script, the launch waits (off-thread — creation returns
         // immediately) for the setup terminal to exit 0.
         Some(setup_id) => {
-            let terminals = terminals.inner().clone();
-            let app = app.inner().clone();
+            let terminals = terminals.clone();
+            let app = app.clone();
             let task_id = created.task.id.clone();
             std::thread::spawn(move || {
-                launch_default_agent_after_setup(&terminals, &app, &task_id, &setup_id);
+                launch_default_agent_after_setup(terminals.as_ref(), &app, &task_id, &setup_id);
             });
         }
         // No auto-run setup → unchanged: launch right away.
-        None => launch_default_agent(&terminals, &app, &created.task.id),
+        None => launch_default_agent(terminals.as_ref(), app, &created.task.id),
     }
     Ok(TaskDto::from(&created.task))
 }
@@ -224,12 +264,24 @@ pub fn create_task_params(
 /// Branch list for the create-task dialog's start-source picker (reference
 /// `git branch -a` list in the dialog).
 #[tauri::command]
-pub fn list_project_branches(
+pub async fn list_project_branches(
     app: State<'_, Arc<App>>,
     project_id: String,
 ) -> Result<Vec<fartcode_core::git::BranchRef>, String> {
+    let app = app.inner().clone();
+    // Off the IPC thread: `git branch -a` is a subprocess.
+    tauri::async_runtime::spawn_blocking(move || list_project_branches_blocking(&app, &project_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// `list_project_branches`'s body, off the IPC thread.
+pub fn list_project_branches_blocking(
+    app: &App,
+    project_id: &str,
+) -> Result<Vec<fartcode_core::git::BranchRef>, String> {
     app.task_creation
-        .list_branches(&project_id)
+        .list_branches(project_id)
         .map_err(|e| e.to_string())
 }
 
@@ -237,9 +289,19 @@ pub fn list_project_branches(
 /// worktree when it's missing — heals tasks created before the command
 /// provisioned at create time.
 #[tauri::command]
-pub fn provision_task(app: State<'_, Arc<App>>, task_id: String) -> Result<(), String> {
+pub async fn provision_task(app: State<'_, Arc<App>>, task_id: String) -> Result<(), String> {
+    let app = app.inner().clone();
+    // Off the IPC thread: cold provision runs `git fetch` (un-timed) plus
+    // worktree list/prune/add; even the idempotent reuse path shells out.
+    tauri::async_runtime::spawn_blocking(move || provision_task_blocking(&app, &task_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// `provision_task`'s body, off the IPC thread.
+pub fn provision_task_blocking(app: &App, task_id: &str) -> Result<(), String> {
     app.task_creation
-        .provision(&task_id)
+        .provision(task_id)
         .map(|_| ())
         .map_err(|e| e.to_string())
 }
@@ -287,7 +349,7 @@ pub fn task_restore(app: State<'_, Arc<App>>, task_id: String) -> Result<TaskDto
 /// view state dropped, worktree removed when unused). Options follow the
 /// reference `DeleteTaskOptions` defaults.
 #[tauri::command]
-pub fn delete_task(
+pub async fn delete_task(
     app: State<'_, Arc<App>>,
     terminals: State<'_, Arc<crate::terminals::TerminalManager>>,
     acp: State<'_, Arc<crate::acp_runtime::AcpRuntime>>,
@@ -296,19 +358,52 @@ pub fn delete_task(
     delete_worktree: Option<bool>,
     delete_branch: Option<bool>,
 ) -> Result<(), String> {
+    let app = app.inner().clone();
+    let terminals = terminals.inner().clone();
+    let acp = acp.inner().clone();
+    // Off the IPC thread: teardown spin-waits up to 5s PER session leaf,
+    // kills tmux sessions, removes the worktree and prunes — tens of
+    // seconds in the worst case, and the exact freeze users reported.
+    tauri::async_runtime::spawn_blocking(move || {
+        delete_task_blocking(
+            &app,
+            &terminals,
+            &acp,
+            &project_id,
+            &task_id,
+            delete_worktree,
+            delete_branch,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// `delete_task`'s body, off the IPC thread. The order of side effects is
+/// load-bearing: ACP stop → row deletion + worktree removal → terminal
+/// teardown.
+pub fn delete_task_blocking<R: tauri::Runtime>(
+    app: &App,
+    terminals: &TerminalManager<R>,
+    acp: &crate::acp_runtime::AcpRuntime,
+    project_id: &str,
+    task_id: &str,
+    delete_worktree: Option<bool>,
+    delete_branch: Option<bool>,
+) -> Result<(), String> {
     // E2-11-5 acceptance 3: stop the task's ACP sessions BEFORE the task
     // row deletion cascades the conversation rows away (best-effort, like
     // the PTY reap).
-    acp.stop_task(&task_id);
+    acp.stop_task(task_id);
     let options = DeleteTaskOptions {
         delete_worktree: delete_worktree.unwrap_or(true),
         delete_branch: delete_branch.unwrap_or(false),
     };
     app.deletion
-        .delete_task(&project_id, &task_id, &options)
+        .delete_task(project_id, task_id, &options)
         .map_err(|e| e.to_string())?;
     // E2-12: deleting a task closes its interactive terminals; ADR-0025:
     // and sweeps its tmux sessions (surviving orphans from crashes too).
-    terminals.close_task(&project_id, &task_id);
+    terminals.close_task(project_id, task_id);
     Ok(())
 }

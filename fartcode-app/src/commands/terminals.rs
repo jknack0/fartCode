@@ -1,6 +1,17 @@
 //! Interactive terminal commands (E2-12): thin wrappers over the
 //! TerminalManager. Output/exit arrive as `terminal:output` /
 //! `terminal:exited` events, not command responses.
+//!
+//! **Threading (#80):** the commands that spawn a PTY, scan PATH or shell
+//! out to tmux (`terminal_open`, `terminal_open_agent`, `terminal_close`,
+//! `terminal_surviving`) are `async fn` whose whole body runs inside
+//! `tauri::async_runtime::spawn_blocking` — a non-async command body is
+//! inlined into the invoke handler and would run on the macOS main thread,
+//! stalling the run loop. The bodies live in the `*_blocking` fns (same
+//! code, same order of side effects) so tests can drive them directly and
+//! so no DB guard is ever held across an await. The cheap, purely
+//! in-memory commands (`terminal_write`, `terminal_list_for_task`,
+//! `terminal_tail`, `terminal_resize`) stay synchronous.
 
 use std::sync::Arc;
 
@@ -75,14 +86,34 @@ fn terminal_program(
 /// (ADR-0025): the session survives an app crash and the next open
 /// reattaches it.
 #[tauri::command]
-pub fn terminal_open(
+pub async fn terminal_open(
     terminals: State<'_, Arc<TerminalManager>>,
     app: State<'_, Arc<App>>,
     task_id: String,
     rows: u16,
     cols: u16,
 ) -> Result<String, String> {
-    let ctx = resolve_task_context(&app.db, &task_id)?;
+    let terminals = terminals.inner().clone();
+    let app = app.inner().clone();
+    // Off the IPC thread: a PTY fork/exec always, plus `tmux -V` and
+    // `tmux list-sessions` when the project runs tmux.
+    tauri::async_runtime::spawn_blocking(move || {
+        terminal_open_blocking(&terminals, &app, &task_id, rows, cols)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// `terminal_open`'s body, off the IPC thread. Generic over the Tauri
+/// runtime so tests can drive it with `tauri::test::MockRuntime`.
+pub fn terminal_open_blocking<R: tauri::Runtime>(
+    terminals: &TerminalManager<R>,
+    app: &App,
+    task_id: &str,
+    rows: u16,
+    cols: u16,
+) -> Result<String, String> {
+    let ctx = resolve_task_context(&app.db, task_id)?;
     // Effective project settings: defaults < .fartCode.json < DB (precedence).
     // A failed read keeps today's behavior (no tmux, blank shell).
     let settings = app
@@ -94,7 +125,7 @@ pub fn terminal_open(
     let (program, args) = terminal_program(&settings, &shell);
     terminals
         .open(TerminalSpec {
-            task_id: &task_id,
+            task_id,
             project_id: &ctx.project_id,
             agent: None,
             tmux,
@@ -135,7 +166,7 @@ pub(crate) fn agent_env_removals(app: &App, provider_id: &str) -> Vec<String> {
 /// comment-task flow all converge on the same session. Switching agents
 /// means closing the agent tab first.
 #[tauri::command]
-pub fn terminal_open_agent(
+pub async fn terminal_open_agent(
     terminals: State<'_, Arc<TerminalManager>>,
     app: State<'_, Arc<App>>,
     task_id: String,
@@ -143,25 +174,46 @@ pub fn terminal_open_agent(
     rows: u16,
     cols: u16,
 ) -> Result<String, String> {
+    let terminals = terminals.inner().clone();
+    let app = app.inner().clone();
+    // Off the IPC thread: `find_on_path` walks PATH plus the common bin
+    // dirs per candidate binary, then forks a PTY.
+    tauri::async_runtime::spawn_blocking(move || {
+        terminal_open_agent_blocking(&terminals, &app, &task_id, &agent, rows, cols)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// `terminal_open_agent`'s body, off the IPC thread. Generic over the Tauri
+/// runtime so tests can drive it with `tauri::test::MockRuntime`.
+pub fn terminal_open_agent_blocking<R: tauri::Runtime>(
+    terminals: &TerminalManager<R>,
+    app: &App,
+    task_id: &str,
+    agent: &str,
+    rows: u16,
+    cols: u16,
+) -> Result<String, String> {
     // Reattach before provider resolution: the existing session must be
     // reachable even if its binary left PATH meanwhile.
-    if let Some(existing) = terminals.find_running_agent(&task_id) {
+    if let Some(existing) = terminals.find_running_agent(task_id) {
         return Ok(existing);
     }
-    let ctx = resolve_task_context(&app.db, &task_id)?;
+    let ctx = resolve_task_context(&app.db, task_id)?;
     let provider =
-        fartcode_providers::get(&agent).ok_or_else(|| format!("unknown agent: {agent}"))?;
+        fartcode_providers::get(agent).ok_or_else(|| format!("unknown agent: {agent}"))?;
     let binary = provider
         .binaries
         .iter()
         .find_map(|b| fartcode_core::pty::launcher::find_on_path(b))
         .ok_or_else(|| format!("agent not installed: {agent}"))?;
-    let remove = agent_env_removals(&app, &agent);
+    let remove = agent_env_removals(app, agent);
     terminals
         .open(TerminalSpec {
-            task_id: &task_id,
+            task_id,
             project_id: &ctx.project_id,
-            agent: Some(&agent),
+            agent: Some(agent),
             tmux: false,
             program: &binary.to_string_lossy(),
             args: &[],
@@ -223,11 +275,24 @@ pub fn terminal_resize(
 /// kills the tmux session (ADR-0028) — a closed tab is a teardown, not a
 /// detach.
 #[tauri::command]
-pub fn terminal_close(
+pub async fn terminal_close(
     terminals: State<'_, Arc<TerminalManager>>,
     terminal_id: String,
 ) -> Result<(), String> {
-    terminals.close(&terminal_id);
+    let terminals = terminals.inner().clone();
+    // Off the IPC thread: a tmux-backed entry shells out to
+    // `tmux kill-session` and waits on it.
+    tauri::async_runtime::spawn_blocking(move || terminal_close_blocking(&terminals, &terminal_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// `terminal_close`'s body, off the IPC thread.
+pub fn terminal_close_blocking<R: tauri::Runtime>(
+    terminals: &TerminalManager<R>,
+    terminal_id: &str,
+) -> Result<(), String> {
+    terminals.close(terminal_id);
     Ok(())
 }
 
@@ -235,12 +300,30 @@ pub fn terminal_close(
 /// currently show (ADR-0028): a fresh restore opens enough terminals to
 /// cover persisted tabs AND every survivor. 0 when tmux is off/absent.
 #[tauri::command]
-pub fn terminal_surviving(
+pub async fn terminal_surviving(
     terminals: State<'_, Arc<TerminalManager>>,
     app: State<'_, Arc<App>>,
     task_id: String,
 ) -> Result<usize, String> {
-    let ctx = resolve_task_context(&app.db, &task_id)?;
+    let terminals = terminals.inner().clone();
+    let app = app.inner().clone();
+    // Off the IPC thread: with tmux on this runs `tmux list-sessions`
+    // (plus the one-time `tmux -V` probe).
+    tauri::async_runtime::spawn_blocking(move || {
+        terminal_surviving_blocking(&terminals, &app, &task_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// `terminal_surviving`'s body, off the IPC thread. Generic over the Tauri
+/// runtime so tests can drive it with `tauri::test::MockRuntime`.
+pub fn terminal_surviving_blocking<R: tauri::Runtime>(
+    terminals: &TerminalManager<R>,
+    app: &App,
+    task_id: &str,
+) -> Result<usize, String> {
+    let ctx = resolve_task_context(&app.db, task_id)?;
     // Plain-PTY projects have nothing to survive; skip the tmux probe.
     let tmux = app
         .settings
@@ -250,7 +333,7 @@ pub fn terminal_surviving(
     if !tmux {
         return Ok(0);
     }
-    Ok(terminals.surviving_session_count(&ctx.project_id, &task_id))
+    Ok(terminals.surviving_session_count(&ctx.project_id, task_id))
 }
 
 #[cfg(test)]
