@@ -30,6 +30,11 @@ vi.mock("../../lib/tauri", () => ({
   terminalWrite: vi.fn(),
   onTerminalExited: vi.fn(() => Promise.resolve(() => {})),
   onFartcodeEvent: vi.fn(() => Promise.resolve(() => {})),
+  // #74: the board reads dossier consent on mount. Already answered, so
+  // these fixtures never meet the consent card (DossierConsent.test.tsx
+  // owns that path).
+  getProjectSettings: vi.fn(() => Promise.resolve({ featureDossiers: true })),
+  updateProjectSettings: vi.fn((_p: string, s: unknown) => Promise.resolve(s)),
   listProjects: vi.fn(() => Promise.resolve([])),
   listTasks: vi.fn(() => Promise.resolve([])),
   createTask: vi.fn(),

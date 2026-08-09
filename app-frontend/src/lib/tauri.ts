@@ -188,6 +188,17 @@ export interface ProjectSettingsDto {
   autoRunRunScriptOnTaskCreation?: boolean | null;
   taskStartupCommand?: string | null;
   workspaceProvider?: WorkspaceProviderDto | null;
+  /** Feature-dossier consent (E19-01, ADR-0038 item 3). THREE states:
+   * `true` write, `false` don't, `null`/absent = never asked — which the
+   * backend fails closed on, so the feature stays inert until the
+   * first-dispatch consent card (#74) answers it. */
+  featureDossiers?: boolean | null;
+  /** App-managed bookkeeping (E19-02): the feature-log scaffold version
+   * last written into this project. Declared here ONLY so a full-replace
+   * write round-trips it — `update_project_settings` overwrites the whole
+   * row, so a DTO that omitted this key would clear the app's memory of
+   * the scaffold and resurrect files the user deleted. Never a UI field. */
+  featureLogSeededVersion?: number | null;
   preservePatterns?: string[] | null;
   shellSetup?: string | null;
   scripts?: ScriptsDto | null;

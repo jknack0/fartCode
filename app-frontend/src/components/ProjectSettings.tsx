@@ -223,14 +223,23 @@ export function ProjectSettingsPane({ projectId }: { projectId: string }) {
   };
 
   /** Immediate persistence: optimistic local state, then the saved echo +
-   * fresh provenance (a local edit to a shared key flips its tag). */
+   * fresh provenance (a local edit to a shared key flips its tag).
+   *
+   * **The write merges onto a FRESH read, not onto this pane's copy.**
+   * `update_project_settings` is full-replace, and `s` is a snapshot taken
+   * when the pane mounted — so a pane left open across a
+   * `featureDossiers` answer or a `featureLogSeededVersion` bump would
+   * send the pre-change values back and silently undo them. Toggling
+   * `tmux` must not un-answer the dossier consent card or make the app
+   * forget a scaffold it already seeded. The patch still wins over the
+   * fresh read: it is this pane's actual edit. */
   const commit = async (patch: Partial<ProjectSettingsDto>) => {
-    const next = { ...s, ...patch };
-    setS(next);
+    setS({ ...s, ...patch });
     setOpenRow(null);
     setError(null);
     try {
-      const saved = await updateProjectSettings(projectId, next);
+      const fresh = await getProjectSettings(projectId).catch(() => s);
+      const saved = await updateProjectSettings(projectId, { ...fresh, ...patch });
       setS(saved);
       setProv(await projectSettingsProvenance(projectId).catch(() => prov));
     } catch (e) {
@@ -584,6 +593,17 @@ export function ProjectSettingsPane({ projectId }: { projectId: string }) {
               autoRunRunScriptOnTaskCreation: !s.autoRunRunScriptOnTaskCreation,
             })
           }
+        />
+        {/* §8e "project settings carries the same switch in BOTH
+            directions": the reversal half of the first-dispatch consent
+            card. Unanswered (null) renders `off` because that is what the
+            app actually does with it — the backend fails closed — and
+            clicking from there writes an explicit `true`, so the card
+            never asks about a project the user already decided here. */}
+        <Row
+          label="Feature dossiers"
+          value={s.featureDossiers ? "on" : "off"}
+          onClick={() => void commit({ featureDossiers: !s.featureDossiers })}
         />
       </div>
 
