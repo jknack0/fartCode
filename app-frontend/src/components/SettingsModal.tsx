@@ -5,12 +5,13 @@
 // rows; project panes = ProjectSettingsPane (full field map). Rendering is
 // gated by Modals.tsx (settingsOpen / projectSettingsOpen) — the default
 // export here draws the surface unconditionally.
-import { useReducer, useState } from "react";
+import { Fragment, useReducer, useState } from "react";
 import { chordFromEvent, formatChord, isBindableChord } from "../lib/keychord";
 import { bindings, clearAllOverrides, hint, saveOverride } from "../lib/useCommands";
 import { useSidebar } from "../store/sidebar";
 import { useUi } from "../store/ui";
 import AgentsList from "./AgentsList";
+import { ColumnsPane } from "./ColumnsEditor";
 import { ProjectSettingsPane } from "./ProjectSettings";
 import ProviderAccounts from "./ProviderAccounts";
 
@@ -167,10 +168,22 @@ export default function SettingsModal({
   // Hints re-render live when bindings change (spec: subscribe bindingsVersion).
   useUi((s) => s.bindingsVersion);
 
-  const activeProject = section.startsWith("project:")
-    ? projects.find((p) => `project:${p.id}` === section) ?? null
+  // Sections: "app" · "keys" · "project:<id>" · "project:<id>:columns".
+  const columnsChild = section.startsWith("project:") && section.endsWith(":columns");
+  const sectionProjectId = section.startsWith("project:")
+    ? section.slice("project:".length, columnsChild ? -":columns".length : undefined)
     : null;
-  const title = section === "app" ? "App" : section === "keys" ? "Keys" : activeProject?.name ?? "";
+  const activeProject = sectionProjectId
+    ? projects.find((p) => p.id === sectionProjectId) ?? null
+    : null;
+  const title =
+    section === "app"
+      ? "App"
+      : section === "keys"
+        ? "Keys"
+        : columnsChild
+          ? `Columns · ${activeProject?.name ?? ""}`
+          : activeProject?.name ?? "";
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -189,13 +202,22 @@ export default function SettingsModal({
             Keys
           </button>
           {projects.map((p) => (
-            <button
-              key={p.id}
-              className={`fc-set-nav-row${section === `project:${p.id}` ? " active" : ""}`}
-              onClick={() => setSection(`project:${p.id}`)}
-            >
-              {p.name}
-            </button>
+            <Fragment key={p.id}>
+              <button
+                className={`fc-set-nav-row${section === `project:${p.id}` ? " active" : ""}`}
+                onClick={() => setSection(`project:${p.id}`)}
+              >
+                {p.name}
+              </button>
+              <button
+                className={`fc-set-nav-row child${
+                  section === `project:${p.id}:columns` ? " active" : ""
+                }`}
+                onClick={() => setSection(`project:${p.id}:columns`)}
+              >
+                Columns
+              </button>
+            </Fragment>
           ))}
         </nav>
         <div className="fc-set-pane">
@@ -217,7 +239,12 @@ export default function SettingsModal({
               <KeysPane />
             </div>
           )}
-          {activeProject && <ProjectSettingsPane projectId={activeProject.id} />}
+          {activeProject &&
+            (columnsChild ? (
+              <ColumnsPane projectId={activeProject.id} />
+            ) : (
+              <ProjectSettingsPane projectId={activeProject.id} />
+            ))}
         </div>
       </div>
     </div>

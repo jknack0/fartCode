@@ -106,6 +106,18 @@
   gap: 30px;
 }
 
+/* project child rows (Columns) — indented under their project row */
+.fc-set-nav-row.child {
+  padding-left: 14px;
+  font-size: 12.5px;
+  margin-top: -6px;
+}
+
+.fc-set-nav-row.child.active,
+.fc-set-nav-row.child.active:hover {
+  padding-left: 28px;
+}
+
 .fc-set-spacer {
   flex: 1;
 }
@@ -661,6 +673,231 @@
 
 .fc-acct-editor button:hover:not(:disabled):not(.primary):not(.danger) {
   background: none;
+}
+
+/* -- Columns pane (#67, handoff v3 §8d) ---------------------------------- */
+
+.fc-col-list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* collapsed rows carry the hairline; the open row is the focused-card
+   grammar — focus wash + 2px accent left rail (never a border box) */
+.fc-col-row-wrap {
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.fc-col-row-wrap.open {
+  background: var(--focus-bg);
+  border-left-color: var(--accent);
+}
+
+/* reorder drop target: a 1px accent line, never a ghost box */
+.fc-col-row-wrap.drop {
+  box-shadow: inset 0 1px 0 var(--accent);
+}
+
+.fc-col-row {
+  appearance: none;
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 9px 8px;
+  font: inherit;
+  text-align: left;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.fc-col-row-wrap:not(.open):hover {
+  background: var(--hover-bg);
+}
+
+.fc-columns button:hover:not(:disabled):not(.primary):not(.danger) {
+  background: none;
+}
+
+.fc-col-row-wrap:not(.open):hover .fc-col-row {
+  background: none;
+}
+
+.fc-col-handle {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dot-idle);
+  cursor: grab;
+  letter-spacing: -0.08em;
+}
+
+.fc-col-name {
+  flex: none;
+  min-width: 90px;
+  font-size: 13px;
+  color: var(--text-card);
+  white-space: nowrap;
+}
+
+/* the landing tag — information, not consent, so never green */
+.fc-col-landing {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--meta);
+  margin-left: 6px;
+}
+
+/* the SAME string the board headers render (columnConfigSummary); tone
+   brightness mirrors board.css — confirm-free spend is brighter */
+.fc-col-summary {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--meta-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc-col-summary[data-tone="queue"] {
+  color: var(--meta);
+}
+
+.fc-col-summary[data-tone="run"] {
+  color: #9a9aa1;
+}
+
+.fc-col-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 4px 10px 14px 24px;
+}
+
+/* runs editor: provider menu + model/effort inputs */
+.fc-col-runs {
+  gap: 8px;
+}
+
+.fc-col-runs .fc-set-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* system prompt: inset-card preview, mono-body clamped to 3 lines */
+.fc-col-prompt-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.fc-col-prompt {
+  appearance: none;
+  width: 100%;
+  margin: 0;
+  background: var(--card-inset);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.fc-columns .fc-col-prompt:hover:not(:disabled) {
+  background: var(--card-inset);
+  border-color: var(--hairline-strong);
+}
+
+.fc-col-prompt-body {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.fc-col-prompt-body.empty {
+  color: var(--meta-dim);
+}
+
+.fc-col-prompt-foot {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-key);
+  border-top: 1px solid var(--hairline);
+  padding-top: 8px;
+}
+
+/* delete: a plain action label — the app's only red action label stays
+   the ⌘⌫ delete confirm; disabled = --meta-dim with the reason beside */
+.fc-col-delete-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.fc-col-delete {
+  appearance: none;
+  background: none;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.fc-col-delete:hover {
+  color: var(--foreground);
+}
+
+.fc-col-delete-disabled {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--meta-dim);
+}
+
+.fc-col-delete-reason {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--meta);
+}
+
+.fc-col-add {
+  appearance: none;
+  align-self: flex-start;
+  background: none;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 10px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.fc-col-add:hover {
+  color: var(--foreground);
 }
 
 /* -- onboarding (E1-08): the 7d card, system grammar — no .modal plate --- */
