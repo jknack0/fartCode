@@ -166,6 +166,17 @@ impl StepEngine {
         self.lock().parked.get(issue_id).cloned()
     }
 
+    /// Read-only snapshot of a project's parks (E18-09 rehydration —
+    /// `step_parked_list`). No state change, no events.
+    pub fn parks_for_project(&self, project_id: &str) -> Vec<ParkedStep> {
+        self.lock()
+            .parked
+            .values()
+            .filter(|p| p.project_id == project_id)
+            .cloned()
+            .collect()
+    }
+
     fn remove_park(&self, issue_id: &str) -> Option<ParkedStep> {
         self.lock().parked.remove(issue_id)
     }
@@ -433,6 +444,50 @@ pub struct EnterOutcome {
     /// human gate — nothing to do).
     pub step: String,
     pub launch: Option<StepLaunchInfo>,
+}
+
+/// One parked (queue-mode) step, as `step_parked_list` returns it —
+/// the same fields `step:queued` carries (agent config re-resolved at
+/// query time, honoring column edits made while parked), so the frontend
+/// reuses its event reducer to rehydrate after a webview reload. Parks
+/// precede provisioning, so there is no task id to carry.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParkedStepDto {
+    pub issue_id: String,
+    pub project_id: String,
+    pub column_id: String,
+    pub provider: String,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+}
+
+/// The project's current parks (E18-09 rehydration): a pure read of the
+/// in-memory registry plus DB lookups to resolve each park's agent config.
+/// Mutates nothing and emits nothing. A park whose issue or column has
+/// vanished underneath it is skipped, not an error — deletion sweeps own
+/// the cleanup, and a query must never fail the whole list for one
+/// stale entry.
+pub fn parked_list(app: &App, project_id: &str) -> Result<Vec<ParkedStepDto>, String> {
+    let mut out = Vec::new();
+    for parked in app.steps.parks_for_project(project_id) {
+        let Some(issue) = app.issues.get(&parked.issue_id).map_err(String::from)? else {
+            continue;
+        };
+        let Some(column) = app.columns.get(&parked.column_id).map_err(String::from)? else {
+            continue;
+        };
+        let (provider, model, effort) = resolve_agent(app, &issue, &column)?;
+        out.push(ParkedStepDto {
+            issue_id: parked.issue_id,
+            project_id: parked.project_id,
+            column_id: parked.column_id,
+            provider,
+            model,
+            effort,
+        });
+    }
+    Ok(out)
 }
 
 fn cleared_event(parked: ParkedStep) -> InternalEvent {

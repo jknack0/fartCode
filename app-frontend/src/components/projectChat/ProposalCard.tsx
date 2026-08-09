@@ -2,7 +2,8 @@
 // Renders a parsed fartCode-proposal block from the PM agent as numbered
 // issue rows with a focus cursor and single-key actions: ↑/↓ (or j/k) move,
 // e edits the focused title inline, x toggles dropped (rows stay visible,
-// struck through), ↵ approves the surviving rows into Backlog. Blocked-by
+// struck through), ↵ approves the surviving rows into the board's landing
+// column (named from column config — ADR-0037 item 7). Blocked-by
 // edges show as right-aligned row-number notes; dropping a row drops edges
 // to it at approve time (the backend rejects unknown titles). Parse failure
 // renders the raw block as plain text — the card NEVER throws on bad input.
@@ -14,6 +15,8 @@ import {
   issueParseProposal,
   type ProposalDto,
 } from "../../lib/tauri";
+import { landingColumn } from "../../lib/columnConfig";
+import { useColumns } from "../../store/columns";
 
 type CardState =
   | { kind: "parsing" }
@@ -44,6 +47,18 @@ export default function ProposalCard({
   // Ref mirror of `editing`: blur-commit races Escape-cancel through stale
   // closures otherwise (cancel clears the ref, so the late blur no-ops).
   const editingRef = useRef<number | null>(null);
+  // ADR-0037 item 7: the "approve N → <column>" / "added to <column>" copy
+  // is generated from column config, never a hardcoded name. The backend's
+  // issue_apply_proposal already lands on the is_landing column — this is
+  // display truth only. Until the columns load, the copy stays generic
+  // rather than ever naming a wrong column.
+  const landingName = useColumns((s) =>
+    s.loaded[projectId] ? (landingColumn(s.byProject[projectId] ?? [])?.name ?? null) : null,
+  );
+
+  useEffect(() => {
+    void useColumns.getState().load(projectId);
+  }, [projectId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,7 +79,8 @@ export default function ProposalCard({
   if (state.kind === "applied") {
     return (
       <div className="proposal-card applied">
-        ✓ {state.count} {state.count === 1 ? "issue" : "issues"} added to Backlog
+        ✓ {state.count} {state.count === 1 ? "issue" : "issues"} added
+        {landingName ? ` to ${landingName}` : ""}
       </div>
     );
   }
@@ -239,7 +255,9 @@ export default function ProposalCard({
           onClick={approve}
         >
           <span className="key">↵</span>{" "}
-          {applying ? "applying…" : `approve ${approveCount} → Backlog`}
+          {applying
+            ? "applying…"
+            : `approve ${approveCount}${landingName ? ` → ${landingName}` : ""}`}
         </button>
       </div>
     </div>

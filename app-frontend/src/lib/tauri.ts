@@ -1400,6 +1400,26 @@ export function stepConfirm(issueId: string): Promise<EnterOutcomeDto> {
   return invoke("step_confirm", { issueId });
 }
 
+/** One parked (queue-mode) step as `step_parked_list` returns it — the
+ * same fields the `step:queued` event carries, so the steps store reuses
+ * its reducer to rehydrate after a webview reload. */
+export interface ParkedStepDto {
+  issueId: string;
+  projectId: string;
+  columnId: string;
+  provider: string;
+  model: string | null;
+  effort: string | null;
+}
+
+/** The project's current parks (E18-09 rehydration). Parks live only in
+ * the backend's in-memory registry and step:* events cover live sessions
+ * only, so a reload re-seeds queued dots / the confirm overlay from this
+ * query. Read-only: no state change, no events. */
+export function stepParkedList(projectId: string): Promise<ParkedStepDto[]> {
+  return invoke("step_parked_list", { projectId });
+}
+
 /** Project-scoped (PM chat) conversations (E17-04). */
 export function listProjectConversations(projectId: string): Promise<ConversationDto[]> {
   return invoke("list_project_conversations", { projectId });

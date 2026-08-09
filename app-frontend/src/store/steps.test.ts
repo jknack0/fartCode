@@ -17,6 +17,7 @@ vi.mock("../lib/tauri", () => ({
       if (i >= 0) listeners.splice(i, 1);
     });
   }),
+  stepParkedList: vi.fn(() => Promise.resolve([])),
   terminalListForTask: vi.fn(() => Promise.resolve([])),
   terminalOpenAgent: vi.fn(() => Promise.resolve("term-1")),
   terminalWrite: vi.fn(() => Promise.resolve()),
@@ -36,13 +37,14 @@ vi.mock("../lib/tauri", () => ({
 
 import {
   onFartcodeEvent,
+  stepParkedList,
   terminalListForTask,
   terminalOpenAgent,
   terminalWrite,
 } from "../lib/tauri";
 import { useScripts } from "./scripts";
 import { useSidebar } from "./sidebar";
-import { runLaunchDirective, useSteps, wireStepEvents } from "./steps";
+import { hydrateParkedSteps, runLaunchDirective, useSteps, wireStepEvents } from "./steps";
 
 /** Delivers an event to every wired listener, as the Tauri channel would. */
 function emit(event: Record<string, unknown>): void {
@@ -84,7 +86,8 @@ beforeEach(() => {
   vi.mocked(terminalListForTask).mockResolvedValue([]);
   vi.mocked(terminalOpenAgent).mockResolvedValue("term-1");
   vi.mocked(terminalWrite).mockResolvedValue(undefined);
-  useSteps.setState({ byIssue: {}, error: null });
+  vi.mocked(stepParkedList).mockResolvedValue([]);
+  useSteps.setState({ byIssue: {}, hydrated: {}, error: null });
   useScripts.setState({ byTask: {}, agentByTask: {} });
   useSidebar.setState({ tasksByProject: {}, selectedTaskId: null, selectedProjectId: null });
 });
@@ -263,6 +266,105 @@ describe("wireStepEvents", () => {
     });
 
     expect(useSteps.getState().byIssue["iss-2"]?.queuedColumnId).toBeUndefined();
+  });
+
+  // E18-09: parks live in the backend's in-memory registry, so a webview
+  // reload loses them until step_parked_list re-seeds the store.
+  it("rehydrates parked steps from the query after a reload", async () => {
+    vi.mocked(stepParkedList).mockResolvedValue([
+      {
+        issueId: "iss-3",
+        projectId: "p1",
+        columnId: "col-plan",
+        provider: "fable",
+        model: "opus",
+        effort: "high",
+      },
+    ]);
+
+    await hydrateParkedSteps("p1");
+
+    const flags = useSteps.getState().byIssue["iss-3"];
+    expect(flags?.queuedColumnId).toBe("col-plan");
+    expect(flags?.queuedProvider).toBe("fable");
+    expect(flags?.queuedModel).toBe("opus");
+    expect(flags?.queuedEffort).toBe("high");
+
+    // Once per project per webview lifetime.
+    await hydrateParkedSteps("p1");
+    expect(stepParkedList).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not double-park or clobber when the event already announced the park", async () => {
+    // The event lands first (fresher than the query snapshot)…
+    emit({
+      type: "step:queued",
+      issueId: "iss-3",
+      projectId: "p1",
+      columnId: "col-review",
+      provider: "claude",
+      model: null,
+      effort: null,
+    });
+    // …and the query answers with a stale snapshot of the same issue.
+    vi.mocked(stepParkedList).mockResolvedValue([
+      {
+        issueId: "iss-3",
+        projectId: "p1",
+        columnId: "col-plan",
+        provider: "fable",
+        model: "opus",
+        effort: "high",
+      },
+    ]);
+
+    await hydrateParkedSteps("p1");
+
+    const flags = useSteps.getState().byIssue["iss-3"];
+    expect(flags?.queuedColumnId).toBe("col-review"); // the event's word stands
+    expect(flags?.queuedProvider).toBe("claude");
+  });
+
+  it("a seeded park is still cleared by step:queue_cleared", async () => {
+    vi.mocked(stepParkedList).mockResolvedValue([
+      {
+        issueId: "iss-3",
+        projectId: "p1",
+        columnId: "col-plan",
+        provider: "fable",
+        model: null,
+        effort: null,
+      },
+    ]);
+    await hydrateParkedSteps("p1");
+    expect(useSteps.getState().byIssue["iss-3"]?.queuedColumnId).toBe("col-plan");
+
+    emit({
+      type: "step:queue_cleared",
+      issueId: "iss-3",
+      projectId: "p1",
+      columnId: "col-plan",
+    });
+    expect(useSteps.getState().byIssue["iss-3"]?.queuedColumnId).toBeUndefined();
+  });
+
+  it("a failed hydration retries on the next call", async () => {
+    vi.mocked(stepParkedList).mockRejectedValueOnce(new Error("ipc down"));
+    await hydrateParkedSteps("p1");
+    expect(useSteps.getState().byIssue).toEqual({});
+
+    vi.mocked(stepParkedList).mockResolvedValue([
+      {
+        issueId: "iss-3",
+        projectId: "p1",
+        columnId: "col-plan",
+        provider: "fable",
+        model: null,
+        effort: null,
+      },
+    ]);
+    await hydrateParkedSteps("p1");
+    expect(useSteps.getState().byIssue["iss-3"]?.queuedColumnId).toBe("col-plan");
   });
 
   it("a launch supersedes the card's derived state", async () => {
