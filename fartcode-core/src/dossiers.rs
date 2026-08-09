@@ -556,7 +556,12 @@ fn fingerprint(path: &Path) -> Result<(u64, Option<std::time::SystemTime>), Erro
 /// so the replacement is atomic on the target filesystem and two
 /// concurrent writers can never share a temp path. A failed rename cleans
 /// up after itself rather than littering the user's repo.
-fn atomic_write(target: &Path, content: &str) -> Result<(), Error> {
+///
+/// Crate-visible since E19-02 (#71): `crate::skills` writes into the same
+/// repositories under the same contract, and a second implementation of
+/// "durably replace a file in a stranger's checkout" is a second place to
+/// get it wrong.
+pub(crate) fn atomic_write(target: &Path, content: &str) -> Result<(), Error> {
     let dir = target
         .parent()
         .ok_or_else(|| Error::Internal(format!("dossier path has no parent: {target:?}")))?;

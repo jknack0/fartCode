@@ -49,7 +49,12 @@ use crate::app::App;
 /// The cost, accepted deliberately: the feature is inert until #74 lands.
 /// The reasoning lives with the setting itself —
 /// [`fartcode_core::settings::BaseProjectSettings::feature_dossiers`].
-fn consented(app: &App, project_id: &str) -> bool {
+///
+/// Crate-visible since E19-02 (#71): the seeded feature-log skill and the
+/// step-prompt append instruction (`crate::skills`) write into — and talk
+/// about — the same repository, so they must ask the same question. One
+/// gate, not three that can drift apart.
+pub(crate) fn consented(app: &App, project_id: &str) -> bool {
     let Ok(Some(project)) = app.projects.get(project_id) else {
         return false;
     };
@@ -66,8 +71,9 @@ fn consented(app: &App, project_id: &str) -> bool {
 }
 
 /// The materialized worktree root of a task, or `None` when it has no
-/// workspace row / no path / the directory is gone.
-fn task_worktree(app: &App, task_id: &str) -> Option<PathBuf> {
+/// workspace row / no path / the directory is gone. Crate-visible since
+/// E19-02 (#71) — the skill scaffold is seeded into the same worktree.
+pub(crate) fn task_worktree(app: &App, task_id: &str) -> Option<PathBuf> {
     let conn = app.db.conn().lock().ok()?;
     let path: Option<String> = conn
         .query_row(

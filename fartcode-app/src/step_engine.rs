@@ -521,8 +521,20 @@ fn resolve_agent(
 }
 
 /// The step's prompt: the reference packet (built by the SAME builder as
-/// dispatch), framed by the column's step_prompt when one is set.
-fn step_prompt_for(column: &BoardColumn, issue: &Issue) -> String {
+/// dispatch), framed by the column's step_prompt when one is set, and — for
+/// a consenting project whose card has a dossier — ending with the
+/// feature-log append instruction (E19-02, #71; ADR-0038 item 2).
+///
+/// The instruction is injected HERE rather than seeded into
+/// `SEED_COLUMNS[].step_prompt` at project-create time, which is where the
+/// ticket first pointed. A stored prompt is written before consent is
+/// asked, survives consent being revoked, is edited by users, and cannot
+/// follow a [`fartcode_core::skills::FEATURE_LOG_VERSION`] bump without a
+/// migration — four ways for a project that declined to end up holding an
+/// instruction to write dossiers. Assembly time is the only place that can
+/// read today's answer, so the seeded columns keep their NULL prompts (=
+/// the built-in dispatch packet) and the instruction rides the packet.
+fn step_prompt_for(app: &App, column: &BoardColumn, issue: &Issue) -> String {
     let finished: Vec<String> = issue
         .blockers
         .iter()
@@ -530,7 +542,8 @@ fn step_prompt_for(column: &BoardColumn, issue: &Issue) -> String {
         .map(|b| b.title.clone())
         .collect();
     let packet = build_dispatch_prompt(issue, &finished);
-    compose_step_prompt(column.step_prompt.as_deref(), &packet)
+    let composed = compose_step_prompt(column.step_prompt.as_deref(), &packet);
+    crate::skills::with_append_instruction(app, issue, &column.name, composed)
 }
 
 /// The engine's move: enter `column_id`, then do what the column says.
@@ -754,12 +767,12 @@ fn launch_step(
     let (task, issue, prompt, reattached) = match existing_task {
         Some(task) if reattach_ok => (TaskDto::from(&task), issue, String::new(), true),
         Some(task) => {
-            let prompt = step_prompt_for(column, &issue);
+            let prompt = step_prompt_for(app, column, &issue);
             (TaskDto::from(&task), issue, prompt, false)
         }
         None => {
             let (task, issue) = provision_issue_task(app, &issue)?;
-            let prompt = step_prompt_for(column, &issue);
+            let prompt = step_prompt_for(app, column, &issue);
             (task, issue, prompt, false)
         }
     };
