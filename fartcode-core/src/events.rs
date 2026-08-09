@@ -82,6 +82,27 @@ pub enum InternalEvent {
         id: String,
         project_id: String,
     },
+    /// A card CHANGED COLUMN — emitted by the enter primitive alongside
+    /// the coarse `IssueUpdated`, which says only "something about this
+    /// card changed".
+    ///
+    /// Both endpoints ride the event because only the emitter knows them:
+    /// the writer holds `previous_column` and the target in the same
+    /// transaction, while any later reader sees just the current column
+    /// and has to guess what it moved from (E19-01 fix round — the
+    /// dossier appender used to diff against an in-memory map, which was
+    /// wrong under rapid moves and unbounded in memory). `from` is `None`
+    /// only for a card that had no column, which the E18-07 backfill
+    /// makes an out-of-contract row.
+    ///
+    /// Not forwarded to the frontend: `IssueUpdated` already fires for the
+    /// same move and is what the UI refetches on.
+    IssueColumnChanged {
+        id: String,
+        project_id: String,
+        from: Option<String>,
+        to: String,
+    },
 
     // Step engine (E18-04/05, #63/#64; ADR-0037 items 2–4)
     /// Directive event: an agent step wants an agent running — the

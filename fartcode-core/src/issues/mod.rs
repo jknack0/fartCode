@@ -812,6 +812,19 @@ impl IssueStore {
                 }
             }
         }
+        // E19-01: the MOVE, with both endpoints, for consumers that need
+        // to know what changed rather than merely that something did. Only
+        // the emitter holds the "from" — a later reader sees just the
+        // current column. Emitted before `IssueUpdated` so a subscriber
+        // handling both sees the specific fact first.
+        if issue.column_id.as_deref() != Some(column_id) {
+            self.event_bus.send(InternalEvent::IssueColumnChanged {
+                id: id.into(),
+                project_id: issue.project_id.clone(),
+                from: issue.column_id.clone(),
+                to: column_id.to_string(),
+            });
+        }
         self.event_bus.send(InternalEvent::IssueUpdated {
             id: id.into(),
             project_id: issue.project_id.clone(),
@@ -1544,19 +1557,32 @@ mod tests {
         assert_eq!(moved_b.position, 1);
         let front = store.move_to(&b.id, Lane::InProgress, Some(0)).unwrap();
         assert_eq!(front.position, 0);
-        assert!(matches!(
-            rx.try_recv().unwrap(),
-            InternalEvent::IssueUpdated { ref id, .. } if id == &a.id
-        ));
-        assert!(matches!(
-            rx.try_recv().unwrap(),
-            InternalEvent::IssueUpdated { ref id, .. } if id == &b.id
-        ));
-        assert!(matches!(
-            rx.try_recv().unwrap(),
-            InternalEvent::IssueUpdated { ref id, .. } if id == &b.id
-        ));
-        assert!(rx.try_recv().is_err(), "exactly one event per move");
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
+        }
+        let updated: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                InternalEvent::IssueUpdated { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            updated,
+            vec![a.id.as_str(), b.id.as_str(), b.id.as_str()],
+            "exactly one IssueUpdated per move"
+        );
+        // E19-01: the two real column CHANGES also announce themselves;
+        // the third move is a same-column reorder and must not.
+        let moves: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                InternalEvent::IssueColumnChanged { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(moves, vec![a.id.as_str(), b.id.as_str()]);
         // New effect: the mirror now points at the seeded In Progress
         // column.
         let in_progress = col_store
@@ -2033,12 +2059,76 @@ mod tests {
         ));
         assert!(matches!(
             rx.try_recv().unwrap(),
+            InternalEvent::IssueColumnChanged { ref id, .. } if id == &a.id
+        ));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
             InternalEvent::IssueUpdated { ref id, .. } if id == &a.id
         ));
         assert!(matches!(
             rx.try_recv().unwrap(),
             InternalEvent::IssueDeleted { ref id, .. } if id == &a.id
         ));
+    }
+
+    /// E19-01 fix round: the move event carries BOTH endpoints, because
+    /// only the emitter knows the one the card left. A same-column entry
+    /// is not a move and stays silent.
+    #[test]
+    fn column_change_event_carries_both_endpoints() {
+        let store = fixture();
+        let col_store = columns::ColumnStore::new(store.db.clone());
+        let columns = col_store.list_for_project("p1").unwrap();
+        let ready = columns
+            .iter()
+            .find(|c| c.seed_lane.as_deref() == Some("ready"))
+            .unwrap();
+        let review = columns
+            .iter()
+            .find(|c| c.seed_lane.as_deref() == Some("in_review"))
+            .unwrap();
+
+        let a = store.create(new_issue("a")).unwrap();
+        let landing = a.column_id.clone().unwrap();
+        let mut rx = store.event_bus.subscribe();
+
+        store.enter_column(&a.id, &ready.id, None).unwrap();
+        match rx.try_recv().unwrap() {
+            InternalEvent::IssueColumnChanged {
+                id,
+                project_id,
+                from,
+                to,
+            } => {
+                assert_eq!(id, a.id);
+                assert_eq!(project_id, "p1");
+                assert_eq!(from.as_deref(), Some(landing.as_str()));
+                assert_eq!(to, ready.id);
+            }
+            other => panic!("expected IssueColumnChanged, got {other:?}"),
+        }
+        let _ = rx.try_recv(); // the coarse IssueUpdated that follows
+
+        // Re-entering the SAME column is a reattach, not a move.
+        store.enter_column(&a.id, &ready.id, None).unwrap();
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            InternalEvent::IssueUpdated { .. }
+        ));
+        assert!(
+            rx.try_recv().is_err(),
+            "no move event for a same-column entry"
+        );
+
+        // And a real move reports the column it just left.
+        store.enter_column(&a.id, &review.id, None).unwrap();
+        match rx.try_recv().unwrap() {
+            InternalEvent::IssueColumnChanged { from, to, .. } => {
+                assert_eq!(from.as_deref(), Some(ready.id.as_str()));
+                assert_eq!(to, review.id);
+            }
+            other => panic!("expected IssueColumnChanged, got {other:?}"),
+        }
     }
 
     #[test]

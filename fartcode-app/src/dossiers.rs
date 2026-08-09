@@ -5,22 +5,25 @@
 //! resolution, `issues.dossier_path`, and the event subscriber that appends
 //! machine breadcrumbs to `## Timeline`.
 //!
-//! **Two invariants, both load-bearing.**
+//! **Three invariants, all load-bearing.**
 //!
-//! 1. *Creation never fails a dispatch.* [`create_for_task`] returns
-//!    `Option<String>` and swallows every error into a `tracing::warn!`.
-//!    A read-only repo, a declined project, a vanished worktree — all leave
+//! 1. *No consent, no write — on EVERY path.* [`consented`] gates both
+//!    creation and every append. Consent is not a one-time admission
+//!    ticket: turning the switch off must stop the breadcrumbs too, not
+//!    just future dossiers.
+//! 2. *Creation never fails a dispatch.* [`create_for_task`] returns an
+//!    `Option` and swallows every error into a `tracing::warn!`. A
+//!    read-only repo, a declined project, a vanished worktree — all leave
 //!    `dossier_path` NULL and the agent running. The feature is memory,
 //!    not a gate (ADR-0038 item 3: declining still dispatches).
-//! 2. *Appending never blocks the emitting path.* The subscriber owns its
+//! 3. *Appending never blocks the emitting path.* The subscriber owns its
 //!    own task and does its filesystem work inside `spawn_blocking`, per
 //!    AGENTS.md "Tauri commands and the main thread" — the bus sender never
 //!    waits on a disk write, and a failed append logs instead of
 //!    propagating.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use rusqlite::OptionalExtension;
 
@@ -35,11 +38,17 @@ use crate::app::App;
 
 /// Whether this project consented to dossier writes (ADR-0038 item 3).
 ///
-/// `None` (never asked) resolves to **true** — the interim behavior
-/// documented on [`fartcode_core::settings::BaseProjectSettings::feature_dossiers`],
-/// where the reasoning lives. An unreadable settings row resolves to
-/// **false**: when consent cannot be established, do not write to someone's
-/// repo.
+/// **Fail closed.** `None` — never asked, and the state of every project
+/// until #74's consent card ships — resolves to **false**, as does an
+/// unreadable settings row. Writing files into someone's repository is a
+/// side effect on their property; the dispatch prompt tells the agent to
+/// commit as it goes, so an unrequested dossier does not sit quietly in a
+/// worktree, it lands in their pull request. The only defensible default
+/// for "we have not asked" is the same as for "we could not tell": don't.
+///
+/// The cost, accepted deliberately: the feature is inert until #74 lands.
+/// The reasoning lives with the setting itself —
+/// [`fartcode_core::settings::BaseProjectSettings::feature_dossiers`].
 fn consented(app: &App, project_id: &str) -> bool {
     let Ok(Some(project)) = app.projects.get(project_id) else {
         return false;
@@ -48,7 +57,7 @@ fn consented(app: &App, project_id: &str) -> bool {
         .settings
         .get_project_settings(project_id, std::path::Path::new(&project.path))
     {
-        Ok(settings) => settings.feature_dossiers.unwrap_or(true),
+        Ok(settings) => settings.feature_dossiers.unwrap_or(false),
         Err(e) => {
             tracing::warn!(project_id, error = %e, "dossier consent unreadable — not writing");
             false
@@ -90,24 +99,20 @@ fn task_worktree(app: &App, task_id: &str) -> Option<PathBuf> {
 /// column cannot mint a second dossier: later entries reuse the same
 /// task/worktree and the `dossier_path` already on the row.
 ///
-/// Returns the repo-relative path when the dossier is in place (freshly
-/// written or adopted), `None` in every refusal or failure case. Never
-/// returns `Err`: a dispatch must not die because a markdown file could
-/// not be written.
-pub fn create_for_task(app: &App, issue: &Issue, task_id: &str) -> Option<String> {
+/// Returns the UPDATED issue when the dossier is in place (freshly written
+/// or adopted), `None` in every refusal or failure case.
+///
+/// Returning the issue rather than the path is deliberate: it leaves the
+/// caller with nothing fallible to do afterwards. An earlier version made
+/// `provision_issue_task` re-read the row and propagate the read's error,
+/// which turned a dossier bookkeeping failure into a failed dispatch —
+/// exactly the thing this feature must never do.
+pub fn create_for_task(app: &App, issue: &Issue, task_id: &str) -> Option<Issue> {
     if !consented(app, &issue.project_id) {
         tracing::debug!(issue = %issue.id, "feature dossiers off for this project — not writing");
         return None;
     }
     let worktree = task_worktree(app, task_id)?;
-
-    // A re-provisioned card keeps the dossier it already has: reuse the
-    // stored path rather than re-deriving a slug from a title that may
-    // have been edited since.
-    let rel = issue
-        .dossier_path
-        .clone()
-        .unwrap_or_else(|| dossiers::dossier_relative_path(issue));
 
     // Only an `agent_step` column is named in the birth line. The legacy
     // `issue_dispatch` path provisions BEFORE it moves the card, so the
@@ -123,31 +128,41 @@ pub fn create_for_task(app: &App, issue: &Issue, task_id: &str) -> Option<String
         .map(|c| c.name);
     let header = dossiers::backfilled_header(issue, column_name.as_deref());
 
-    match dossiers::create_dossier(&worktree, &rel, &header) {
-        Ok(true) => tracing::info!(issue = %issue.id, path = %rel, "feature dossier created"),
-        Ok(false) => {
-            tracing::info!(issue = %issue.id, path = %rel, "feature dossier adopted (already present)")
-        }
-        Err(e) => {
-            // ADR-0038: memory, not a gate. Log and leave the path NULL.
-            tracing::warn!(issue = %issue.id, path = %rel, error = %e, "feature dossier write failed");
-            return None;
-        }
+    // The core picks the final path: it adopts only this card's own
+    // dossier and steps around anything else living at the slug — a
+    // hand-written `docs/features/<slug>.md` is someone's document, not a
+    // vacancy.
+    let placed =
+        match dossiers::place_dossier(&worktree, issue, &header, issue.dossier_path.as_deref()) {
+            Ok(placed) => placed,
+            Err(e) => {
+                // ADR-0038: memory, not a gate. Log and leave the path NULL.
+                tracing::warn!(issue = %issue.id, error = %e, "feature dossier write failed");
+                return None;
+            }
+        };
+    if placed.created {
+        tracing::info!(issue = %issue.id, path = %placed.rel_path, "feature dossier created");
+    } else {
+        tracing::info!(issue = %issue.id, path = %placed.rel_path, "feature dossier adopted");
     }
 
-    if issue.dossier_path.as_deref() != Some(rel.as_str()) {
-        if let Err(e) = app.issues.update(
-            &issue.id,
-            IssuePatch {
-                dossier_path: Some(Some(rel.clone())),
-                ..Default::default()
-            },
-        ) {
+    if issue.dossier_path.as_deref() == Some(placed.rel_path.as_str()) {
+        return Some(issue.clone());
+    }
+    match app.issues.update(
+        &issue.id,
+        IssuePatch {
+            dossier_path: Some(Some(placed.rel_path.clone())),
+            ..Default::default()
+        },
+    ) {
+        Ok(updated) => Some(updated),
+        Err(e) => {
             tracing::warn!(issue = %issue.id, error = %e, "recording dossier_path failed");
-            return None;
+            None
         }
     }
-    Some(rel)
 }
 
 // ---------------------------------------------------------------------------
@@ -162,59 +177,40 @@ pub fn create_for_task(app: &App, issue: &Issue, task_id: &str) -> Option<String
 /// are backfilled into the header at birth ([`create_for_task`]) rather
 /// than appended, because they predate the file.
 ///
-/// Writes only while a worktree exists: every append resolves the card's
-/// linked task → workspace path → dossier file, and a missing link, a
-/// pruned worktree, or a deleted file all mean "record nothing"
-/// (ADR-0038 item 2: post-teardown events go unrecorded).
+/// Writes only while a worktree exists AND consent stands: every append
+/// re-checks [`consented`] and resolves the card's linked task → workspace
+/// path → dossier file. A withdrawn consent, a missing link, a pruned
+/// worktree, or a deleted file all mean "record nothing" (ADR-0038 item 2:
+/// post-teardown events go unrecorded).
 pub struct TimelineAppender {
     app: Arc<App>,
-    /// Last column observed per issue — a column MOVE is a change in this
-    /// map, since `IssueUpdated` is emitted for every field/edge/link write
-    /// and carries no column. Seeded from the DB at [`Self::seed`] so a
-    /// move made right after a restart is still recorded.
-    last_column: Mutex<HashMap<String, String>>,
 }
 
 impl TimelineAppender {
     pub fn new(app: Arc<App>) -> Self {
-        Self {
-            app,
-            last_column: Mutex::new(HashMap::new()),
-        }
-    }
-
-    /// Boot backfill of the column map (mirrors the search indexer's
-    /// pattern): only cards that HAVE a dossier can ever be appended to,
-    /// so only those are tracked.
-    pub fn seed(&self) {
-        let Ok(conn) = self.app.db.conn().lock() else {
-            return;
-        };
-        let Ok(mut stmt) =
-            conn.prepare("SELECT id, column_id FROM issues WHERE dossier_path IS NOT NULL")
-        else {
-            return;
-        };
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
-        });
-        let Ok(rows) = rows else { return };
-        let mut map = match self.last_column.lock() {
-            Ok(map) => map,
-            Err(_) => return,
-        };
-        for entry in rows.flatten() {
-            if let (id, Some(column)) = entry {
-                map.insert(id, column);
-            }
-        }
+        Self { app }
     }
 
     /// Resolves a card to `(worktree root, repo-relative dossier path)`, or
-    /// `None` when there is nothing writable — no dossier, no linked task,
-    /// no worktree on disk, or the file itself is gone with the branch.
+    /// `None` when there is nothing we may write — consent withdrawn, no
+    /// dossier, no linked task, no worktree on disk, or the file itself is
+    /// gone with the branch.
+    ///
+    /// The consent check lives HERE rather than at the four event arms so
+    /// there is exactly one place to forget it. An existing dossier is not
+    /// standing permission: flipping the project switch off must stop the
+    /// breadcrumbs too, or "off" would only mean "no NEW files".
     fn target(&self, issue_id: &str) -> Option<(PathBuf, String)> {
         let issue = self.app.issues.get(issue_id).ok().flatten()?;
+        self.target_for(&issue)
+    }
+
+    /// [`Self::target`] for a card already in hand — lets the PR fan-out
+    /// resolve many cards without re-reading each row.
+    fn target_for(&self, issue: &Issue) -> Option<(PathBuf, String)> {
+        if !consented(&self.app, &issue.project_id) {
+            return None;
+        }
         let rel = issue.dossier_path.clone()?;
         let task_id = issue.linked_task_id.as_deref()?;
         // A deleted task clears the link (ON DELETE SET NULL), but check
@@ -275,37 +271,28 @@ impl TimelineAppender {
                 let fact = format!("{} · settled", self.column_name(column_id));
                 self.append(issue_id, &fact, None);
             }
-            // `IssueUpdated` fires for every field/edge/link write and says
-            // nothing about columns, so the move is detected by diffing the
-            // card's current column against the last one seen.
-            InternalEvent::IssueUpdated { id, .. } => self.on_issue_updated(id),
+            // The move arrives with BOTH endpoints from the emitter, which
+            // is the only place that knows them. (This used to diff the
+            // card's current column against an in-memory map — read at
+            // handler time, so rapid moves recorded the wrong "from", and
+            // the map grew without bound.)
+            InternalEvent::IssueColumnChanged { id, from, to, .. } => {
+                let fact = match from {
+                    Some(from) => format!(
+                        "column · {} → {}",
+                        self.column_name(from),
+                        self.column_name(to)
+                    ),
+                    None => format!("column → {}", self.column_name(to)),
+                };
+                self.append(id, &fact, None);
+            }
             InternalEvent::PrUpdated {
                 workspace_id,
                 pr_url,
             } => self.on_pr_updated(workspace_id, pr_url),
             _ => {}
         }
-    }
-
-    fn on_issue_updated(&self, issue_id: &str) {
-        let Ok(Some(issue)) = self.app.issues.get(issue_id) else {
-            return;
-        };
-        let Some(column_id) = issue.column_id.clone() else {
-            return;
-        };
-        let previous = match self.last_column.lock() {
-            Ok(mut map) => map.insert(issue_id.to_string(), column_id.clone()),
-            Err(_) => return,
-        };
-        // First sighting (a card created after boot) seeds the map without
-        // inventing a move it never saw.
-        let Some(previous) = previous else { return };
-        if previous == column_id {
-            return;
-        }
-        let fact = format!("column → {}", self.column_name(&column_id));
-        self.append(issue_id, &fact, None);
     }
 
     fn on_pr_updated(&self, workspace_id: &str, pr_url: &str) {
@@ -345,21 +332,42 @@ impl TimelineAppender {
             _ => return,
         };
         let fact = format!("{verb} · {pr_url}");
-        for issue_id in issue_ids {
-            self.append(&issue_id, &fact, Some(&fact));
+        // One workspace is one project, so consent is read once for the
+        // whole fan-out rather than once per card.
+        let issues: Vec<Issue> = issue_ids
+            .iter()
+            .filter_map(|id| self.app.issues.get(id).ok().flatten())
+            .collect();
+        let Some(project_id) = issues.first().map(|i| i.project_id.clone()) else {
+            return;
+        };
+        if !consented(&self.app, &project_id) {
+            return;
+        }
+        let line = dossiers::timeline_line(&fact);
+        for issue in issues {
+            let Some((worktree, rel)) = self.target_for(&issue) else {
+                continue;
+            };
+            if let Err(e) = dossiers::append_timeline(&worktree, &rel, &line, Some(&fact)) {
+                tracing::warn!(issue = %issue.id, path = %rel, error = %e, "dossier PR breadcrumb failed");
+            }
         }
     }
 }
 
-/// Boot wiring: seed the column map, then subscribe for the app's lifetime.
+/// Boot wiring: subscribe for the app's lifetime.
 ///
 /// The filesystem work runs on the blocking pool, never on the async
 /// runtime's worker (AGENTS.md) — the event bus is a broadcast channel, so
 /// a slow subscriber only lags itself, but a blocked runtime worker is
 /// everyone's problem.
+///
+/// Stateless by construction since the fix round: the move event carries
+/// its own endpoints, so there is no boot backfill to get wrong and no
+/// restart window where a move goes unrecorded.
 pub fn spawn_dossier_timeline(app: Arc<App>) {
     let appender = Arc::new(TimelineAppender::new(app.clone()));
-    appender.seed();
     tauri::async_runtime::spawn(async move {
         let mut rx = app.event_bus.subscribe();
         loop {

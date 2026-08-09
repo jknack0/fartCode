@@ -344,18 +344,23 @@ pub struct BaseProjectSettings {
     ///
     /// Three states, and the third is the point:
     /// - `Some(true)`  — write dossiers.
-    /// - `Some(false)` — REFUSE. The backend writes nothing and
-    ///   `dossier_path` stays NULL; declining still dispatches
-    ///   (ADR-0038 item 3: "declining runs the step without memory").
-    /// - `None`        — NOT YET ASKED. Interim behavior until #74 lands:
-    ///   **write**. Rationale, stated so it can be argued with: the
-    ///   consent card ships before this is user-visible, so the only
-    ///   population that hits the unset state is dogfood; and since
-    ///   declining still dispatches, the failure mode of writing is one
-    ///   unwanted markdown file on a feature branch — recoverable, and
-    ///   visible in the diff — versus a feature that silently never works
-    ///   for anyone whose consent row predates the card. #74 must write
-    ///   `Some(_)` on both answers so this default stops mattering.
+    /// - `Some(false)` — REFUSE. The backend writes nothing, existing
+    ///   dossiers stop collecting breadcrumbs, and `dossier_path` stays
+    ///   NULL; declining still dispatches (ADR-0038 item 3: "declining
+    ///   runs the step without memory").
+    /// - `None`        — NOT YET ASKED. **Also refuses**, and today that
+    ///   is every project: nothing can set this until #74's consent card
+    ///   ships, so unset is the universal state, not an edge case.
+    ///
+    /// Unset fails CLOSED because the alternative is not "one stray
+    /// markdown file on a branch". The dispatch prompt tells the agent to
+    /// commit as it goes, so an unrequested dossier rides the feature
+    /// branch into the user's pull request — a visible, public artifact
+    /// they never asked for, in a repository that is theirs and not ours.
+    /// "We have not asked yet" and "we could not read the answer" deserve
+    /// the same response: don't. The accepted cost is that the feature is
+    /// inert until #74 lands and starts writing `Some(_)` on BOTH answers,
+    /// at which point this default stops being reachable in practice.
     ///
     /// DB-backed (base), deliberately NOT in the shareable subset: consent
     /// to write into a checkout is the local user's, not something a
