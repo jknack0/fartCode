@@ -997,6 +997,9 @@ export interface BlockerRefDto {
   id: string;
   title: string;
   lane: Lane;
+  /** True when the blocker's column carries counts_as_done (E18-03,
+   * ADR-0037 item 6) — key "is it finished?" off this, not the lane. */
+  countsAsDone: boolean;
 }
 
 /** One board card. `blocked` is derived server-side (any blocker lane ≠

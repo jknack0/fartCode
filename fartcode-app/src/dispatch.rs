@@ -67,13 +67,16 @@ pub fn issue_dispatch_core(app: &App, issue_id: &str) -> Result<DispatchOutcome,
         Some(p) => p.clone(),
         None => app.settings.get(&DEFAULT_AGENT).map_err(String::from)?,
     };
-    let done_blockers: Vec<String> = issue
+    // Finished-blocker summary keys off counts_as_done (E18-03, #77;
+    // ADR-0037 item 6) — the blocker's COLUMN flag, never the 'done' lane
+    // string, decides what the prompt calls finished.
+    let finished_blockers: Vec<String> = issue
         .blockers
         .iter()
-        .filter(|b| b.lane == Lane::Done)
+        .filter(|b| b.counts_as_done)
         .map(|b| b.title.clone())
         .collect();
-    let prompt = build_dispatch_prompt(&issue, &done_blockers);
+    let prompt = build_dispatch_prompt(&issue, &finished_blockers);
 
     let params = create_task_params(
         app,

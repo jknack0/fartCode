@@ -6,9 +6,12 @@
 //! fills when a card spawns an implementation agent.
 //!
 //! Invariants enforced here:
-//! - **Blocked status is derived, never stored** (ADR-0032): an issue is
-//!   blocked iff any direct blocker's lane ≠ done. A blocker landing in
-//!   Done unblocks its dependents with no writes.
+//! - **Blocked status is derived, never stored** (ADR-0032; flag-keyed by
+//!   E18-03/ADR-0037 item 6): an issue is blocked iff any direct blocker
+//!   sits outside a `counts_as_done` column — the blocker's column resolved
+//!   through the `seed_lane` mapping while lane stays authoritative. A
+//!   blocker landing in a counts-as-done column (seeded Done, or any later
+//!   terminal column) unblocks its dependents with no writes.
 //! - **Cycles are rejected at edge creation** — a `blocked by` edge that
 //!   would close a loop (including a self-edge) fails with
 //!   [`Error::IssueDependencyCycle`]. Cross-project edges are rejected:
@@ -90,6 +93,10 @@ pub struct BlockerRef {
     pub id: String,
     pub title: String,
     pub lane: Lane,
+    /// True when the blocker's column carries `counts_as_done` (E18-03,
+    /// ADR-0037 item 6) — the flag every "is it finished?" consumer keys
+    /// off instead of the `'done'` lane string.
+    pub counts_as_done: bool,
 }
 
 /// An issue row with its derived board state.
@@ -151,9 +158,10 @@ pub struct IssuePatch {
 
 /// Builds the dispatch prompt packet (E17-03, #57; ADR-0032) — issue
 /// title, body, acceptance criteria, PRD by reference (the agent reads the
-/// file), one-line Done-blocker notes, and the branch/worktree footer.
-/// Empty sections are omitted entirely.
-pub fn build_dispatch_prompt(issue: &Issue, done_blocker_titles: &[String]) -> String {
+/// file), one-line finished-blocker notes (blockers whose column carries
+/// `counts_as_done`, E18-03/ADR-0037 item 6), and the branch/worktree
+/// footer. Empty sections are omitted entirely.
+pub fn build_dispatch_prompt(issue: &Issue, finished_blocker_titles: &[String]) -> String {
     let mut out = String::from(
         "You are implementing an issue from the project board.\n\n\
          # Issue\n",
@@ -179,7 +187,7 @@ pub fn build_dispatch_prompt(issue: &Issue, done_blocker_titles: &[String]) -> S
         }
     }
     let has_prd = issue.prd_path.is_some();
-    if has_prd || !done_blocker_titles.is_empty() {
+    if has_prd || !finished_blocker_titles.is_empty() {
         out.push_str("\n# Context\n");
         if let Some(path) = &issue.prd_path {
             out.push_str("- PRD: ");
@@ -191,10 +199,15 @@ pub fn build_dispatch_prompt(issue: &Issue, done_blocker_titles: &[String]) -> S
             }
             out.push_str(" — read it before starting.\n");
         }
-        for title in done_blocker_titles {
+        // Honest wording (ADR-0037 item 6): the board flag says the card is
+        // finished; it does not by itself prove a merge landed.
+        for title in finished_blocker_titles {
             out.push_str("- Dependency \"");
             out.push_str(title);
-            out.push_str("\" is done — its work is in the default branch.\n");
+            out.push_str(
+                "\" is marked finished on the board — expect its work on the \
+                 default branch (verify if your change depends on it).\n",
+            );
         }
     }
     out.push_str(
@@ -216,10 +229,23 @@ const COLUMNS: &str = "id, project_id, title, body, acceptance, lane, position, 
      provider, model, prd_path, prd_section, linked_task_id, external_ref, \
      created_at, updated_at";
 
-/// Derived-blocked subquery: true when any direct blocker's lane ≠ done.
+/// Derived-blocked subquery (E18-03, #77; ADR-0037 item 6): true when any
+/// direct blocker is NOT in a `counts_as_done` column.
+///
+/// The blocker's column is resolved through the seed_lane mapping
+/// (`b.lane` → `board_columns.seed_lane`, same project) because lane is
+/// still authoritative in the E18 spike; a blocker whose lane maps to no
+/// column counts as UNFINISHED (fail toward blocked). When `column_id`
+/// becomes authoritative (E18-07 era) only the resolution join changes —
+/// to `c.id = b.column_id` — because the `counts_as_done` flag test is
+/// already the path doing the work here.
 const BLOCKED_SQL: &str = "EXISTS(SELECT 1 FROM issue_dependencies d \
      JOIN issues b ON b.id = d.blocked_by_id \
-     WHERE d.issue_id = issues.id AND b.lane != 'done')";
+     WHERE d.issue_id = issues.id \
+       AND NOT EXISTS(SELECT 1 FROM board_columns c \
+            WHERE c.project_id = b.project_id \
+              AND c.seed_lane = b.lane \
+              AND c.counts_as_done = 1))";
 
 fn issue_from_row(row: &rusqlite::Row) -> rusqlite::Result<Issue> {
     let lane: String = row.get(5)?;
@@ -629,6 +655,9 @@ impl IssueStore {
 
 /// Fills `blockers` for each issue with one query over the project(s) in
 /// the slice (badge hover list: blocker id/title/lane, title-ordered).
+/// Each ref carries the derived `counts_as_done` of the blocker's column
+/// (same seed_lane resolution as [`BLOCKED_SQL`]) so consumers key off the
+/// flag, never the lane string.
 fn attach_blockers(conn: &rusqlite::Connection, issues: &mut [Issue]) -> Result<(), Error> {
     if issues.is_empty() {
         return Ok(());
@@ -646,7 +675,11 @@ fn attach_blockers(conn: &rusqlite::Connection, issues: &mut [Issue]) -> Result<
         .collect::<Vec<_>>()
         .join(", ");
     let mut stmt = conn.prepare(&format!(
-        "SELECT d.issue_id, b.id, b.title, b.lane
+        "SELECT d.issue_id, b.id, b.title, b.lane,
+                EXISTS(SELECT 1 FROM board_columns c
+                        WHERE c.project_id = b.project_id
+                          AND c.seed_lane = b.lane
+                          AND c.counts_as_done = 1)
            FROM issue_dependencies d
            JOIN issues b ON b.id = d.blocked_by_id
            JOIN issues i ON i.id = d.issue_id
@@ -655,12 +688,14 @@ fn attach_blockers(conn: &rusqlite::Connection, issues: &mut [Issue]) -> Result<
     ))?;
     let rows = stmt.query_map(rusqlite::params_from_iter(project_ids), |row| {
         let lane: String = row.get(3)?;
+        let counts_as_done: i64 = row.get(4)?;
         Ok((
             row.get::<_, String>(0)?,
             BlockerRef {
                 id: row.get(1)?,
                 title: row.get(2)?,
                 lane: Lane::parse(&lane).unwrap_or(Lane::Backlog),
+                counts_as_done: counts_as_done != 0,
             },
         ))
     })?;
@@ -684,15 +719,21 @@ mod tests {
     fn fixture() -> Arc<IssueStore> {
         let db: Arc<dyn Db> = SqliteDb::init(Some(":memory:")).unwrap();
         let bus = Arc::new(BroadcastEventBus::new(16));
-        db.conn()
-            .lock()
-            .unwrap()
-            .execute_batch(
+        {
+            let conn = db.conn().lock().unwrap();
+            conn.execute_batch(
                 "INSERT INTO projects (id, name, path) VALUES
                     ('p1', 'proj', '/tmp/proj'),
                     ('p2', 'other', '/tmp/other');",
             )
             .unwrap();
+            // Every real project carries the seeded default board
+            // (migration 0006 backfill / project-create hook), and blocked
+            // derivation reads counts_as_done off it (E18-03) — so the
+            // fixture seeds it too.
+            columns::seed_default_columns(&conn, "p1").unwrap();
+            columns::seed_default_columns(&conn, "p2").unwrap();
+        }
         Arc::new(IssueStore::new(db, bus))
     }
 
@@ -889,6 +930,11 @@ mod tests {
         ));
     }
 
+    /// GOLDEN (E18-03 parity): on the seeded board Done is the only
+    /// counts_as_done column, so the flag-keyed derivation must behave
+    /// exactly like the old `lane != 'done'` string test this ticket
+    /// removed. Flag-specific behavior lives in
+    /// `counts_as_done_flag_drives_blocked_derivation`.
     #[test]
     fn blocked_is_derived_from_direct_blocker_lanes() {
         let store = fixture();
@@ -912,6 +958,81 @@ mod tests {
         assert!(!store.get(&c.id).unwrap().unwrap().blocked);
     }
 
+    /// E18-03 (#77): the counts_as_done COLUMN flag — not the 'done' lane
+    /// string — decides what finishes a blocker.
+    #[test]
+    fn counts_as_done_flag_drives_blocked_derivation() {
+        let store = fixture();
+        let col_store = columns::ColumnStore::new(store.db.clone());
+        let a = store.create(new_issue("a")).unwrap();
+        let b = store.create(new_issue("b")).unwrap();
+        store.add_dependency(&a.id, &b.id).unwrap();
+
+        let column_id = |seed_lane: &str| -> String {
+            col_store
+                .list_for_project("p1")
+                .unwrap()
+                .into_iter()
+                .find(|c| c.seed_lane.as_deref() == Some(seed_lane))
+                .unwrap()
+                .id
+        };
+
+        // Seeded board: In Review does not count as done → blocked.
+        store.move_to(&b.id, Lane::InReview, None).unwrap();
+        assert!(store.get(&a.id).unwrap().unwrap().blocked);
+
+        // A SECOND counts_as_done column (In Review, flagged through the
+        // public column API) unblocks the dependent even though the
+        // blocker's lane string is 'in_review', not 'done'.
+        col_store
+            .update(
+                &column_id("in_review"),
+                columns::ColumnPatch {
+                    counts_as_done: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let a_read = store.get(&a.id).unwrap().unwrap();
+        assert!(!a_read.blocked);
+        assert!(a_read.blockers[0].counts_as_done);
+
+        // Strip the flag from Done: a blocker sitting in lane 'done' no
+        // longer finishes anything — proof the string test is gone.
+        col_store
+            .update(
+                &column_id("done"),
+                columns::ColumnPatch {
+                    counts_as_done: Some(false),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        store.move_to(&b.id, Lane::Done, None).unwrap();
+        let a_read = store.get(&a.id).unwrap().unwrap();
+        assert!(a_read.blocked);
+        assert!(!a_read.blockers[0].counts_as_done);
+
+        // Unmapped-lane fallback counts as UNFINISHED. Lane authority
+        // means no public API can host an issue in a column without a
+        // seed_lane (move_to only speaks Lane), so the orphan state is
+        // constructed directly: unmap the flagged In Review column and
+        // park the blocker's lane on it.
+        store.move_to(&b.id, Lane::InReview, None).unwrap();
+        assert!(!store.get(&a.id).unwrap().unwrap().blocked); // flagged + mapped
+        store
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE board_columns SET seed_lane = NULL
+                  WHERE project_id = 'p1' AND seed_lane = 'in_review'",
+                [],
+            )
+            .unwrap();
+        assert!(store.get(&a.id).unwrap().unwrap().blocked);
+    }
+
     #[test]
     fn blockers_attached_for_the_hover_list() {
         let store = fixture();
@@ -925,6 +1046,13 @@ mod tests {
         let titles: Vec<&str> = a.blockers.iter().map(|b| b.title.as_str()).collect();
         assert_eq!(titles, vec!["b", "c"]); // title-ordered
         assert_eq!(a.blockers[0].lane, Lane::Backlog);
+        assert!(!a.blockers[0].counts_as_done);
+        // The flag rides along per blocker (E18-03): c lands in Done —
+        // counts as done on the seeded board — while b stays backlog.
+        store.move_to(&c.id, Lane::Done, None).unwrap();
+        let a = store.get(&a.id).unwrap().unwrap();
+        let flags: Vec<bool> = a.blockers.iter().map(|b| b.counts_as_done).collect();
+        assert_eq!(flags, vec![false, true]);
         // Blockers list is on the DEPENDENT only.
         assert!(store.get(&b.id).unwrap().unwrap().blockers.is_empty());
     }
@@ -1096,7 +1224,11 @@ mod tests {
         assert!(prompt.contains("Store tokens encrypted."));
         assert!(prompt.contains("- round-trips a token"));
         assert!(prompt.contains("PRD: docs/prds/oauth.md (section: ## Flow)"));
-        assert!(prompt.contains("Dependency \"Design schema\" is done"));
+        // Honest flag-keyed wording (E18-03): "marked finished on the
+        // board", never a bare merge-state assertion from a lane name.
+        assert!(prompt.contains("Dependency \"Design schema\" is marked finished on the board"));
+        assert!(prompt.contains("expect its work on the default branch"));
+        assert!(!prompt.contains("is done — its work is in the default branch"));
         assert!(prompt.contains("dedicated branch in a git worktree"));
 
         // Empty sections are omitted, never rendered blank.
