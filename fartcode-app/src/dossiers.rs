@@ -67,7 +67,11 @@ fn consented(app: &App, project_id: &str) -> bool {
 
 /// The materialized worktree root of a task, or `None` when it has no
 /// workspace row / no path / the directory is gone.
-fn task_worktree(app: &App, task_id: &str) -> Option<PathBuf> {
+///
+/// Shared with `crate::dossier_index` (E19-03), which resolves the same
+/// worktree copy of the same file to reindex it — one resolver, so the
+/// appender and the indexer can never disagree about where the dossier is.
+pub(crate) fn task_worktree(app: &App, task_id: &str) -> Option<PathBuf> {
     let conn = app.db.conn().lock().ok()?;
     let path: Option<String> = conn
         .query_row(

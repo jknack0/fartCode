@@ -310,7 +310,13 @@ pub async fn project_git_pull(app: State<'_, Arc<App>>, project_id: String) -> R
             .get(&project_id)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("project not found: {project_id}"))?;
-        fartcode_git::remote::pull(&project.path).map_err(String::from)
+        fartcode_git::remote::pull(&project.path).map_err(String::from)?;
+        // E19-03 (#72; ADR-0038 item 4): a pull is when merged dossiers
+        // appear in the main checkout, so it is the second reindex trigger
+        // (the first is step settle, on the worktree copy). Already off the
+        // main thread inside `off_main_thread`; never fails the pull.
+        crate::dossier_index::reindex_project(&app, &project_id);
+        Ok(())
     })
     .await
 }
