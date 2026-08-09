@@ -45,6 +45,7 @@ import {
   type TaskDto,
 } from "../../lib/tauri";
 import {
+  blockerColumnName,
   columnConfigSummary,
   columnIdForIssue,
   columnSublineTone,
@@ -56,7 +57,7 @@ import { useColumns } from "../../store/columns";
 import { defaultAgentName, useDependencies } from "../../store/dependencies";
 import { useScripts } from "../../store/scripts";
 import { useSidebar } from "../../store/sidebar";
-import { useSteps } from "../../store/steps";
+import { hydrateParkedSteps, useSteps } from "../../store/steps";
 import { useUi } from "../../store/ui";
 import {
   agentLive,
@@ -189,6 +190,10 @@ export default function BoardView({ projectId }: { projectId: string }) {
   // subline), so make sure the dependency cache is warm.
   useEffect(() => {
     void useColumns.getState().load(projectId);
+    // Parks live backend-side in memory; a webview reload lost them until
+    // this re-seed (E18-09). The park-reconcile effect below then raises
+    // the queued dot / confirm overlay exactly as if the event arrived.
+    void hydrateParkedSteps(projectId);
     if (useDependencies.getState().deps.length === 0) {
       void useDependencies.getState().load();
     }
@@ -881,6 +886,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
         <ConfirmOverlay
           pending={pending}
           branch={pendingBranch}
+          columns={columns}
           onKeep={dismissPending}
           onGo={confirmPending}
           summary={summaryOf(pending.column)}
@@ -897,12 +903,14 @@ export default function BoardView({ projectId }: { projectId: string }) {
 function ConfirmOverlay({
   pending,
   branch,
+  columns,
   summary,
   onKeep,
   onGo,
 }: {
   pending: PendingConfirm;
   branch: string | null;
+  columns: BoardColumnDto[];
   summary: string;
   onKeep: () => void;
   onGo: () => void;
@@ -924,8 +932,14 @@ function ConfirmOverlay({
   // step parked — which is what the footer must say.
   let keepLabel = `esc keep in ${from?.name ?? column.name}`;
   if (pending.kind === "blocked") {
-    // Finished-ness is the column's counts_as_done flag, never a name.
+    // Finished-ness is the column's counts_as_done flag, never a name —
+    // and the copy names each blocker's OWN column (§8c binding copy:
+    // "#a is blocked by #b, still in <blocker's column>"). One shared
+    // column reads as a single "still in X" tail; blockers spread across
+    // columns get per-blocker parentheticals, so the line never lies.
     const active = issue.blockers.filter((b) => !b.countsAsDone);
+    const blockerColumns = active.map((b) => blockerColumnName(b, columns));
+    const oneColumn = new Set(blockerColumns).size === 1;
     body = (
       <>
         {self} is blocked by{" "}
@@ -933,9 +947,11 @@ function ConfirmOverlay({
           <Fragment key={b.id}>
             {i > 0 && ", "}
             <span className="board-confirm-ref">{blockerLabel(b.title)}</span>
+            {!oneColumn && <> ({blockerColumns[i]})</>}
           </Fragment>
         ))}
-        , still in progress. Send to {column.name} anyway?
+        {oneColumn && <>, still in {blockerColumns[0]}</>}. Send to {column.name}{" "}
+        anyway?
       </>
     );
     // Name the agent: the column's pinned provider first, else the issue's,

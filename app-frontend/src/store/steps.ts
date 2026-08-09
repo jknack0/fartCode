@@ -24,6 +24,7 @@
 import { create } from "zustand";
 import {
   onFartcodeEvent,
+  stepParkedList,
   terminalListForTask,
   terminalOpenAgent,
   terminalWrite,
@@ -47,6 +48,9 @@ export interface StepFlags {
 
 interface StepsState {
   byIssue: Record<string, StepFlags>;
+  /** Projects whose parks were re-seeded from `step_parked_list` (E18-09
+   * rehydration) — once per project per webview lifetime. */
+  hydrated: Record<string, boolean>;
   /** Surfaced by the board — a directive that could not be carried out
    * (agent binary missing, PTY refused) must not fail silently. */
   error: string | null;
@@ -66,6 +70,7 @@ interface StepsState {
 
 export const useSteps = create<StepsState>((set) => ({
   byIssue: {},
+  hydrated: {},
   error: null,
 
   setError: (message) => set({ error: message }),
@@ -103,6 +108,47 @@ export const useSteps = create<StepsState>((set) => ({
       return { byIssue };
     }),
 }));
+
+/** Re-seeds a project's parked-step state from `step_parked_list` (E18-09
+ * rehydration). Parks live in the backend's in-memory registry; step:*
+ * events cover live sessions only, so a webview reload loses the queued
+ * dot and the confirm overlay until this runs. Once per project per
+ * webview lifetime (a failure un-marks so the next mount retries).
+ *
+ * Dedupe against events: an issue that ALREADY has flags is skipped —
+ * the event stream is fresher than the query snapshot (a `step:queued`
+ * that raced in must not be overwritten, and a park an event announced
+ * is the same park this query would announce, so seeding it twice would
+ * only re-render the same state). `step:queue_cleared` still clears
+ * seeded parks through the normal reducer. */
+export async function hydrateParkedSteps(projectId: string): Promise<void> {
+  const store = useSteps.getState();
+  if (store.hydrated[projectId]) return;
+  useSteps.setState((s) => ({ hydrated: { ...s.hydrated, [projectId]: true } }));
+  try {
+    const parks = await stepParkedList(projectId);
+    useSteps.setState((s) => {
+      const byIssue = { ...s.byIssue };
+      for (const park of parks) {
+        if (byIssue[park.issueId]) continue; // an event already spoke
+        byIssue[park.issueId] = {
+          queuedColumnId: park.columnId,
+          queuedProvider: park.provider,
+          queuedModel: park.model,
+          queuedEffort: park.effort,
+        };
+      }
+      return { byIssue };
+    });
+  } catch {
+    // Quiet like the board's other fetches; retry on the next mount.
+    useSteps.setState((s) => {
+      const hydrated = { ...s.hydrated };
+      delete hydrated[projectId];
+      return { hydrated };
+    });
+  }
+}
 
 /** Focus a task by id — the launch directive only carries the id, and a
  * freshly provisioned task may not be in the sidebar cache yet. */

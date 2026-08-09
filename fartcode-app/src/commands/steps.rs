@@ -19,7 +19,7 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::App;
-use crate::step_engine::EnterOutcome;
+use crate::step_engine::{EnterOutcome, ParkedStepDto};
 
 /// The engine's move: enter a column, then run/queue/nothing per the
 /// column's kind and `on_enter`. `position: None` appends.
@@ -50,6 +50,24 @@ pub async fn step_confirm(
 ) -> Result<EnterOutcome, String> {
     let app = app.inner().clone();
     tauri::async_runtime::spawn_blocking(move || crate::step_engine::confirm_step(&app, &issue_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// The project's current parks (E18-09 rehydration): parks live only in
+/// the in-memory engine registry and `step:*` events cover live sessions
+/// only, so a webview reload loses queued-dot / confirm-overlay state —
+/// this query is how the frontend re-seeds it. Read-only: no state
+/// mutation, no events. The registry read is cheap, but resolving each
+/// park's agent config touches SQLite (issue + column + settings), so the
+/// body leaves the IPC thread like the other step commands.
+#[tauri::command]
+pub async fn step_parked_list(
+    app: State<'_, Arc<App>>,
+    project_id: String,
+) -> Result<Vec<ParkedStepDto>, String> {
+    let app = app.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::step_engine::parked_list(&app, &project_id))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -254,6 +272,63 @@ mod tests {
             InternalEvent::StepQueueCleared { issue_id, column_id, .. }
                 if issue_id == &issue.id && column_id == &gate
         ));
+    }
+
+    /// Rehydration query (E18-09): park a step, query, and get the same
+    /// shape `step:queued` carried — issue/project/column plus the
+    /// RESOLVED agent config (column NULL provider → project default).
+    /// The query is a pure read: a second call answers identically and
+    /// no step events are emitted by either.
+    #[tokio::test]
+    async fn step_parked_list_returns_the_projects_parks_with_resolved_agent() {
+        let app = fixture();
+        let issue = new_issue(&app, "park me");
+        let gate = queue_step(&app, "Gate");
+        let tapp = managed(&app);
+
+        let queued = issue_enter_column(
+            tapp.state::<Arc<App>>(),
+            issue.id.clone(),
+            gate.clone(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(queued.step, "queued");
+
+        let mut rx = app.event_bus.subscribe();
+        let parks = step_parked_list(tapp.state::<Arc<App>>(), "p1".into())
+            .await
+            .unwrap();
+        assert_eq!(parks.len(), 1);
+        assert_eq!(parks[0].issue_id, issue.id);
+        assert_eq!(parks[0].project_id, "p1");
+        assert_eq!(parks[0].column_id, gate);
+        assert_eq!(parks[0].provider, "claude"); // project default
+        assert_eq!(parks[0].model, None);
+        assert_eq!(parks[0].effort, None);
+
+        // Pure read: same answer twice, and no events emitted.
+        let again = step_parked_list(tapp.state::<Arc<App>>(), "p1".into())
+            .await
+            .unwrap();
+        assert_eq!(again.len(), 1);
+        assert!(step_events(&mut rx).is_empty());
+    }
+
+    #[tokio::test]
+    async fn step_parked_list_is_empty_for_a_project_with_no_parks() {
+        let app = fixture();
+        let tapp = managed(&app);
+        let parks = step_parked_list(tapp.state::<Arc<App>>(), "p1".into())
+            .await
+            .unwrap();
+        assert!(parks.is_empty());
+        // Unknown project is an empty list too, never an error.
+        let parks = step_parked_list(tapp.state::<Arc<App>>(), "ghost".into())
+            .await
+            .unwrap();
+        assert!(parks.is_empty());
     }
 
     /// The #80 property: the body leaves the calling thread. The DB

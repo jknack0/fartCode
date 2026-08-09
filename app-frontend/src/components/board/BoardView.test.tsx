@@ -18,6 +18,7 @@ vi.mock("../../lib/tauri", () => ({
   projectGithubIssues: vi.fn(() => Promise.resolve([])),
   gitCommitState: vi.fn(() => Promise.resolve({ branch: null })),
   stepConfirm: vi.fn(() => Promise.resolve({ step: "launched", issue: null, launch: null })),
+  stepParkedList: vi.fn(() => Promise.resolve([])),
   columnList: vi.fn(() => Promise.resolve([])),
   hostDependencyList: vi.fn(() => Promise.resolve([])),
   hostDependencyRegistrySummary: vi.fn(() => Promise.resolve(null)),
@@ -136,7 +137,7 @@ beforeEach(async () => {
   vi.mocked(columnList).mockResolvedValue(COLUMNS);
   vi.mocked(issueList).mockResolvedValue(ISSUES);
   useColumns.setState({ byProject: {}, loading: {}, loaded: {}, error: null });
-  useSteps.setState({ byIssue: {}, error: null });
+  useSteps.setState({ byIssue: {}, hydrated: {}, error: null });
   useUi.setState({ boardDetailIssueId: null });
   setViewportWidth(1440);
 });
@@ -218,6 +219,63 @@ describe("h/l walks every column", () => {
     expect(document.querySelector(".board-card.focused")).toBeNull();
     setViewportWidth(800);
     await waitFor(() => expect(activeStripColumn()).toMatch(/^ready/));
+  });
+});
+
+// §8c binding copy: "#a is blocked by #b, still in <blocker's column>.
+// Send to <Column> anyway?" — the blocker's column comes from config
+// (blockerColumnName), never a hardcoded phrase.
+describe("blocked confirm copy", () => {
+  const BLOCK_COLUMNS = [
+    column({ id: "c-backlog", name: "Backlog", position: 0, isLanding: true }),
+    column({ id: "c-plan", name: "Plan", position: 1, kind: "agent_step" }),
+    column({ id: "c-quick", name: "Quick", position: 2, kind: "agent_step", onEnter: "run" }),
+    column({ id: "c-review", name: "In Review", position: 3, kind: "human_gate" }),
+  ];
+
+  function blocker(id: string, columnId: string) {
+    return { id, title: id, lane: "backlog" as const, columnId, countsAsDone: false };
+  }
+
+  async function renderBlockedBoard(blockers: ReturnType<typeof blocker>[]) {
+    const blocked: IssueDto = { ...issue("a", "c-backlog", 0), blocked: true, blockers };
+    vi.mocked(columnList).mockResolvedValue(BLOCK_COLUMNS);
+    vi.mocked(issueList).mockResolvedValue([blocked]);
+    render(<BoardView projectId="p1" />);
+    await waitFor(() => expect(document.querySelectorAll(".board-card")).toHaveLength(1));
+    press("j"); // focus the blocked card
+    await waitFor(() =>
+      expect(document.querySelector(".board-card.focused")).toHaveTextContent("a"),
+    );
+    press("L", true); // shift+L: move it onto the Plan step → blocked confirm
+    await waitFor(() => expect(document.querySelector(".board-confirm")).not.toBeNull());
+    return document.querySelector(".board-confirm")!;
+  }
+
+  it("names the blocker's own column, from config", async () => {
+    const overlay = await renderBlockedBoard([blocker("b", "c-quick")]);
+    expect(overlay.textContent).toContain("is blocked by b, still in Quick. Send to Plan anyway?");
+    expect(overlay.textContent).not.toContain("still in progress");
+  });
+
+  it("names each blocker's column when they sit in different columns", async () => {
+    const overlay = await renderBlockedBoard([
+      blocker("b", "c-quick"),
+      blocker("c", "c-review"),
+    ]);
+    expect(overlay.textContent).toContain(
+      "is blocked by b (Quick), c (In Review). Send to Plan anyway?",
+    );
+  });
+
+  it("collapses to one shared column name when every blocker is in it", async () => {
+    const overlay = await renderBlockedBoard([
+      blocker("b", "c-quick"),
+      blocker("c", "c-quick"),
+    ]);
+    expect(overlay.textContent).toContain(
+      "is blocked by b, c, still in Quick. Send to Plan anyway?",
+    );
   });
 });
 
