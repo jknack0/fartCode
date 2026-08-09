@@ -47,6 +47,19 @@ const SYNC_OK: &[(&str, &str)] = &[
     ("list_projects", "SELECT over projects"),
     ("list_tasks", "SELECT over tasks"),
     ("toggle_pin", "single-row read + UPDATE"),
+    ("task_archive", "sets archived_at on one row + emits an event"),
+    ("task_restore", "clears archived_at on one row + emits an event"),
+    // -- pipeline columns (ADR-0037; ColumnStore is SQLite-only) ----------
+    ("column_list", "SELECT over board_columns, ordered by position"),
+    ("column_create", "INSERT + landing/kind validation, all in SQLite"),
+    ("column_update", "single-row UPDATE + validation reads"),
+    ("column_delete", "occupancy check + DELETE + position compaction"),
+    ("column_reorder", "permutation check + position UPDATEs"),
+    // -- settings (kv + one small project-file write) ---------------------
+    ("set_default_agent", "single kv write + setting:changed event"),
+    ("project_settings_share", "writes the small .fartCode.json, no subprocess"),
+    ("project_settings_provenance", "reads settings layers, no I/O beyond that file"),
+    ("host_dependency_registry_summary", "in-memory registry fold, no PATH scan"),
     // -- issues board (SQLite only; ARCHITECTURE §13) ---------------------
     ("issue_create", "INSERT + lane position bookkeeping"),
     ("issue_list", "SELECT + in-memory blocked-status derivation"),
@@ -212,7 +225,13 @@ fn no_tauri_command_blocks_the_main_thread() {
                 .unwrap_or("");
             if !func.is_async {
                 violations.push(must_offload_message(&entry.name, &site, why, false));
-            } else if !func.code.contains("spawn_blocking") {
+            // `off_main_thread` (commands/git.rs) is a thin await over
+            // `spawn_blocking` with its own test proving the closure leaves
+            // the caller — count it as the offload it is. Any future helper
+            // of that shape must be added here, not worked around.
+            } else if !func.code.contains("spawn_blocking")
+                && !func.code.contains("off_main_thread(")
+            {
                 violations.push(must_offload_message(&entry.name, &site, why, true));
             }
             continue;

@@ -1622,8 +1622,8 @@ mod tests {
         // of the fix — the card really is in that column.)
         store.move_to(&b.id, Lane::InReview, None).unwrap();
         assert!(!store.get(&a.id).unwrap().unwrap().blocked); // flagged + mapped
-        // Each `conn()` is a temporary — holding the guard across a
-        // `store.get()` would re-lock the same mutex and deadlock.
+                                                              // Each `conn()` is a temporary — holding the guard across a
+                                                              // `store.get()` would re-lock the same mutex and deadlock.
         store
             .conn()
             .unwrap()
