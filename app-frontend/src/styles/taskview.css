@@ -20,11 +20,18 @@
   min-width: 0;
 }
 
+/* `project /` on an ad-hoc task; `project / <column> / <ref> /` once the
+   task has a card (ADR-0037). The extra segments are why it clips rather
+   than pushing the actions row off a narrow window — one voice, one size,
+   no new emphasis inside the crumb. */
 .tv-crumb {
   font-family: var(--font-mono);
   font-size: 11px;
   color: #66666d;
   white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tv-title {
@@ -83,6 +90,112 @@
 
 /* A failed run turns the whole label red-text (`setup ✗`, 7b). */
 .tv-action.failed {
+  color: var(--fc-bad-text);
+}
+
+/* Confirm-free spend is brighter (DESIGN.md "Pipeline board"): a pipeline
+   action whose target is an `on_enter: run` agent step reads --text-muted,
+   queue-mode stays at the key colour. Presence + brightness is the whole
+   warning — no new colour, no badge. Same tones the board's column
+   sublines use, from the same `columnSublineTone`. */
+.tv-action[data-tone="run"] {
+  color: #9a9aa1;
+}
+
+/* A pipeline action the engine refused. Truncates rather than pushing the
+   crumb out of the 46px row; the full text is the title, and clicking
+   dismisses. */
+.tv-pipeline-error {
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -- pipeline overlays (column picker + parked-step confirm) --------------- */
+
+/* Overlay-card grammar comes from .fc-overlay-card (modals.css); this only
+   sets the width, as .fc-confirm/.fc-composer do. */
+.tv-pipeline-overlay {
+  width: 420px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  outline: none;
+}
+
+.tv-pick-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+/* Boxless rows: the focus wash + a 2px accent left rail, never a border
+   (DESIGN.md Components). */
+.tv-pick-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 7px 18px;
+  border: none;
+  border-left: 2px solid transparent;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tv-pick-row:hover {
+  background: var(--hover-bg);
+}
+
+.tv-pick-row[data-focused] {
+  background: var(--focus-bg);
+  border-left-color: var(--accent);
+}
+
+.tv-pick-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text-card);
+}
+
+/* Where the card is now — information, not consent, so mono and --meta,
+   exactly like the board's `landing` tag. */
+.tv-pick-here {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--meta);
+}
+
+/* The column's config, in the SAME strings the board headers show. */
+.tv-pick-sub {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--meta-dim);
+}
+
+.tv-pick-sub[data-tone="queue"] {
+  color: var(--meta);
+}
+
+.tv-pick-sub[data-tone="run"] {
+  color: #9a9aa1;
+}
+
+/* §5g blocked note: dispatching blocked work is a confirm on the board, so
+   the picker says it before the move rather than after the gesture. */
+.tv-pick-note {
+  padding: 0 18px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
   color: var(--fc-bad-text);
 }
 
