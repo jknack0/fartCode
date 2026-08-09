@@ -4,6 +4,7 @@
 // (fartcode-core/src/issue_proposal.rs) and this prompt must change together.
 
 import type { BoardColumnDto } from "../../lib/tauri";
+import { useColumns } from "../../store/columns";
 
 /**
  * Prompt contract version (ADR-0032). BUMP THIS whenever the proposal
@@ -83,6 +84,15 @@ export function buildPmPrompt(columns: BoardColumnDto[]): string {
   return pmPromptBody(boardProse(columns));
 }
 
-/** Board-agnostic prompt (generic wording). Callers with the project's
- * column list should use [`buildPmPrompt`] instead. */
-export const PM_PROMPT = buildPmPrompt([]);
+/** The prompt for a project, built from its live column config. Loads the
+ * columns first (cached per project), so a send handler can await it. A
+ * failed load degrades to the board-agnostic wording rather than blocking
+ * the send — every real send names the project's actual columns. */
+export async function pmPromptForProject(projectId: string): Promise<string> {
+  try {
+    await useColumns.getState().load(projectId);
+  } catch {
+    // fall through to whatever the cache holds (usually nothing)
+  }
+  return buildPmPrompt(useColumns.getState().byProject[projectId] ?? []);
+}

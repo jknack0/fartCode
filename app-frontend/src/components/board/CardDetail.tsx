@@ -33,7 +33,7 @@ import { useConversations } from "../../store/conversations";
 import { useScripts } from "../../store/scripts";
 import { useSidebar } from "../../store/sidebar";
 import { useUi } from "../../store/ui";
-import { PM_PROMPT } from "../projectChat/pmPrompt";
+import { pmPromptForProject } from "../projectChat/pmPrompt";
 import { agentLive } from "./runState";
 
 const NO_COLUMNS: never[] = [];
@@ -198,7 +198,9 @@ export default function CardDetail({
         sel.text +
         "\n```\n\n" +
         q;
-      await useConversations.getState().sendPrompt(conv.id, full, PM_PROMPT);
+      await useConversations
+        .getState()
+        .sendPrompt(conv.id, full, await pmPromptForProject(projectId));
       closeAsk();
       const ui = useUi.getState();
       ui.setBoardDetailIssueId(null);

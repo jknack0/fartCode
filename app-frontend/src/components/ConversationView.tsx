@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { useConversations, type PermissionPrompt } from "../store/conversations";
 import type { LiveModels, PlanEntry } from "../lib/tauri";
 import { SettledTurn, TurnBlock, NO_AWAITING } from "./TranscriptItems";
-import { PM_PROMPT } from "./projectChat/pmPrompt";
+import { pmPromptForProject } from "./projectChat/pmPrompt";
 
 const COMPOSER_MAX_ROWS = 8;
 
@@ -203,10 +203,12 @@ export default function ConversationView({
     const text = draft.trim();
     if (!text) return;
     setSendError(null);
-    void useConversations
-      .getState()
-      .sendPrompt(conversationId, text, proposalProjectId ? PM_PROMPT : undefined)
-      .catch((e) => setSendError(String(e)));
+    void (async () => {
+      const hidden = proposalProjectId
+        ? await pmPromptForProject(proposalProjectId)
+        : undefined;
+      await useConversations.getState().sendPrompt(conversationId, text, hidden);
+    })().catch((e) => setSendError(String(e)));
   };
 
   const cancel = () => {
