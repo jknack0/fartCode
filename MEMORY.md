@@ -67,6 +67,51 @@ Fixed in passing: `tests/migrations.rs` and `tests/db_integration.rs`
 migration COUNTS had been stale since #66 added 0008 (both binaries red
 on clean main); now 10.
 
+## E19-01 DOSSIERS LANDED (2026-08-09, 6217dd9 + bbaca0c) — #70 closed
+
+Migration 0009 adds issues.dossier_path. Dossier is born INSIDE the
+worktree at first agent_step entry (in provision_issue_task, the shared
+helper), with a backfilled header (title/body/acceptance, PRD link,
+derived provenance, blockers) and a `## Timeline` section the app owns.
+TimelineAppender subscribes to the bus (StepLaunch non-reattach,
+StepSettled, IssueColumnChanged, PrUpdated) and appends breadcrumbs only
+while a worktree exists. Dossier work NEVER fails a dispatch.
+
+REVIEW ROUND WAS THE BIG ONE (40 agents, 34 verdicts, 24 stood -> 8
+distinct defects, 10 refuted). Rules that came out of it, all now
+enforced by tests:
+- CONSENT FAILS CLOSED. `feature_dossiers: Option<bool>` is base (NOT
+  shareable — consent to write into a checkout must never ride a
+  teammate's .fartCode.json). None = never asked = DO NOT WRITE. The
+  first build had unwrap_or(true), which would have committed unrequested
+  files into users' PRs (the dispatch prompt tells agents to commit as
+  they go). #74 must persist Some(_) on BOTH answers.
+- Consent is checked on the APPEND path too (TimelineAppender::target),
+  not just at birth — one choke point for all four event arms.
+- NEVER adopt a file just because the path exists. `inspect() -> Occupant
+  {Free, OurDossier, OtherDossier, Foreign}`: adoption needs the
+  DOSSIER_MARKER *and* this card's `- card:` line; anything else gets a
+  disambiguated path. docs/features/ is a common hand-written convention —
+  we were one line away from appending machine breadcrumbs into people's
+  own specs.
+- User text can FORGE our anchors: card bodies are heading-demoted, and
+  the Timeline anchor resolves by `<!-- fartcode:timeline -->` sentinel
+  (rposition heading fallback).
+- Repo writes are atomic (uuid temp + rename, mirroring
+  settings/service.rs) with a re-stat/recompute window. A plain fs::write
+  is O_TRUNC: a crash left an empty dossier that adopt-never-clobber
+  would then happily adopt.
+- Column moves emit InternalEvent::IssueColumnChanged {from,to} from
+  enter_column (which holds both endpoints) — never re-read state at
+  handler time. The appender is stateless now.
+Suites: core 240, app lib 91 + dossiers integration 17, frontend 180.
+
+OPERATIONAL: a review VERIFIER agent edited source in the build worktree
+(neutered on_pr_updated to test a finding) and restored its backup to the
+wrong path. Harness flagged it; both trees verified clean before landing.
+Review agents must read, not mutate — check `git status` in the worktree
+after any review round before cherry-picking.
+
 ## #68 templated confirms + park rehydration LANDED (2026-08-09, 63090ba + 508d00b) — #68 closed
 
 Most of §8c had landed with the render round; this closed the three real
