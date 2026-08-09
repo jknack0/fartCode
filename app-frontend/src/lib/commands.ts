@@ -15,6 +15,12 @@ import {
   terminalOpenAgent,
   terminalWrite,
 } from "./tauri";
+import {
+  runAdvanceStep,
+  runConfirmStep,
+  runMoveToColumn,
+  runOpenCardDetail,
+} from "./taskPipeline";
 import { useCommitState } from "../store/commit-state";
 import { useConversations } from "../store/conversations";
 import { useScripts, type ScriptType } from "../store/scripts";
@@ -388,6 +394,52 @@ export function registerAllCommands(): void {
       );
     },
   });
+  // -- pipeline (task view, ADR-0037) ---------------------------------------
+  //
+  // The board's decision points, reachable from the surface the user is
+  // actually on. Chords: ⌘⇧→ is the board's ⇧l "move the card one column
+  // right" under the app's ⌘ prefix; ⌘⇧D is `dispatch`, the app's own verb
+  // for firing a step (it opens the naming confirm, never spends on the
+  // press, so the ⌘D adjacency cannot cost anything); ⌘⇧M is move; ⌘⇧I is
+  // the issue. None collide with a registered chord or the reference
+  // keymap (⌘T ⌘⇧T ⌘J ⌘. ⌘D ⌘W ⌘N ⌘K ⌘⌫ ⌘\ ⌘⇧1 ⌘⇧2 ⌘⇧. ⌘⌥↑/↓ ⌘1-9 ⌘↵
+  // ⌘⇧A ⌘⇧O), and ⌘⇧3/4/5 are deliberately avoided — macOS owns them for
+  // screenshots. Every one no-ops on a cardless (⌘N ad-hoc) task.
+  registerCommand(registry, {
+    id: "advance-step",
+    label: "Advance to the next column",
+    defaultKeys: ["⌘⇧→"],
+    scope: "task-view",
+    // ⌘⇧→ is select-to-end-of-line in a text field — the editor keeps it.
+    skipInEditor: true,
+    run: () => runAdvanceStep(),
+  });
+  registerCommand(registry, {
+    id: "confirm-step",
+    label: "Dispatch the parked step",
+    defaultKeys: ["⌘⇧D"],
+    scope: "task-view",
+    skipInEditor: true,
+    run: () => runConfirmStep(),
+  });
+  registerCommand(registry, {
+    id: "move-to-column",
+    label: "Move card to column…",
+    defaultKeys: ["⌘⇧M"],
+    scope: "task-view",
+    skipInEditor: true,
+    run: () => runMoveToColumn(),
+  });
+  registerCommand(registry, {
+    id: "open-card-detail",
+    label: "Open card detail",
+    defaultKeys: ["⌘⇧I"],
+    scope: "task-view",
+    // Navigation, like its ⌘⇧1/⌘⇧2 siblings on the same right-panel slot —
+    // it fires from a composer too.
+    run: () => runOpenCardDetail(),
+  });
+
   registerCommand(registry, {
     id: "previous-task",
     label: "Previous task",
