@@ -870,6 +870,18 @@ pub fn on_lane_move(app: &App, issue_id: &str, lane: Lane) {
             return;
         }
     }
+    on_lane_move_committed(app, issue_id, lane)
+}
+
+/// [`on_lane_move`]'s body once the pre-move lane check has been decided
+/// by the caller. Fail-closed ordering fix (#66): `issue_move` now runs
+/// the fallible `move_to` FIRST and calls this only on success, passing
+/// the PRE-move lane comparison result via the wrapper above being
+/// skipped — a refused move (seeded target column deleted) must leave
+/// the epoch registry and any park untouched. The same-lane early
+/// return keys on the PRE-move lane, so post-move callers cannot use
+/// the self-reading wrapper.
+pub fn on_lane_move_committed(app: &App, issue_id: &str, lane: Lane) {
     app.steps.begin_entry_epoch(issue_id);
     let Some(parked) = app.steps.peek_park(issue_id) else {
         return;
@@ -1334,6 +1346,97 @@ mod tests {
         // A real cross-lane drag still supersedes it.
         on_lane_move(&app, &issue.id, Lane::Ready);
         assert!(app.steps.peek_park(&issue.id).is_none());
+    }
+
+    /// Fail-closed ordering (#66 fix round, defect 1): `issue_move` to a
+    /// lane whose seeded column was deleted (legal since the flip) is a
+    /// typed refusal — and a refused move must be side-effect-free: the
+    /// park survives (step_confirm still fires), no `StepQueueCleared`,
+    /// and the entry epoch is untouched (the consumed-session set and
+    /// the bound launch entry are still there — a settle bookkeeping
+    /// wipe for a move that never happened was the corruption).
+    #[test]
+    fn refused_issue_move_leaves_park_epoch_and_registry_untouched() {
+        use tauri::Manager as _;
+
+        let app = fixture();
+        let col_store = ColumnStore::new(app.db.clone());
+        // Delete seeded Ready (empty shelf, not landing, no advance
+        // target) so lane "ready" no longer resolves.
+        col_store.delete(&column(&app, "Ready").id).unwrap();
+
+        let issue = new_issue(&app, "card");
+        let quick = column(&app, "Quick");
+        col_store
+            .update(
+                &quick.id,
+                ColumnPatch {
+                    on_enter: Some(OnEnter::Queue),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        enter_column_from_command(&app, &issue.id, &quick.id, None).unwrap();
+        assert!(app.steps.peek_park(&issue.id).is_some());
+        // Seed epoch-scoped state an epoch bump would wipe: a consumed
+        // session and a bound, settled launch entry.
+        {
+            let mut st = app.steps.lock();
+            st.consumed
+                .entry(issue.id.clone())
+                .or_default()
+                .insert("acp:sess".into());
+            st.launches.insert(
+                issue.id.clone(),
+                LaunchEntry {
+                    column_id: quick.id.clone(),
+                    project_id: "p1".into(),
+                    session: Some("acp:sess".into()),
+                    settled: true,
+                    delivered: true,
+                },
+            );
+        }
+
+        let mut rx = app.event_bus.subscribe();
+        let tapp = tauri::test::mock_app();
+        tapp.handle().manage(app.clone());
+        let err = crate::commands::issues::issue_move(
+            tapp.state::<Arc<App>>(),
+            issue.id.clone(),
+            "ready".into(),
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("mirrors lane 'ready'"),
+            "typed refusal expected, got: {err}"
+        );
+
+        // Side-effect-free: park intact, nothing announced, card unmoved.
+        assert!(app.steps.peek_park(&issue.id).is_some());
+        assert!(step_events(&mut rx).is_empty());
+        assert_eq!(
+            issue_column_id(&app, &issue.id).as_deref(),
+            Some(quick.id.as_str())
+        );
+        // Epoch untouched: consumed set and bound launch entry survive.
+        {
+            let st = app.steps.lock();
+            assert!(st.consumed[&issue.id].contains("acp:sess"));
+            let entry = st.launches.get(&issue.id).expect("launch entry wiped");
+            assert_eq!(entry.session.as_deref(), Some("acp:sess"));
+            assert!(entry.settled);
+        }
+        // The confirm gate still works: confirm takes the park and
+        // proceeds to launch — the repo-less fixture then fails at git
+        // provisioning, but never with the "no parked step" refusal the
+        // defect produced.
+        let confirm_err = confirm_step(&app, &issue.id).unwrap_err();
+        assert!(
+            !confirm_err.contains("no parked step"),
+            "the confirm gate was destroyed: {confirm_err}"
+        );
     }
 
     /// Fix round, findings 1/5/9 — the verifier's scenario, permanent:

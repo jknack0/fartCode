@@ -49,6 +49,47 @@ pub struct DispatchOutcome {
 /// whose seeded step was deleted (legal since the flip) fails typed and
 /// early, before a worktree is provisioned. The board's real path is
 /// `issue_enter_column`; this legacy command keeps its wire contract.
+/// The project's seeded In Progress column — the legacy dispatch target.
+/// Typed error when it was deleted (legal since the E18-07 flip).
+fn resolve_dispatch_column(
+    app: &App,
+    project_id: &str,
+) -> Result<fartcode_core::issues::columns::BoardColumn, String> {
+    app.columns
+        .list_for_project(project_id)
+        .map_err(String::from)?
+        .into_iter()
+        .find(|c| c.seed_lane.as_deref() == Some("in_progress"))
+        .ok_or_else(|| {
+            format!(
+                "project {project_id} has no seeded In Progress column (it was deleted) — \
+                 dispatch by moving the card onto an agent-step column instead"
+            )
+        })
+}
+
+/// Fail-closed precheck (#66 fix round): every typed refusal
+/// [`issue_dispatch_core`] can produce BEFORE its side effects, checked
+/// without any. `issue_dispatch` must not drop the parked step (a
+/// destructive engine side effect) until dispatch is known to be able to
+/// proceed — a refused dispatch would otherwise destroy the pending
+/// confirm gate for an operation that never happened. Mirrors the core's
+/// order: a live linked task short-circuits to reattach (which needs no
+/// column), otherwise the seeded In Progress column must exist.
+pub fn issue_dispatch_precheck(app: &App, issue_id: &str) -> Result<(), String> {
+    let issue = app
+        .issues
+        .get(issue_id)
+        .map_err(String::from)?
+        .ok_or_else(|| format!("issue not found: {issue_id}"))?;
+    if let Some(task_id) = &issue.linked_task_id {
+        if app.tasks.get(task_id).map_err(String::from)?.is_some() {
+            return Ok(()); // reattach path — no column needed
+        }
+    }
+    resolve_dispatch_column(app, &issue.project_id).map(|_| ())
+}
+
 pub fn issue_dispatch_core(app: &App, issue_id: &str) -> Result<DispatchOutcome, String> {
     let issue = app
         .issues
@@ -69,19 +110,7 @@ pub fn issue_dispatch_core(app: &App, issue_id: &str) -> Result<DispatchOutcome,
         }
     }
 
-    let dispatch_column = app
-        .columns
-        .list_for_project(&issue.project_id)
-        .map_err(String::from)?
-        .into_iter()
-        .find(|c| c.seed_lane.as_deref() == Some("in_progress"))
-        .ok_or_else(|| {
-            format!(
-                "project {} has no seeded In Progress column (it was deleted) — \
-                 dispatch by moving the card onto an agent-step column instead",
-                issue.project_id
-            )
-        })?;
+    let dispatch_column = resolve_dispatch_column(app, &issue.project_id)?;
 
     let provider = match &issue.provider {
         Some(p) => p.clone(),

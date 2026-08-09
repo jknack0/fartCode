@@ -238,6 +238,19 @@ describe("delete", () => {
     );
   });
 
+  it("landing wins over the advance-target reason (spec priority)", async () => {
+    // Backlog is BOTH the landing column and Quick's advanceTo target;
+    // with no issues anywhere, the landing reason must win.
+    vi.mocked(columnList).mockResolvedValue(
+      COLUMNS.map((c) => (c.id === "c-quick" ? { ...c, advanceTo: "c-backlog" } : c)),
+    );
+    vi.mocked(issueList).mockResolvedValue([]);
+    await renderPane();
+    expect(expand("Backlog").querySelector(".fc-col-delete-reason")).toHaveTextContent(
+      "landing column — move landing first",
+    );
+  });
+
   it("is an active control on an empty user column and calls columnDelete", async () => {
     await renderPane();
     const row = expand("Later");
