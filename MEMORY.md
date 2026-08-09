@@ -27,7 +27,20 @@ path now enforces a non-NULL column. Consequences that bite:
   front (typed error if deleted, before provisioning a worktree).
 - Wire shapes unchanged: IssueDto.columnId stays `string | null`;
   columnIdForIssue stays as defensive display resolution.
-Suites: core 215, app 87, frontend 167 (all green, workspace gate too).
+Suites: core 215, app 89, frontend 168 (all green, workspace gate too).
+
+Review round (16 agents): 11 deduped findings, 7 stood, 4 refuted — all
+7 traced to ONE root cause the flip created: paths that became fallible
+(typed deleted-seeded-column errors) whose callers still ran destructive
+step-engine side effects BEFORE the fallible call. Fixed in 144cbb0:
+`issue_move` now moves first and applies epoch/park side effects only on
+success (`on_lane_move_committed`, keyed on the captured PRE-move lane);
+`issue_dispatch_blocking` prechecks issue + In Progress resolution before
+dropping the park. Regression tests prove a refused move/dispatch leaves
+the park, epoch, and launch registry untouched. RULE going forward: when
+an infallible path becomes fallible, audit its callers for
+side-effects-before-call ordering — this class produced 7 of 7 standing
+findings.
 
 ## #67 Columns editor LANDED (2026-08-09, 64821b5 + abbca79) — #67 closed
 
