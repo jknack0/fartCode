@@ -888,6 +888,17 @@ fn text_block(text: &str) -> Result<ContentBlock, Error> {
         .map_err(|e| Error::Protocol(format!("text content block: {e}")))
 }
 
+fn stop_reason_str(reason: &StopReason) -> &'static str {
+    match reason {
+        StopReason::EndTurn => "end_turn",
+        StopReason::MaxTokens => "max_tokens",
+        StopReason::MaxTurnRequests => "max_turn_requests",
+        StopReason::Refusal => "refusal",
+        StopReason::Cancelled => "cancelled",
+        _ => "other",
+    }
+}
+
 #[cfg(test)]
 mod hidden_context_tests {
     use super::*;
@@ -914,16 +925,5 @@ mod hidden_context_tests {
         }))
         .unwrap();
         assert!(!is_hidden_context_echo(&agent));
-    }
-}
-
-fn stop_reason_str(reason: &StopReason) -> &'static str {
-    match reason {
-        StopReason::EndTurn => "end_turn",
-        StopReason::MaxTokens => "max_tokens",
-        StopReason::MaxTurnRequests => "max_turn_requests",
-        StopReason::Refusal => "refusal",
-        StopReason::Cancelled => "cancelled",
-        _ => "other",
     }
 }
