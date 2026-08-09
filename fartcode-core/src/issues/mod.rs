@@ -97,6 +97,12 @@ pub struct BlockerRef {
     /// ADR-0037 item 6) — the flag every "is it finished?" consumer keys
     /// off instead of the `'done'` lane string.
     pub counts_as_done: bool,
+    /// The blocker's effective column. `lane` cannot name a non-seeded
+    /// column, so a blocker parked in Quick used to be reported as being
+    /// in the column its stale lane pointed at — the same panel naming two
+    /// different columns for one card. `None` only when the card's lane
+    /// maps to no column at all.
+    pub column_id: Option<String>,
 }
 
 /// An issue row with its derived board state.
@@ -237,23 +243,107 @@ const COLUMNS: &str = "id, project_id, title, body, acceptance, lane, position, 
      provider, model, prd_path, prd_section, linked_task_id, external_ref, \
      column_id, created_at, updated_at";
 
-/// Derived-blocked subquery (E18-03, #77; ADR-0037 item 6): true when any
-/// direct blocker is NOT in a `counts_as_done` column.
+/// THE definition of column membership on the read side: `board_columns c`
+/// is the effective column of issue row `b`.
 ///
-/// The blocker's column is resolved through the seed_lane mapping
-/// (`b.lane` → `board_columns.seed_lane`, same project) because lane is
-/// still authoritative in the E18 spike; a blocker whose lane maps to no
-/// column counts as UNFINISHED (fail toward blocked). When `column_id`
-/// becomes authoritative (E18-07 era) only the resolution join changes —
-/// to `c.id = b.column_id` — because the `counts_as_done` flag test is
-/// already the path doing the work here.
-const BLOCKED_SQL: &str = "EXISTS(SELECT 1 FROM issue_dependencies d \
-     JOIN issues b ON b.id = d.blocked_by_id \
-     WHERE d.issue_id = issues.id \
-       AND NOT EXISTS(SELECT 1 FROM board_columns c \
-            WHERE c.project_id = b.project_id \
-              AND c.seed_lane = b.lane \
-              AND c.counts_as_done = 1))";
+/// Mirror FIRST, seeded lane as the fallback for a card that has never
+/// moved. Lane alone cannot express a non-seeded column — `enter_column`
+/// leaves `lane` untouched for Quick and user-created columns — so a
+/// lane-only join answered for the column the card used to be in. That was
+/// invisible while the board rendered five fixed lanes and became wrong on
+/// screen the moment it rendered every column: dragging a finished card
+/// out of Done into Quick left it resolving to Done, so its dependents
+/// stayed unblocked and their agents were told the work had landed.
+///
+/// `issues.column_id` is `ON DELETE SET NULL` (migration 0006), so a
+/// mirror is either valid or absent, never dangling. A card whose lane
+/// maps to no column at all matches nothing and therefore counts as
+/// UNFINISHED — failing toward blocked, the safe direction.
+const BLOCKER_COLUMN_MATCH: &str = "c.project_id = b.project_id \
+     AND (c.id = b.column_id OR (b.column_id IS NULL AND c.seed_lane = b.lane))";
+
+/// Derived-blocked subquery (E18-03, #77; ADR-0037 item 6): true when any
+/// direct blocker is NOT in a `counts_as_done` column. Membership comes
+/// from [`BLOCKER_COLUMN_MATCH`] — the same resolution `attach_blockers`
+/// uses, so the flag and the badge can never disagree.
+fn blocked_sql() -> String {
+    format!(
+        "EXISTS(SELECT 1 FROM issue_dependencies d \
+         JOIN issues b ON b.id = d.blocked_by_id \
+         WHERE d.issue_id = issues.id \
+           AND NOT EXISTS(SELECT 1 FROM board_columns c \
+                WHERE {BLOCKER_COLUMN_MATCH} \
+                  AND c.counts_as_done = 1))"
+    )
+}
+
+/// SQL expression for the effective column id of issue row `<alias>` —
+/// the write-side twin of [`BLOCKER_COLUMN_MATCH`], used to group a
+/// column's cards for renumbering.
+fn effective_column_expr(alias: &str) -> String {
+    format!(
+        "COALESCE({alias}.column_id, \
+          (SELECT c2.id FROM board_columns c2 \
+            WHERE c2.project_id = {alias}.project_id \
+              AND c2.seed_lane = {alias}.lane))"
+    )
+}
+
+/// Renumbers one column's cards to a dense 0..n-1, optionally placing
+/// `moved_id` at index `at` (`None` = append; pass `moved_id: None` to
+/// simply compact a column a card just left).
+///
+/// Board positions are single-row absolute writes with no ordering
+/// constraint, so "drop at index 0" used to leave the dropped card holding
+/// the same position as the card already there — and a stable sort then
+/// rendered it second, one slot below where it was let go. The namespace
+/// was wrong as well as the arithmetic: positions were allocated per LANE
+/// while the board renders per COLUMN, so two cards in a non-seeded column
+/// could both hold position 0 in a lane neither of them appears in, with
+/// `created_at` (second resolution) breaking the tie unpredictably.
+/// Renumbering the destination group — resolved exactly the way the board
+/// resolves membership — is what makes a drop land where it was dropped.
+fn renumber_column(
+    conn: &rusqlite::Connection,
+    project_id: &str,
+    column_id: &str,
+    moved_id: Option<&str>,
+    at: Option<i64>,
+) -> Result<(), Error> {
+    let mut ids: Vec<String> = {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT i.id FROM issues i \
+              WHERE i.project_id = ?1 AND {expr} = ?2 \
+              ORDER BY i.position, i.created_at, i.id",
+            expr = effective_column_expr("i"),
+        ))?;
+        let rows = stmt.query_map(rusqlite::params![project_id, column_id], |row| row.get(0))?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    if let Some(moved) = moved_id {
+        ids.retain(|id| id != moved);
+        let at = at.unwrap_or(ids.len() as i64).clamp(0, ids.len() as i64) as usize;
+        ids.insert(at, moved.to_string());
+    }
+    for (position, id) in ids.iter().enumerate() {
+        conn.execute(
+            "UPDATE issues SET position = ?2 WHERE id = ?1",
+            rusqlite::params![id, position as i64],
+        )?;
+    }
+    Ok(())
+}
+
+/// The issue's effective column — mirror first, seeded lane otherwise.
+fn effective_column_of(
+    conn: &rusqlite::Connection,
+    issue: &Issue,
+) -> Result<Option<String>, Error> {
+    match &issue.column_id {
+        Some(column_id) => Ok(Some(column_id.clone())),
+        None => seeded_column_for_lane(conn, &issue.project_id, issue.lane),
+    }
+}
 
 fn issue_from_row(row: &rusqlite::Row) -> rusqlite::Result<Issue> {
     let lane: String = row.get(5)?;
@@ -386,7 +476,8 @@ impl IssueStore {
     pub fn list_by_linked_task(&self, task_id: &str) -> Result<Vec<Issue>, Error> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(&format!(
-            "SELECT {COLUMNS}, {BLOCKED_SQL} FROM issues WHERE linked_task_id = ?1"
+            "SELECT {COLUMNS}, {blocked} FROM issues WHERE linked_task_id = ?1",
+            blocked = blocked_sql()
         ))?;
         let mut issues = stmt
             .query_map([task_id], issue_from_row)?
@@ -484,7 +575,10 @@ impl IssueStore {
         let conn = self.conn()?;
         let mut issue: Issue = match conn
             .query_row(
-                &format!("SELECT {COLUMNS}, {BLOCKED_SQL} FROM issues WHERE id = ?1"),
+                &format!(
+                    "SELECT {COLUMNS}, {blocked} FROM issues WHERE id = ?1",
+                    blocked = blocked_sql()
+                ),
                 [id],
                 issue_from_row,
             )
@@ -502,13 +596,14 @@ impl IssueStore {
     pub fn list_for_project(&self, project_id: &str) -> Result<Vec<Issue>, Error> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(&format!(
-            "SELECT {COLUMNS}, {BLOCKED_SQL} FROM issues
+            "SELECT {COLUMNS}, {blocked} FROM issues
               WHERE project_id = ?1
               ORDER BY CASE lane
                            WHEN 'backlog' THEN 0 WHEN 'ready' THEN 1
                            WHEN 'in_progress' THEN 2 WHEN 'in_review' THEN 3
                            WHEN 'done' THEN 4 ELSE 5
-                       END, position, created_at"
+                       END, position, created_at",
+            blocked = blocked_sql()
         ))?;
         let mut issues = stmt
             .query_map([project_id], issue_from_row)?
@@ -598,20 +693,38 @@ impl IssueStore {
         if issue.lane == lane {
             {
                 let conn = self.conn()?;
-                let position = match position {
-                    Some(p) => p,
-                    None => conn.query_row(
-                        "SELECT COALESCE(MAX(position) + 1, 0) FROM issues
-                          WHERE project_id = ?1 AND lane = ?2",
-                        rusqlite::params![issue.project_id, lane.as_str()],
-                        |row| row.get(0),
-                    )?,
-                };
-                conn.execute(
-                    "UPDATE issues SET position = ?2, updated_at = datetime('now')
-                      WHERE id = ?1",
-                    rusqlite::params![id, position],
-                )?;
+                // Renumber the card's effective COLUMN, not its lane: this
+                // is the board's within-column reorder, and `position` is
+                // the destination index AFTER the card is lifted out. A
+                // card resident in a non-seeded column reorders among the
+                // cards it is displayed with, not among its stale lane.
+                match effective_column_of(&conn, &issue)? {
+                    Some(column_id) => {
+                        renumber_column(&conn, &issue.project_id, &column_id, Some(id), position)?;
+                        conn.execute(
+                            "UPDATE issues SET updated_at = datetime('now') WHERE id = ?1",
+                            rusqlite::params![id],
+                        )?;
+                    }
+                    // No column can represent this lane (the user deleted
+                    // the seeded one) — legacy absolute write.
+                    None => {
+                        let position = match position {
+                            Some(p) => p,
+                            None => conn.query_row(
+                                "SELECT COALESCE(MAX(position) + 1, 0) FROM issues
+                                  WHERE project_id = ?1 AND lane = ?2",
+                                rusqlite::params![issue.project_id, lane.as_str()],
+                                |row| row.get(0),
+                            )?,
+                        };
+                        conn.execute(
+                            "UPDATE issues SET position = ?2, updated_at = datetime('now')
+                              WHERE id = ?1",
+                            rusqlite::params![id, position],
+                        )?;
+                    }
+                }
             }
             self.event_bus.send(InternalEvent::IssueUpdated {
                 id: id.into(),
@@ -691,41 +804,34 @@ impl IssueStore {
                     issue.project_id
                 )));
             }
+            let previous_column = effective_column_of(&conn, &issue)?;
             match seed_lane.as_deref().map(Lane::parse).transpose()? {
                 Some(lane) => {
-                    let position = match position {
-                        Some(p) => p,
-                        None => conn.query_row(
-                            "SELECT COALESCE(MAX(position) + 1, 0) FROM issues
-                              WHERE project_id = ?1 AND lane = ?2",
-                            rusqlite::params![issue.project_id, lane.as_str()],
-                            |row| row.get(0),
-                        )?,
-                    };
                     conn.execute(
-                        "UPDATE issues SET lane = ?2, position = ?3, column_id = ?4,
+                        "UPDATE issues SET lane = ?2, column_id = ?3,
                              updated_at = datetime('now')
                           WHERE id = ?1",
-                        rusqlite::params![id, lane.as_str(), position, column_id],
+                        rusqlite::params![id, lane.as_str(), column_id],
                     )?;
                 }
-                None => match position {
-                    Some(p) => {
-                        conn.execute(
-                            "UPDATE issues SET column_id = ?2, position = ?3,
-                                 updated_at = datetime('now')
-                              WHERE id = ?1",
-                            rusqlite::params![id, column_id, p],
-                        )?;
-                    }
-                    None => {
-                        conn.execute(
-                            "UPDATE issues SET column_id = ?2, updated_at = datetime('now')
-                              WHERE id = ?1",
-                            rusqlite::params![id, column_id],
-                        )?;
-                    }
-                },
+                None => {
+                    conn.execute(
+                        "UPDATE issues SET column_id = ?2, updated_at = datetime('now')
+                          WHERE id = ?1",
+                        rusqlite::params![id, column_id],
+                    )?;
+                }
+            }
+            // Position is an INDEX IN THE DESTINATION COLUMN (after the
+            // card is lifted out of it), never an absolute row value:
+            // renumbering is what makes a drop land where it was dropped
+            // instead of tying with whatever already held that slot.
+            // `None` appends.
+            renumber_column(&conn, &issue.project_id, column_id, Some(id), position)?;
+            if let Some(previous) = previous_column {
+                if previous != column_id {
+                    renumber_column(&conn, &issue.project_id, &previous, None, None)?;
+                }
             }
         }
         self.event_bus.send(InternalEvent::IssueUpdated {
@@ -860,10 +966,11 @@ impl IssueStore {
 }
 
 /// Fills `blockers` for each issue with one query over the project(s) in
-/// the slice (badge hover list: blocker id/title/lane, title-ordered).
-/// Each ref carries the derived `counts_as_done` of the blocker's column
-/// (same seed_lane resolution as [`BLOCKED_SQL`]) so consumers key off the
-/// flag, never the lane string.
+/// the slice (badge hover list, title-ordered). Each ref carries its
+/// blocker's effective COLUMN — the id so the UI can name the column the
+/// card is actually in, and the derived `counts_as_done` so consumers key
+/// off the flag, never the lane string. Membership is
+/// [`BLOCKER_COLUMN_MATCH`], the same resolution `blocked_sql` uses.
 fn attach_blockers(conn: &rusqlite::Connection, issues: &mut [Issue]) -> Result<(), Error> {
     if issues.is_empty() {
         return Ok(());
@@ -883,9 +990,9 @@ fn attach_blockers(conn: &rusqlite::Connection, issues: &mut [Issue]) -> Result<
     let mut stmt = conn.prepare(&format!(
         "SELECT d.issue_id, b.id, b.title, b.lane,
                 EXISTS(SELECT 1 FROM board_columns c
-                        WHERE c.project_id = b.project_id
-                          AND c.seed_lane = b.lane
-                          AND c.counts_as_done = 1)
+                        WHERE {BLOCKER_COLUMN_MATCH}
+                          AND c.counts_as_done = 1),
+                (SELECT c.id FROM board_columns c WHERE {BLOCKER_COLUMN_MATCH})
            FROM issue_dependencies d
            JOIN issues b ON b.id = d.blocked_by_id
            JOIN issues i ON i.id = d.issue_id
@@ -902,6 +1009,7 @@ fn attach_blockers(conn: &rusqlite::Connection, issues: &mut [Issue]) -> Result<
                 title: row.get(2)?,
                 lane: Lane::parse(&lane).unwrap_or(Lane::Backlog),
                 counts_as_done: counts_as_done != 0,
+                column_id: row.get(5)?,
             },
         ))
     })?;
@@ -1411,10 +1519,13 @@ mod tests {
         assert_eq!(entered.lane, Lane::Backlog); // stale lane, by design
         assert_eq!(entered.column_id.as_deref(), Some(quick.id.as_str()));
 
-        // Reorder within the (stale) backlog lane: position moves, mirror
-        // and lane untouched.
+        // Reorder while resident in Quick: the mirror and lane are
+        // untouched. The position is now an index in the card's effective
+        // COLUMN (fix round, finding 9) — A is Quick's only card, so an
+        // out-of-range request clamps to 0 instead of writing a sparse
+        // absolute value into the stale lane's namespace.
         let reordered = store.move_to(&a.id, Lane::Backlog, Some(5)).unwrap();
-        assert_eq!(reordered.position, 5);
+        assert_eq!(reordered.position, 0);
         assert_eq!(reordered.lane, Lane::Backlog);
         assert_eq!(reordered.column_id.as_deref(), Some(quick.id.as_str()));
 
@@ -1503,13 +1614,16 @@ mod tests {
         assert!(a_read.blocked);
         assert!(!a_read.blockers[0].counts_as_done);
 
-        // Unmapped-lane fallback counts as UNFINISHED. Lane authority
-        // means no public API can host an issue in a column without a
-        // seed_lane (move_to only speaks Lane), so the orphan state is
-        // constructed directly: unmap the flagged In Review column and
-        // park the blocker's lane on it.
+        // A blocker whose column cannot be resolved AT ALL counts as
+        // UNFINISHED — fail toward blocked. Membership is mirror-first, so
+        // orphaning it takes clearing BOTH pointers: unmap the flagged
+        // column's seed_lane and drop the card's mirror. (Nulling the
+        // seed_lane alone no longer orphans anything, which is the point
+        // of the fix — the card really is in that column.)
         store.move_to(&b.id, Lane::InReview, None).unwrap();
         assert!(!store.get(&a.id).unwrap().unwrap().blocked); // flagged + mapped
+        // Each `conn()` is a temporary — holding the guard across a
+        // `store.get()` would re-lock the same mutex and deadlock.
         store
             .conn()
             .unwrap()
@@ -1519,7 +1633,134 @@ mod tests {
                 [],
             )
             .unwrap();
+        // Still resolvable through the mirror: the flag stands.
+        assert!(!store.get(&a.id).unwrap().unwrap().blocked);
+        store
+            .conn()
+            .unwrap()
+            .execute("UPDATE issues SET column_id = NULL WHERE id = ?1", [&b.id])
+            .unwrap();
         assert!(store.get(&a.id).unwrap().unwrap().blocked);
+    }
+
+    /// Fix round (finding 6): dragging a finished card OUT of a
+    /// counts_as_done column into a non-seeded one (Quick, on every
+    /// seeded board) must re-block its dependents. Lane stays stale for
+    /// non-seeded columns, so a lane-only resolution kept reporting the
+    /// card as done — and the dependent's agent was told the work had
+    /// already landed.
+    #[test]
+    fn reopening_a_done_card_into_a_non_seeded_column_reblocks_dependents() {
+        let store = fixture();
+        let col_store = columns::ColumnStore::new(store.db.clone());
+        let quick = col_store
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name == "Quick")
+            .unwrap();
+        let a = store.create(new_issue("a")).unwrap();
+        let b = store.create(new_issue("b")).unwrap();
+        store.add_dependency(&a.id, &b.id).unwrap();
+
+        store.move_to(&b.id, Lane::Done, None).unwrap();
+        let read = store.get(&a.id).unwrap().unwrap();
+        assert!(!read.blocked, "a blocker in Done finishes the dependency");
+        assert!(read.blockers[0].counts_as_done);
+
+        // Reopen: the mirror moves to Quick, the lane stays 'done'.
+        let reopened = store.enter_column(&b.id, &quick.id, None).unwrap();
+        assert_eq!(reopened.lane, Lane::Done, "stale lane, by design");
+        assert_eq!(reopened.column_id.as_deref(), Some(quick.id.as_str()));
+
+        let read = store.get(&a.id).unwrap().unwrap();
+        assert!(read.blocked, "the card is in Quick now, not Done");
+        assert!(!read.blockers[0].counts_as_done);
+        assert_eq!(
+            read.blockers[0].column_id.as_deref(),
+            Some(quick.id.as_str()),
+            "the blocker row names the column the card is really in"
+        );
+    }
+
+    /// Fix round (finding 9): a drop lands where it was dropped. Position
+    /// used to be an absolute single-row write with no renumbering, so
+    /// dropping onto slot 0 tied with the card already there and a stable
+    /// sort put the dropped card second.
+    #[test]
+    fn drops_land_at_the_index_they_were_dropped_on() {
+        let store = fixture();
+        let order = |store: &IssueStore| -> Vec<String> {
+            store
+                .list_for_project("p1")
+                .unwrap()
+                .into_iter()
+                .filter(|i| i.lane == Lane::Backlog)
+                .map(|i| i.title)
+                .collect()
+        };
+        let _a = store.create(new_issue("a")).unwrap();
+        let b = store.create(new_issue("b")).unwrap();
+        let c = store.create(new_issue("c")).unwrap();
+        assert_eq!(order(&store), vec!["a", "b", "c"]);
+
+        // Drag C to the top.
+        store.move_to(&c.id, Lane::Backlog, Some(0)).unwrap();
+        assert_eq!(order(&store), vec!["c", "a", "b"]);
+
+        // Drag B to the middle (after-removal index 1).
+        store.move_to(&b.id, Lane::Backlog, Some(1)).unwrap();
+        assert_eq!(order(&store), vec!["c", "b", "a"]);
+
+        // Drag C to the bottom.
+        store.move_to(&c.id, Lane::Backlog, Some(2)).unwrap();
+        assert_eq!(order(&store), vec!["b", "a", "c"]);
+
+        // Positions stay dense, so no tie can reappear.
+        let mut positions: Vec<i64> = store
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .filter(|i| i.lane == Lane::Backlog)
+            .map(|i| i.position)
+            .collect();
+        positions.sort_unstable();
+        assert_eq!(positions, vec![0, 1, 2]);
+    }
+
+    /// Fix round (finding 9, second half): a NON-seeded column orders its
+    /// own cards. Positions used to be allocated in the stale lane, so two
+    /// cards in Quick could both hold position 0 in a lane neither of them
+    /// is displayed in.
+    #[test]
+    fn non_seeded_columns_order_their_own_cards() {
+        let store = fixture();
+        let col_store = columns::ColumnStore::new(store.db.clone());
+        let quick = col_store
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name == "Quick")
+            .unwrap();
+        let a = store.create(new_issue("a")).unwrap();
+        let b = store.create(new_issue("b")).unwrap();
+
+        store.enter_column(&a.id, &quick.id, None).unwrap();
+        // B is dropped ABOVE A.
+        store.enter_column(&b.id, &quick.id, Some(0)).unwrap();
+
+        let in_quick: Vec<(String, i64)> = store
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .filter(|i| i.column_id.as_deref() == Some(quick.id.as_str()))
+            .map(|i| (i.title, i.position))
+            .collect();
+        assert_eq!(
+            in_quick,
+            vec![("b".to_string(), 0), ("a".to_string(), 1)],
+            "distinct, dense positions in drop order"
+        );
     }
 
     #[test]

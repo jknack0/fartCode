@@ -108,11 +108,15 @@
 }
 
 /* The frame: N columns separated by hairlines — no outer plate (left-nav
-   redesign). Below the column floor the frame scrolls sideways — heads and
-   columns share the same grid floor (--column-count, set inline from
-   board_columns) so they never drift apart. 4–9 columns is the realistic
-   range; the 150px floor is what makes the overflow scroll rather than
-   crush them. */
+   redesign). ONE grid of column boxes (frame 8a): each column owns its
+   padding and its left hairline, and the header block is NESTED inside
+   that padding. That nesting is what makes the two rules read right — the
+   vertical divider runs unbroken from the column top to the bottom of the
+   cards, and the header's hairline floor is inset by the column padding
+   instead of butting into its neighbour's and banding the whole board.
+   The count comes from --column-count, set inline from board_columns;
+   4–9 columns is the realistic range, and the 150px floor is what makes
+   the overflow scroll sideways rather than crush them. */
 .board-frame {
   display: flex;
   flex-direction: column;
@@ -122,15 +126,34 @@
   overflow-y: hidden;
 }
 
-.board-lane-heads,
-.board-lanes {
+.board-columns {
   display: grid;
   grid-template-columns: repeat(var(--column-count, 1), minmax(0, 1fr));
   min-width: calc(var(--column-count, 1) * 150px);
+  flex: 1;
+  min-height: 0;
 }
 
-.board-lane-heads {
-  flex-shrink: 0;
+.board-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  padding: 22px 14px 0 20px;
+}
+
+.board-column:last-child {
+  padding-right: 20px;
+}
+
+.board-column + .board-column {
+  border-left: 1px solid rgba(255,255,255,.05);
+}
+
+/* Narrow (§8b) renders one column under the strip, which already carries
+   the top inset. */
+.board-narrow .board-column {
+  padding-top: 0;
 }
 
 /* Header block (§8a): name row + count, then the kind subline; 10px of
@@ -138,22 +161,18 @@
 .board-lane-head {
   display: flex;
   flex-direction: column;
-  padding: 22px 14px 10px 20px;
+  flex-shrink: 0;
+  padding-bottom: 10px;
   border-bottom: 1px solid rgba(255,255,255,.07);
   margin-bottom: 16px;
 }
 
-.board-lane-head:last-child {
-  padding-right: 20px;
-}
-
-.board-lane-head + .board-lane-head {
-  border-left: 1px solid rgba(255,255,255,.05);
-}
-
+/* Baseline, not centre: the mono-11 count sits on the 13px name's
+   baseline (frame 8a). The add glyph is a 24px box, so it centres itself
+   rather than riding the text baseline. */
 .board-lane-name-row {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
@@ -163,9 +182,13 @@
    count. */
 .board-lane-side {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 4px;
   margin-left: auto;
+}
+
+.board-lane-side .project-action {
+  align-self: center;
 }
 
 .board-lane-name {
@@ -178,7 +201,7 @@
 
 /* counts_as_done recedes — the FLAG dims, never the name (multiple
    terminal columns dim identically). */
-.board-lane-head[data-done] .board-lane-name {
+.board-column[data-done] .board-lane-name {
   color: #6e6e75;
 }
 
@@ -224,39 +247,24 @@
   color: #9a9aa1;
 }
 
-.board-lanes {
-  flex: 1;
-  min-height: 0;
-}
-
-.board-lane {
-  display: flex;
-  min-height: 0;
-  min-width: 0;
-}
-
-.board-lane + .board-lane {
-  border-left: 1px solid rgba(255,255,255,.05);
-}
-
 /* Cards in a terminal column recede as a body — the same flag that dims
    the header, never a name test. */
-.board-lane[data-done] .board-card {
+.board-column[data-done] .board-card {
   opacity: 0.5;
 }
 
+/* The cards fill the rest of the column box; the horizontal inset is the
+   column's, so the drop target spans the full track. */
 .board-lane-cards {
   display: flex;
   flex-direction: column;
   gap: 18px; /* spec: 18px between cards */
+  flex: 1;
   width: 100%;
   min-width: 0;
-  padding: 0 14px 16px 20px;
+  min-height: 0;
+  padding-bottom: 16px;
   overflow-y: auto;
-}
-
-.board-lane:last-child .board-lane-cards {
-  padding-right: 20px;
 }
 
 /* Keeps an empty lane a full drop target. */
@@ -509,12 +517,17 @@
   min-width: 0;
 }
 
-/* The 44px right-edge fade says "there is more board" without a scrollbar,
-   an arrow, or a count — and the strip NEVER caps or truncates, however
-   many columns the project has. */
+/* The strip is a ruled header row, not floating text: it carries the
+   narrow analogue of §8a's header floor, and the active entry's accent
+   underline REPLACES that hairline segment (the -13px pull) rather than
+   hugging the glyphs. The 44px right-edge fade says "there is more board"
+   without a scrollbar, an arrow, or a count — and the strip NEVER caps or
+   truncates, however many columns the project has. */
 .board-strip-wrap {
   position: relative;
   flex-shrink: 0;
+  margin: 0 22px;
+  border-bottom: 1px solid rgba(255,255,255,.07);
 }
 
 .board-strip-wrap::after {
@@ -522,7 +535,7 @@
   position: absolute;
   top: 0;
   right: 0;
-  bottom: 0;
+  bottom: 1px; /* leave the hairline floor visible under the fade */
   width: 44px;
   pointer-events: none;
   background: linear-gradient(90deg, transparent, var(--background));
@@ -532,7 +545,7 @@
   display: flex;
   align-items: baseline;
   gap: 18px;
-  padding: 22px 22px 0;
+  padding-top: 22px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -543,7 +556,7 @@
 
 .board-strip-entry {
   flex-shrink: 0;
-  padding: 0 0 3px;
+  padding: 0 0 12px;
   border: none;
   border-bottom: 1px solid transparent;
   border-radius: 0;
@@ -562,14 +575,21 @@
 }
 
 /* A column with a live agent wears the working amber — the same colour the
-   card dots use, so the strip reads as a status line. */
-.board-strip-entry[data-working] {
-  color: var(--status-in-progress);
+   card dots use, so the strip reads as a status line. It SURVIVES focus:
+   active is carried by the accent underline, so the two channels never
+   contend for `color` (the board card keeps selection and run-state on
+   separate properties for the same reason). */
+.board-strip-entry[data-active] {
+  border-bottom-color: var(--accent);
+  margin-bottom: -1px; /* the accent replaces the wrap's hairline */
 }
 
-.board-strip-entry[data-active] {
+.board-strip-entry[data-active]:not([data-working]) {
   color: var(--foreground);
-  border-bottom-color: var(--accent);
+}
+
+.board-strip-entry[data-working] {
+  color: var(--status-in-progress);
 }
 
 .board-strip-count {

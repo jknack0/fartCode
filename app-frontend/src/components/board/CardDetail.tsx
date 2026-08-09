@@ -26,7 +26,7 @@ import {
 import { renderMarkdown } from "../../lib/markdown";
 import {
   columnIdForIssue,
-  columnNameForLane,
+  blockerColumnName,
 } from "../../lib/columnConfig";
 import { useColumns } from "../../store/columns";
 import { useConversations } from "../../store/conversations";
@@ -438,10 +438,11 @@ export default function CardDetail({
                     >
                       {b.title}
                     </button>
-                    {/* Blocker rows carry a lane, not a column id —
-                        resolved through the same seed_lane mapping the
-                        backend's blocked derivation uses. */}
-                    <em>{columnNameForLane(b.lane, columns)}</em>
+                    {/* The blocker's own column, resolved backend-side the
+                        same mirror-first way the board resolves membership
+                        — so this row and that card's header can never name
+                        two different columns. */}
+                    <em>{blockerColumnName(b, columns)}</em>
                     <button
                       className="row-remove"
                       aria-label={`Remove blocker ${b.title}`}

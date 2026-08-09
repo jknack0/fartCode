@@ -19,6 +19,7 @@ import { useConversations, wireConversationEvents } from "./store/conversations"
 import { wireTabsEvents } from "./store/tabs";
 import { wireLineCommentEvents } from "./store/line-comments";
 import { wirePrEvents } from "./store/pr";
+import { wireStepEvents } from "./store/steps";
 
 function App() {
   const load = useSidebar((s) => s.load);
@@ -35,6 +36,11 @@ function App() {
     const unlistenDiffs = wireDiffsEvents();
     const unlistenComments = wireLineCommentEvents();
     const unlistenPr = wirePrEvents();
+    // App-lifetime on purpose: `step:launch` is a directive, and the act of
+    // carrying it out navigates to the task view. A listener owned by the
+    // board would unmount itself the moment it fired, losing every
+    // settle-chained launch (and the step-done/queued flags with it).
+    const unlistenSteps = wireStepEvents();
     return () => {
       unlisten();
       unlistenTabs();
@@ -43,6 +49,7 @@ function App() {
       unlistenDiffs();
       unlistenComments();
       unlistenPr();
+      unlistenSteps();
     };
   }, [load]);
   const ensureConversations = useConversations((s) => s.ensure);

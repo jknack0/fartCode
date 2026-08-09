@@ -40,11 +40,8 @@ import {
   onFartcodeEvent,
   projectGithubIssues,
   stepConfirm,
-  terminalOpenAgent,
-  terminalWrite,
   type BoardColumnDto,
   type IssueDto,
-  type StepLaunchInfoDto,
   type TaskDto,
 } from "../../lib/tauri";
 import {
@@ -59,6 +56,7 @@ import { useColumns } from "../../store/columns";
 import { defaultAgentName, useDependencies } from "../../store/dependencies";
 import { useScripts } from "../../store/scripts";
 import { useSidebar } from "../../store/sidebar";
+import { useSteps } from "../../store/steps";
 import { useUi } from "../../store/ui";
 import {
   agentLive,
@@ -76,8 +74,14 @@ import {
 const lastIssueSyncAt: Record<string, number> = {};
 const ISSUE_SYNC_COOLDOWN_MS = 60_000;
 
-/** §8b: below this the board is one column plus the mono strip. */
+/** §8b / DESIGN.md Layout: below this WINDOW width the board is one column
+ * plus the mono strip. Deliberately not the board pane's own width — see
+ * the resize effect. */
 const NARROW_PX = 900;
+
+export function isNarrowViewport(): boolean {
+  return typeof window !== "undefined" && window.innerWidth < NARROW_PX;
+}
 
 /** Stable empty arrays — a fresh literal in a zustand selector re-renders
  * forever. */
@@ -106,31 +110,18 @@ async function syncGithubIssues(projectId: string): Promise<void> {
   }
 }
 
-// A launch reaches the frontend TWICE — once as the command's
-// `EnterOutcomeDto.launch`, once as the `step:launch` event — and the
-// backend's delivered flag does not ride the event. Claim it per
-// issue+column so the pair collapses to one opened session while a CHAIN
-// (settle advancing into another agent step) still opens its own.
-const lastLaunchAt = new Map<string, number>();
-const LAUNCH_DEDUPE_MS = 4_000;
-
-function claimLaunch(issueId: string, columnId: string): boolean {
-  const key = `${issueId}:${columnId}`;
-  const now = Date.now();
-  const prev = lastLaunchAt.get(key);
-  if (prev !== undefined && now - prev < LAUNCH_DEDUPE_MS) return false;
-  lastLaunchAt.set(key, now);
-  return true;
-}
-
 /** Provider chip label: the display name minus any "CLI"/"-cli" suffix
  * ("Claude Code CLI" → "Claude Code"). */
 const providerLabel = (provider: string) => provider.replace(/\s*[-\s]?CLI$/i, "");
 
 /** A gated move awaiting the user's confirm (§5g, templated per §8c from
  * column config). `blocked` and `live-agent` have NOT moved the card yet —
- * esc keeps it where it is; `queued` HAS moved it (the engine parked the
- * step on entry) and esc simply dismisses. */
+ * esc keeps it where it is, and the footer says so. `queued` is different
+ * in kind: the engine writes the move BEFORE it parks the step
+ * (step_engine.rs — an errored move must leave the park untouched), so by
+ * the time the confirm exists the card has already arrived. Its footer
+ * must therefore promise what esc actually does, which is leave the step
+ * parked, not put the card back. */
 type PendingConfirm = {
   kind: "blocked" | "live-agent" | "queued";
   issue: IssueDto;
@@ -146,16 +137,6 @@ type PendingConfirm = {
 interface DropTarget {
   columnId: string;
   index: number;
-}
-
-/** Per-issue engine state, fed by the step events. Nothing is stored
- * backend-side (step-done is derived state by doctrine), so this lives for
- * the session only. */
-interface StepFlags {
-  /** step:settled landed for this column and it holds. */
-  settledColumnId?: string;
-  /** step:queued parked a step here, awaiting the confirm. */
-  queuedColumnId?: string;
 }
 
 const isEditableTarget = (t: EventTarget | null): boolean =>
@@ -182,8 +163,14 @@ export default function BoardView({ projectId }: { projectId: string }) {
   const [adding, setAdding] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [creating, setCreating] = useState(false);
-  const [steps, setSteps] = useState<Record<string, StepFlags>>({});
-  const [narrow, setNarrow] = useState(false);
+  const [narrow, setNarrow] = useState(() => isNarrowViewport());
+  // Step state lives in an app-lifetime store, NOT here: carrying out a
+  // launch navigates to the task view and unmounts this component, so
+  // component state would be wiped by the very act it is tracking.
+  const steps = useSteps((s) => s.byIssue);
+  const stepError = useSteps((s) => s.error);
+  /** Park whose confirm the user dismissed — the park itself lives on. */
+  const [dismissedPark, setDismissedPark] = useState<string | null>(null);
   const detailIssueId = useUi((s) => s.boardDetailIssueId);
   const projectTasks = useSidebar((s) => s.tasksByProject[projectId]) ?? NO_TASKS;
   const agentByTask = useScripts((s) => s.agentByTask);
@@ -210,7 +197,6 @@ export default function BoardView({ projectId }: { projectId: string }) {
   useEffect(() => {
     let cancelled = false;
     setLoaded(false);
-    setSteps({});
     const reload = () =>
       issueList(projectId)
         .then((list) => {
@@ -243,41 +229,14 @@ export default function BoardView({ projectId }: { projectId: string }) {
       if (ev.type === "task:deleted" || ev.type === "task:status_changed") {
         void reload();
       }
-      // -- step engine (E18-04/05) ---------------------------------------
+      // Step engine (E18-04/05): the DIRECTIVE and the flags belong to the
+      // app-lifetime store (store/steps.ts) — see the note by `steps`
+      // above. The board only needs the card list refreshed, since a
+      // launch or an advance moves the card.
       if (
-        ev.type !== "step:launch" &&
-        ev.type !== "step:queued" &&
-        ev.type !== "step:queue_cleared" &&
-        ev.type !== "step:settled"
+        (ev.type === "step:launch" || ev.type === "step:settled") &&
+        ev.projectId === projectId
       ) {
-        return;
-      }
-      if (ev.projectId !== projectId) return;
-      if (ev.type === "step:launch") {
-        // A fresh launch clears both derived states, then opens (or
-        // focuses) the session — this is a DIRECTIVE, and a settle-chained
-        // launch arrives here and nowhere else.
-        setSteps((s) => ({ ...s, [ev.issueId]: {} }));
-        void openLaunchedSession(ev.issueId, ev.columnId, {
-          taskId: ev.taskId,
-          prompt: ev.prompt,
-          provider: ev.provider,
-          reattached: ev.reattached,
-        });
-        void reload();
-      } else if (ev.type === "step:queued") {
-        setSteps((s) => ({ ...s, [ev.issueId]: { queuedColumnId: ev.columnId } }));
-      } else if (ev.type === "step:queue_cleared") {
-        setSteps((s) => {
-          const flags = s[ev.issueId];
-          if (flags?.queuedColumnId !== ev.columnId) return s;
-          return { ...s, [ev.issueId]: { ...flags, queuedColumnId: undefined } };
-        });
-      } else if (ev.type === "step:settled") {
-        // Hold leaves the card put with the step-done dot; advance moved
-        // it already — the reload is what shows that.
-        setSteps((s) => ({ ...s, [ev.issueId]: { settledColumnId: ev.columnId } }));
-        void useScripts.getState().hydrate(ev.taskId);
         void reload();
       }
     });
@@ -285,9 +244,6 @@ export default function BoardView({ projectId }: { projectId: string }) {
       cancelled = true;
       void unlisten.then((off) => off());
     };
-    // projectId alone on purpose: the handler reaches for the launch
-    // opener, which is rebuilt every render — listing it would tear down
-    // and re-subscribe the event channel on each one.
   }, [projectId]);
 
   // Run-state is the live agent terminal, not task.status (ADR-0037 / the
@@ -302,17 +258,19 @@ export default function BoardView({ projectId }: { projectId: string }) {
     }
   }, [issues]);
 
-  // §8b: one column plus the strip under 900px. Measured, not a media
-  // query — the board shares the pane with the changes/chat sheet.
+  // §8b narrow mode follows the WINDOW, not the board pane. Measuring the
+  // pane looked more precise and was wrong: the rail (56) + flyout (244) +
+  // the 400px card-detail sheet come off the same width, so clicking a
+  // card on a 14" laptop dropped a perfectly wide board into single-column
+  // mode and took cross-column drag away mid-gesture. DESIGN.md's Layout
+  // rule is window-scoped ("Under ~900px the board collapses to one column
+  // and the rail narrows to 48px"), and a board too narrow for its columns
+  // already has the right answer: .board-frame scrolls sideways.
   useEffect(() => {
-    const el = boardRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width ?? el.clientWidth;
-      setNarrow(w > 0 && w < NARROW_PX);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
+    const onResize = () => setNarrow(isNarrowViewport());
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, []);
 
   // Elapsed meta ("· 4m") is derived from statusChangedAt, never stored —
@@ -385,46 +343,31 @@ export default function BoardView({ projectId }: { projectId: string }) {
     else useSidebar.getState().selectTask(taskId);
   };
 
-  /** Acts on a launch directive: reattach focuses the task, a real launch
-   * opens the agent terminal and bracket-pastes the step's prompt. Shared
-   * by the command outcome and the `step:launch` event, deduped by
-   * issue+column. */
-  const openLaunchedSession = async (
-    issueId: string,
-    columnId: string,
-    launch: { taskId: string; prompt: string; provider: string; reattached: boolean },
-  ) => {
-    if (!claimLaunch(issueId, columnId)) return;
-    try {
-      if (launch.reattached) {
-        focusLinkedTask(launch.taskId);
-        return;
-      }
-      const terminalId = await terminalOpenAgent(launch.taskId, launch.provider, 24, 80);
-      useScripts.getState().noteAgentSpawn(launch.taskId, terminalId);
-      if (launch.prompt) {
-        await terminalWrite(terminalId, `\u001b[200~${launch.prompt}\u001b[201~\r`);
-      }
-      focusLinkedTask(launch.taskId);
-    } catch (e) {
-      setError(String(e));
-    }
-  };
-
-  const fromOutcome = (issueId: string, columnId: string, launch: StepLaunchInfoDto) =>
-    openLaunchedSession(issueId, columnId, {
-      taskId: launch.task.id,
-      prompt: launch.prompt,
-      provider: launch.provider,
-      reattached: launch.reattached,
-    });
-
   /** THE move: enter a column and let the engine decide (run / queue /
-   * nothing) from that column's config. */
+   * nothing) from that column's config.
+   *
+   * The outcome's `launch` is deliberately IGNORED. Every launch also
+   * emits `step:launch`, which the app-lifetime store carries out, so
+   * acting on both would need a dedupe — and the wall-clock dedupe that
+   * used to do it swallowed genuine second dispatches inside its window.
+   * One channel, no window.
+   *
+   * The `queued` discriminator IS used: the command already knows the step
+   * parked and returns the moved issue, so the confirm never has to race
+   * the card into the refetched list.
+   */
   const enter = async (issue: IssueDto, column: BoardColumnDto, position: number | null) => {
     try {
       const outcome = await issueEnterColumn(issue.id, column.id, position ?? undefined);
-      if (outcome.launch) await fromOutcome(issue.id, column.id, outcome.launch);
+      if (outcome.step === "queued") {
+        setPending({
+          kind: "queued",
+          issue: outcome.issue,
+          column,
+          from: columnOf(issue),
+          position: null,
+        });
+      }
     } catch (e) {
       setError(String(e));
     }
@@ -463,12 +406,10 @@ export default function BoardView({ projectId }: { projectId: string }) {
     const { kind, issue, column, position } = pending;
     setPending(null);
     if (kind === "queued") {
-      setSteps((s) => ({ ...s, [issue.id]: {} }));
-      stepConfirm(issue.id)
-        .then((outcome) => {
-          if (outcome.launch) void fromOutcome(issue.id, column.id, outcome.launch);
-        })
-        .catch((e) => setError(String(e)));
+      // The park is consumed by the backend; the launch it produces
+      // arrives as `step:launch` like every other launch.
+      useSteps.getState().clearPark(issue.id);
+      stepConfirm(issue.id).catch((e) => setError(String(e)));
       return;
     }
     void enter(issue, column, position);
@@ -476,30 +417,38 @@ export default function BoardView({ projectId }: { projectId: string }) {
 
   const dismissPending = () => {
     if (pending?.kind === "queued") {
-      // The card already moved; only the overlay goes away. The backend
-      // park survives — re-dragging the card re-parks and re-asks.
-      const issueId = pending.issue.id;
-      setSteps((s) => ({ ...s, [issueId]: {} }));
+      // The card already moved and the backend park SURVIVES — esc means
+      // "leave it parked", which is what the footer now says. Keeping the
+      // flag is what preserves the dashed queued ring and lets the confirm
+      // be reopened, so it is deliberately not cleared here.
+      setDismissedPark(pending.issue.id);
     }
     setPending(null);
   };
 
-  // A parked step IS a pending confirm — surface it whichever way it was
-  // parked (drag, keyboard, or the engine re-parking after a restart).
+  // Reconcile parks the UI did not raise itself: a settle that advanced
+  // into a queue-mode step, or the engine re-parking after a restart.
+  // `issues` IS a dep — a park announced before the card reached the list
+  // used to be dropped on the floor — and a dismissed park is remembered
+  // by id so the overlay does not immediately reopen.
   useEffect(() => {
     if (pending) return;
     for (const [issueId, flags] of Object.entries(steps)) {
-      if (!flags.queuedColumnId) continue;
-      const issue = issuesRef.current.find((i) => i.id === issueId);
+      if (!flags.queuedColumnId || dismissedPark === issueId) continue;
+      const issue = issues.find((i) => i.id === issueId);
       const column = columns.find((c) => c.id === flags.queuedColumnId);
       if (!issue || !column) continue;
       setPending({ kind: "queued", issue, column, from: columnOf(issue), position: null });
       return;
     }
-    // Issues come from a ref, not a dep: a park is announced by the step
-    // event, and re-running this on every board refetch would re-open a
-    // confirm the user just dismissed.
-  }, [steps, columns, pending]);
+    // columnOf is derived from columns/issues, both already deps.
+  }, [steps, columns, issues, pending, dismissedPark]);
+
+  // A park that goes away (confirmed, superseded, card dragged out) frees
+  // its dismissal, so the next park on that card asks again.
+  useEffect(() => {
+    if (dismissedPark && !steps[dismissedPark]?.queuedColumnId) setDismissedPark(null);
+  }, [steps, dismissedPark]);
 
   // Confirm footer branch: only a linked task has one ("… on <branch>";
   // a fresh dispatch generates its branch server-side, so omit).
@@ -580,41 +529,58 @@ export default function BoardView({ projectId }: { projectId: string }) {
       if (columns.length === 0) return;
       e.preventDefault();
 
-      // No card focused yet: land on the focused column's first card, else
-      // the first card anywhere.
-      if (!cur) {
-        const here = cardsIn(focusColumnId)[0];
-        const first = here ?? columns.map((c) => cardsIn(c.id)).find((l) => l.length > 0)?.[0];
-        if (first) {
-          setFocusId(first.id);
-          const col = columnOf(first);
-          if (col) setFocusColumnId(col.id);
-        }
-        return;
-      }
-      const curColumn = columnOf(cur);
-      const colIdx = columns.findIndex((c) => c.id === curColumn?.id);
-      const list = cardsIn(curColumn?.id ?? null);
-      const idx = list.findIndex((i) => i.id === cur.id);
+      // THE COLUMN CURSOR is what h/l walks, and it is always well defined
+      // — the focused card's column when there is one, otherwise the
+      // column cursor itself. Deriving direction from the CARD was the
+      // bug: landing on an empty column nulls the card, and the next press
+      // then had nothing to step from, so it restarted the scan and
+      // teleported to the leftmost non-empty column. §8b says h/l walks
+      // EVERY column, so the walk must never depend on a card existing.
+      const curColumn = cur ? columnOf(cur) : columnById(focusColumnId);
+      const colIdx = Math.max(
+        0,
+        columns.findIndex((c) => c.id === curColumn?.id),
+      );
+      const list = cardsIn(columns[colIdx]?.id ?? null);
+      const idx = cur ? list.findIndex((i) => i.id === cur.id) : -1;
+
+      /** Steps the cursor one column and takes the nearest card with it
+       * (none when the column is empty — an empty column is a real stop). */
+      const walk = (dir: -1 | 1): void => {
+        const next = colIdx + dir;
+        if (next < 0 || next >= columns.length) return;
+        const target = columns[next];
+        setFocusColumnId(target.id);
+        const cand = cardsIn(target.id);
+        setFocusId(
+          cand.length > 0 ? cand[Math.min(Math.max(idx, 0), cand.length - 1)].id : null,
+        );
+      };
 
       if (!e.shiftKey) {
+        if (key === "h" || key === "l") {
+          walk(key === "h" ? -1 : 1);
+          return;
+        }
+        // j/k with no focused card: take the first card of the column the
+        // cursor is on. On an empty column there is nothing to take, and
+        // j/k no-op rather than teleporting.
+        if (!cur) {
+          if (list.length > 0) setFocusId(list[key === "j" ? 0 : list.length - 1].id);
+          return;
+        }
         if (key === "j" && idx < list.length - 1) setFocusId(list[idx + 1].id);
         else if (key === "k" && idx > 0) setFocusId(list[idx - 1].id);
-        else if (key === "h" || key === "l") {
-          // §8b: h/l walks EVERY column — an empty one is a real stop (it
-          // is a drop target, and skipping it hides columns from the
-          // keyboard entirely on a sparse board).
-          const next = colIdx + (key === "h" ? -1 : 1);
-          if (next < 0 || next >= columns.length) return;
-          const target = columns[next];
-          setFocusColumnId(target.id);
-          const cand = cardsIn(target.id);
-          setFocusId(cand.length > 0 ? cand[Math.min(idx, cand.length - 1)].id : null);
-        }
         return;
       }
-      // ⇧: move the card itself. Within-column positions use the
-      // after-removal convention (see handleDrop).
+      // ⇧: move the card itself. With no card focused there is nothing to
+      // move, but the cursor still walks so the board stays navigable.
+      if (!cur) {
+        if (key === "h" || key === "l") walk(key === "h" ? -1 : 1);
+        return;
+      }
+      // Within-column positions use the after-removal convention (see
+      // handleDrop).
       if (key === "j" && idx < list.length - 1) void reorder(cur, idx + 1);
       else if (key === "k" && idx > 0) void reorder(cur, idx - 1);
       else if (key === "h" || key === "l") {
@@ -622,7 +588,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
         if (next < 0 || next >= columns.length) return;
         const target = columns[next];
         setFocusColumnId(target.id);
-        requestMove(cur, target, Math.min(idx, cardsIn(target.id).length));
+        requestMove(cur, target, Math.min(Math.max(idx, 0), cardsIn(target.id).length));
       }
     };
     window.addEventListener("keydown", onKey);
@@ -769,7 +735,10 @@ export default function BoardView({ projectId }: { projectId: string }) {
 
   // A column read that failed must SAY so — the shape of the board comes
   // from it, so a silent failure would leave "Reading the board…" forever.
-  const shown = error ?? columnsError;
+  // A launch directive that could not be carried out (agent binary gone,
+  // PTY refused) fails in the app-lifetime store — surface it here rather
+  // than letting the card sit looking dispatched with nothing running.
+  const shown = error ?? stepError ?? columnsError;
 
   return (
     <div className="board" ref={boardRef}>
@@ -850,11 +819,11 @@ export default function BoardView({ projectId }: { projectId: string }) {
             </div>
           )}
           <div className="board-frame" style={{ ["--column-count" as string]: 1 }}>
-            <div className="board-lanes">
+            <div className="board-columns">
               {visibleColumns.map((column) => (
                 <section
                   key={column.id}
-                  className="board-lane"
+                  className="board-column"
                   data-done={column.countsAsDone ? "" : undefined}
                 >
                   {renderCards(column)}
@@ -872,43 +841,35 @@ export default function BoardView({ projectId }: { projectId: string }) {
           className="board-frame"
           style={{ ["--column-count" as string]: columns.length }}
         >
-          <div className="board-lane-heads">
-            {columns.map((column) => (
-              <div
-                key={column.id}
-                className="board-lane-head"
-                data-done={column.countsAsDone ? "" : undefined}
-              >
-                <div className="board-lane-name-row">
-                  <span className="board-lane-name">{column.name}</span>
-                  {column.isLanding && <span className="board-lane-landing">landing</span>}
-                  <span className="board-lane-side">
-                    {landing?.id === column.id && (
-                      <button
-                        className="project-action"
-                        onClick={() => setAdding(true)}
-                        title={`Add issue to ${column.name}`}
-                        aria-label={`Add issue to ${column.name}`}
-                      >
-                        +
-                      </button>
-                    )}
-                    <span className="board-lane-count">{cardsIn(column.id).length}</span>
-                  </span>
-                </div>
-                <div className="board-lane-kind" data-tone={columnSublineTone(column)}>
-                  {summaryOf(column)}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="board-lanes">
+          <div className="board-columns">
             {columns.map((column) => (
               <section
                 key={column.id}
-                className="board-lane"
+                className="board-column"
                 data-done={column.countsAsDone ? "" : undefined}
               >
+                <div className="board-lane-head">
+                  <div className="board-lane-name-row">
+                    <span className="board-lane-name">{column.name}</span>
+                    {column.isLanding && <span className="board-lane-landing">landing</span>}
+                    <span className="board-lane-side">
+                      {landing?.id === column.id && (
+                        <button
+                          className="project-action"
+                          onClick={() => setAdding(true)}
+                          title={`Add issue to ${column.name}`}
+                          aria-label={`Add issue to ${column.name}`}
+                        >
+                          +
+                        </button>
+                      )}
+                      <span className="board-lane-count">{cardsIn(column.id).length}</span>
+                    </span>
+                  </div>
+                  <div className="board-lane-kind" data-tone={columnSublineTone(column)}>
+                    {summaryOf(column)}
+                  </div>
+                </div>
                 {renderCards(column)}
               </section>
             ))}
@@ -957,6 +918,11 @@ function ConfirmOverlay({
   let body: React.ReactNode;
   let goLabel: string;
   let label: string;
+  // "esc keep in <column>" is only honest for the confirms raised BEFORE
+  // the move. A queued step is raised after it (the engine writes the move,
+  // then parks), so esc leaves the card exactly where it now is and the
+  // step parked — which is what the footer must say.
+  let keepLabel = `esc keep in ${from?.name ?? column.name}`;
   if (pending.kind === "blocked") {
     // Finished-ness is the column's counts_as_done flag, never a name.
     const active = issue.blockers.filter((b) => !b.countsAsDone);
@@ -995,6 +961,7 @@ function ConfirmOverlay({
     );
     goLabel = `dispatch${branch ? ` on ${branch}` : ""}`;
     label = `Dispatch queued step in ${column.name}`;
+    keepLabel = "esc leave parked";
   }
 
   return (
@@ -1008,7 +975,7 @@ function ConfirmOverlay({
         <div className="board-confirm-body">{body}</div>
         <div className="board-confirm-foot">
           <button type="button" onClick={onKeep}>
-            esc keep in {from?.name ?? column.name}
+            {keepLabel}
           </button>
           <button type="button" onClick={onGo}>
             <span className="board-confirm-key">↵</span> {goLabel}
