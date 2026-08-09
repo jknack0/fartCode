@@ -18,7 +18,7 @@ use std::time::Duration;
 use crate::Error;
 
 /// A git branch (local or remote), from `git branch -a`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct BranchRef {
     /// Short ref name, e.g. `main`, `origin/main`.
     pub name: String,

@@ -139,6 +139,32 @@ pub fn map_issue_fields(gh: &GitHubIssue) -> MappedIssue {
             body_lines.push(line);
         }
     }
+    // Checkbox extraction can leave a section header ("Acceptance
+    // criteria:", "**Subtasks:**", "## Tasks:") with nothing under it —
+    // drop any label line followed only by blanks until the next label/EOF.
+    let is_label = |line: &str| {
+        let t = line
+            .trim()
+            .trim_start_matches('#')
+            .trim()
+            .trim_matches('*')
+            .trim();
+        !t.is_empty() && t.ends_with(':')
+    };
+    let body_lines: Vec<&str> = body_lines
+        .iter()
+        .enumerate()
+        .filter(|(i, line)| {
+            if !is_label(line) {
+                return true;
+            }
+            !body_lines[i + 1..]
+                .iter()
+                .take_while(|l| !is_label(l))
+                .all(|l| l.trim().is_empty())
+        })
+        .map(|(_, line)| *line)
+        .collect();
     let mut sections: Vec<String> = Vec::new();
     if !gh.labels.is_empty() {
         sections.push(format!("Labels: {}", gh.labels.join(", ")));
@@ -199,6 +225,29 @@ mod tests {
         );
         assert!(issues[1].labels.is_empty());
         assert!(issues[1].created_at.is_none());
+    }
+
+    #[test]
+    fn map_issue_fields_drops_dangling_section_headers() {
+        let gh = GitHubIssue {
+            number: 7,
+            title: "T".into(),
+            url: "https://github.com/o/r/issues/7".into(),
+            body: Some(
+                "**Story:** keep me\n\n**Subtasks:**\n\n## Acceptance criteria:\n- [ ] one\n- [x] two"
+                    .into(),
+            ),
+            labels: vec![],
+            assignees: vec![],
+            milestone: None,
+            created_at: None,
+        };
+        let mapped = map_issue_fields(&gh);
+        assert_eq!(mapped.acceptance, vec!["one", "two"]);
+        let body = mapped.body.unwrap();
+        assert!(body.contains("keep me"));
+        assert!(!body.contains("Subtasks"));
+        assert!(!body.contains("Acceptance criteria"));
     }
 
     #[test]

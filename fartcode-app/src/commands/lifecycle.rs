@@ -59,6 +59,24 @@ pub fn auto_run_enabled(settings: &ProjectSettings, script_type: LifecycleScript
     .unwrap_or(false)
 }
 
+/// 7b log body: prepends a `printf` that echoes each non-blank script line
+/// ANSI-dim with a `"$ "` prefix before the script runs, so the drawer
+/// reads as a command log. Lines are `single_quote`d (E2-02 canonical
+/// quoting) and passed as `printf` ARGS — the format is reused per arg and
+/// the lines are never re-executed or escape-interpreted.
+fn with_command_echo(script: &str) -> String {
+    let lines: Vec<&str> = script.lines().filter(|l| !l.trim().is_empty()).collect();
+    if lines.is_empty() {
+        return script.to_string();
+    }
+    let mut echo = String::from("printf '\\033[2m$ %s\\033[0m\\n'");
+    for line in lines {
+        echo.push(' ');
+        echo.push_str(&fartcode_core::shell_escape::single_quote(line));
+    }
+    format!("{echo}\n{script}")
+}
+
 /// FARTCODE_DEFAULT_BRANCH for the env contract: the project's configured
 /// default branch name, else "" (task_env falls back to "main").
 fn default_branch_name(settings: &ProjectSettings) -> String {
@@ -113,7 +131,10 @@ pub(crate) fn spawn_lifecycle_script<R: tauri::Runtime>(
         &ctx.cwd,
     );
     let program = "/bin/sh".to_string();
-    let args = vec!["-c".to_string(), script];
+    // 7b: the drawer opens on the script's own command lines, dim, "$ "-
+    // prefixed — echoed up front, then the script runs unchanged (the
+    // wrapper never alters the script's exit code).
+    let args = vec!["-c".to_string(), with_command_echo(&script)];
     terminals
         .open(TerminalSpec {
             task_id,
@@ -138,16 +159,21 @@ pub(crate) fn spawn_lifecycle_script<R: tauri::Runtime>(
 /// configured but not flagged stay manual). Best-effort — a failed spawn
 /// (no script configured, worktree missing) must never fail the creation
 /// itself.
+///
+/// Returns the SETUP terminal id when a setup script auto-ran — 7b's "a
+/// failed setup blocks agent start": `create_task` defers the default-agent
+/// launch until that terminal exits 0. `None` when setup did not auto-run
+/// (behaviour unchanged for the caller).
 pub fn run_auto_lifecycle_scripts<R: tauri::Runtime>(
     terminals: &TerminalManager<R>,
     app: &App,
     task_id: &str,
-) {
+) -> Option<String> {
     let ctx = match crate::commands::terminals::resolve_task_context(&app.db, task_id) {
         Ok(ctx) => ctx,
         Err(e) => {
             tracing::debug!(task_id, error = %e, "auto lifecycle scripts skipped");
-            return;
+            return None;
         }
     };
     let settings = match app
@@ -157,22 +183,26 @@ pub fn run_auto_lifecycle_scripts<R: tauri::Runtime>(
         Ok(s) => s,
         Err(e) => {
             tracing::debug!(task_id, error = %e, "auto lifecycle scripts skipped");
-            return;
+            return None;
         }
     };
+    let mut setup_terminal: Option<String> = None;
     for script_type in [LifecycleScriptType::Setup, LifecycleScriptType::Run] {
         if !auto_run_enabled(&settings, script_type) {
             continue;
         }
-        if let Err(e) = spawn_lifecycle_script(terminals, app, task_id, script_type, 24, 80) {
-            tracing::debug!(
+        match spawn_lifecycle_script(terminals, app, task_id, script_type, 24, 80) {
+            Ok(id) if script_type == LifecycleScriptType::Setup => setup_terminal = Some(id),
+            Ok(_) => {}
+            Err(e) => tracing::debug!(
                 task_id,
                 script_type = script_type.as_str(),
                 error = %e,
                 "auto lifecycle script skipped"
-            );
+            ),
         }
     }
+    setup_terminal
 }
 
 /// Opens the task's lifecycle script terminal (E1-06): a tab that runs
@@ -278,6 +308,33 @@ mod tests {
             lifecycle_script_text(&settings, LifecycleScriptType::Setup),
             Some("npm install".into())
         );
+    }
+
+    #[test]
+    fn command_echo_prefixes_each_line_and_keeps_the_script() {
+        let wrapped = with_command_echo("npm install\n\nnpm run build");
+        // One printf, format reused per line, blank lines skipped.
+        assert!(wrapped.starts_with("printf '\\033[2m$ %s\\033[0m\\n'"));
+        assert!(wrapped.contains("'npm install'"));
+        assert!(wrapped.contains("'npm run build'"));
+        // The original script runs unchanged after the echo.
+        assert!(wrapped.ends_with("\nnpm install\n\nnpm run build"));
+    }
+
+    #[test]
+    fn command_echo_quotes_are_shell_safe() {
+        // A line with an embedded single quote must round-trip through the
+        // canonical `'\''` escape, never re-executing.
+        let wrapped = with_command_echo("echo \"it's fine\"");
+        assert!(wrapped.contains("'echo \"it'\\''s fine\"'"));
+        let out = std::process::Command::new("/bin/sh")
+            .args(["-c", &wrapped])
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        // Dim echo line, then the script's own output.
+        assert!(text.contains("\u{1b}[2m$ echo \"it's fine\"\u{1b}[0m"));
+        assert!(text.contains("it's fine\n"));
     }
 
     #[test]

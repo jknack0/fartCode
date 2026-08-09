@@ -1,24 +1,39 @@
-/* E17 PM chat panel (E17-04, #58). Tokens from styles.css. */
+/* PM chat panel (E17-04, #58) — design_handoff_v2 §5c restyle.
+   Tokens from styles.css :root. The panel base classes (.project-chat,
+   .project-chat-header, .project-chat-minimize) are shared with the task
+   chat sheet; everything PM-specific is scoped under .pm-chat so the task
+   ACP view keeps its own voice. Literal colours here are design values
+   from the §5c frame. */
 
 .project-chat {
   display: flex;
   flex-direction: column;
-  width: 380px;
+  width: 400px;
   min-width: 280px;
-  border-left: 1px solid var(--background-secondary-3);
-  background: var(--background-1);
   min-height: 0;
+  border-left: 1px solid var(--hairline);
+  background: var(--flyout-bg);
 }
 
+/* 46px header: title 13px/600 left, mono scope/chord right. */
 .project-chat-header {
+  height: 46px;
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  font-size: 12px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 13px;
   font-weight: 600;
-  color: var(--muted, #b8b7b8);
-  border-bottom: 1px solid var(--background-secondary-3);
+  color: var(--foreground);
+}
+
+.pm-chat-scope {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: #66666d;
 }
 
 .project-chat-minimize {
@@ -28,95 +43,481 @@
   width: 22px;
   height: 22px;
   padding: 0;
+  border: none;
   border-radius: 6px;
-  color: var(--passive, #929192);
+  background: transparent;
+  color: #7c7c83;
 }
 
-.project-chat-minimize:hover {
-  background: var(--background-2);
-  color: var(--foreground, #e9e8e8);
+/* High specificity on the quiet hovers: the styles.css generic
+   button:hover:not(:disabled):not(.primary):not(.danger) plate (0,4,1)
+   must lose to these. */
+.project-chat .project-chat-header .project-chat-minimize:hover:not(:disabled) {
+  background: var(--hover-bg);
+  color: var(--foreground);
 }
 
-/* -- E17-04 proposal approval card -- */
+.pm-chat > .error {
+  margin: 0;
+  padding: 12px 18px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: 12.5px;
+  color: var(--fc-bad-text);
+}
 
-.proposal-card {
-  margin: 6px 0;
-  border: 1px solid var(--background-secondary-3);
-  border-radius: 8px;
-  background: var(--background-2);
-  padding: 8px 10px;
+/* -- conversation surface, PM voice ------------------------------------- */
+
+.pm-chat .conversation-view {
+  background: transparent;
+}
+
+.pm-chat .chat-transcript {
+  max-width: none;
+  margin: 0;
+  padding: 18px;
+  gap: 14px;
+}
+
+/* User turns: right-aligned bubble. */
+.pm-chat .chat-user-card {
+  align-self: flex-end;
+  max-width: 85%;
+  background: #1a1a1e;
+  border: none;
+  border-radius: 10px 10px 3px 10px;
+  padding: 10px 13px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--foreground);
+}
+
+/* Agent turns: plain left text, no bubble. */
+.pm-chat .chat-assistant {
+  max-width: 95%;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #a4a4ab;
+  text-wrap: pretty;
+}
+
+/* Emphasis brightens, never italicizes (§5c). */
+.pm-chat .chat-assistant em {
+  font-style: normal;
+  color: var(--text-card);
+}
+
+.pm-chat .chat-assistant strong {
+  font-weight: 600;
+  color: var(--text-card);
+}
+
+/* Inline code: mono for machine text, sized to the mention scale. */
+.pm-chat .chat-assistant code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+/* File mentions in agent prose. Inert until the file surfaces land (E5):
+   cursor stays default so the link colour doesn't promise a click. */
+.pm-chat .chat-assistant .chat-file-mention {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--info);
+  cursor: default;
+}
+
+/* Prose block above proposal / ticket-edit cards. */
+.pm-chat .chat-prose {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+/* Message that carries proposal / ticket-edit cards: stack prose + cards
+   on the same 14px rhythm as the turn itself. */
+.pm-chat .chat-assistant.has-cards {
   display: flex;
   flex-direction: column;
+  gap: 14px;
+}
+
+.pm-chat .chat-turn {
+  gap: 14px;
+}
+
+.pm-chat .chat-hero h2 {
+  font-size: 15px;
+  line-height: 22px;
+  color: var(--text-card);
+}
+
+.pm-chat .chat-hero p {
+  margin: 0;
+  max-width: 34ch;
+  font-size: 12.5px;
+  color: var(--meta);
+}
+
+.pm-chat .chat-working {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--meta);
+}
+
+/* Agent working dot: the base .chat-status.running in styles.css is already
+   amber + fc-pulse — no PM override needed. */
+
+/* Jump-to-latest pill: overlay voice (§5c) — dark plate, hairline, mono. */
+.pm-chat .chat-jump {
+  bottom: 80px;
+  background: #17171b;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* -- dock + input row ---------------------------------------------------- */
+
+.pm-chat .chat-dock {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+  border-top: 1px solid var(--hairline);
+}
+
+/* Plan strip, queued prompts, permission band, notices keep their shared
+   styling but sit inset above the flush input row. */
+.pm-chat .chat-dock > :not(.chat-composer) {
+  margin: 10px 18px 0;
+}
+
+/* Docked plan strip: boxless — a top hairline instead of the legacy card
+   chrome, contents flush with the 18px dock inset. */
+.pm-chat .chat-plan {
+  border: none;
+  border-top: 1px solid var(--hairline);
+  border-radius: 0;
+}
+
+.pm-chat .chat-plan-header {
+  padding: 8px 0 5px;
+}
+
+.pm-chat .chat-plan-entries {
+  padding: 2px 0 8px;
+}
+
+.pm-chat .chat-composer {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 14px 18px;
+  flex-direction: row;
+  align-items: flex-start;
   gap: 8px;
 }
 
-.proposal-card.applied {
-  color: var(--status-review, #59b358);
+.pm-chat .chat-composer:focus-within {
+  border-color: transparent;
+}
+
+/* The › prompt glyph. */
+.pm-chat .chat-composer::before {
+  content: "›";
+  flex: none;
+  font-family: var(--font-mono);
   font-size: 13px;
+  line-height: 20px;
+  color: var(--meta);
+}
+
+.pm-chat .chat-composer textarea {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.pm-chat .chat-composer textarea::placeholder {
+  color: var(--meta);
+}
+
+.pm-chat .chat-composer-actions {
+  flex: none;
+  gap: 10px;
+}
+
+.pm-chat .chat-usage {
+  margin-right: 0;
+  font-size: 10.5px;
+  line-height: 20px;
+  color: var(--meta);
+}
+
+/* Send/Queue/Stop as quiet mono key-hint labels, not buttons. Red is
+   reserved for delete (7a) — stop stays neutral. */
+.pm-chat .chat-send.primary,
+.pm-chat .chat-stop.danger {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 20px;
+  color: #a4a4ab;
+}
+
+.pm-chat .chat-send.primary:hover:not(:disabled),
+.pm-chat .chat-stop.danger:hover {
+  background: transparent;
+  border-color: transparent;
+  color: var(--foreground);
+}
+
+/* Empty draft: no affordance at all — Enter is the path. */
+.pm-chat .chat-send.primary:disabled {
+  display: none;
+}
+
+/* -- E17-04 proposal approval card (§5c) --------------------------------- */
+
+.proposal-card {
+  border-radius: 10px;
+  border: 1px solid var(--hairline-strong);
+  background: var(--card-inset);
+  overflow: hidden;
+}
+
+.proposal-card:focus {
+  outline: none;
+}
+
+.proposal-card.applied {
+  padding: 11px 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.proposal-card.muted {
+  padding: 11px 14px;
+  font-size: 12px;
+  color: var(--meta);
 }
 
 .proposal-card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted, #b8b7b8);
+  gap: 10px;
+  padding: 11px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.proposal-card-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--meta);
 }
 
 .proposal-prd {
-  font-family: "JetBrains Mono Variable", monospace;
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--passive, #929192);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--meta);
 }
 
 .proposal-rows {
-  margin: 0;
-  padding: 0;
-  list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  margin: 0;
+  padding: 6px 0;
+  list-style: none;
 }
 
 .proposal-row {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 14px;
+}
+
+.proposal-row.focused {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.proposal-row-index {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--meta);
 }
 
 .proposal-row-title {
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-card);
+}
+
+.proposal-row.focused .proposal-row-title {
+  color: #fff;
+}
+
+.proposal-row.dropped {
+  opacity: 0.45;
+}
+
+.proposal-row.dropped .proposal-row-index,
+.proposal-row.dropped .proposal-row-title {
+  text-decoration: line-through;
+}
+
+.proposal-row-note {
+  margin-left: auto;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: #66666d;
+}
+
+.proposal-row-edit {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12.5px;
+  color: #fff;
+  caret-color: #fff;
 }
 
-.proposal-row-provider {
-  width: 72px;
-  font-size: 11px;
-  font-family: "JetBrains Mono Variable", monospace;
-}
-
-.proposal-row-edges {
-  font-size: 11px;
-  color: var(--status-in-progress, #dbae50);
-  white-space: nowrap;
-}
-
-.proposal-actions {
+.proposal-card-footer {
   display: flex;
-  justify-content: flex-end;
-  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
 }
 
-.proposal-raw {
-  font-family: "JetBrains Mono Variable", monospace;
+.proposal-keys {
+  flex: none;
+}
+
+.proposal-approve,
+.proposal-dismiss {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: #66666d;
+}
+
+.proposal-card .proposal-card-footer .proposal-approve:hover:not(:disabled),
+.proposal-card .proposal-card-footer .proposal-dismiss:hover:not(:disabled) {
+  background: transparent;
+  color: #a4a4ab;
+}
+
+.proposal-approve .key {
+  color: #a4a4ab;
+}
+
+.proposal-approve:disabled {
+  color: var(--meta-dim);
+  cursor: default;
+}
+
+.proposal-approve:disabled .key {
+  color: var(--meta-dim);
+}
+
+.proposal-card .error {
+  margin: 0;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
   font-size: 12px;
+  color: var(--fc-bad-text);
+}
+
+/* Malformed proposal block: plain mono text, no card chrome. */
+.proposal-raw {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
   white-space: pre-wrap;
-  background: var(--background-2);
-  border: 1px solid var(--background-secondary-3);
-  border-radius: 6px;
-  padding: 8px;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+
+/* -- ticket-edit card fields -------------------------------------------- */
+
+.ticket-edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 14px;
+}
+
+.ticket-edit-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--meta);
+}
+
+.ticket-edit-old {
+  font-size: 12.5px;
+  color: var(--meta);
+  text-decoration: line-through;
+}
+
+.ticket-edit-new {
+  font-size: 12.5px;
+  color: var(--text-card);
+}
+
+.ticket-edit-md {
+  font-size: 12.5px;
+  color: #a4a4ab;
+}
+
+.ticket-edit-ac {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  color: var(--text-card);
 }

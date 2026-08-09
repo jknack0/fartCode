@@ -1,10 +1,14 @@
-// Proposal approval card (E17-04, #58; ADR-0032). Renders a parsed
-// fartCode-proposal block from the PM agent's message: editable issue rows
-// (title, provider/model), droppable rows, Approve/Dismiss. Parse failure
-// renders the raw block as plain code text — the card NEVER throws on bad
-// input. Approve writes via issue_apply_proposal (all-or-nothing backend).
+// Proposal approval card (E17-04, #58; ADR-0032) — design_handoff_v2 §5c.
+// Renders a parsed fartCode-proposal block from the PM agent as numbered
+// issue rows with a focus cursor and single-key actions: ↑/↓ (or j/k) move,
+// e edits the focused title inline, x toggles dropped (rows stay visible,
+// struck through), ↵ approves the surviving rows into Backlog. Blocked-by
+// edges show as right-aligned row-number notes; dropping a row drops edges
+// to it at approve time (the backend rejects unknown titles). Parse failure
+// renders the raw block as plain text — the card NEVER throws on bad input.
+// Approve writes via issue_apply_proposal (all-or-nothing backend).
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   issueApplyProposal,
   issueParseProposal,
@@ -15,8 +19,12 @@ type CardState =
   | { kind: "parsing" }
   | { kind: "invalid" }
   | { kind: "ready"; proposal: ProposalDto }
-  | { kind: "applied"; count: number }
-  | { kind: "dismissed" };
+  | { kind: "applied"; count: number };
+
+function prdFilename(path: string): string {
+  const idx = path.lastIndexOf("/");
+  return idx === -1 ? path : path.slice(idx + 1);
+}
 
 export default function ProposalCard({
   raw,
@@ -26,8 +34,16 @@ export default function ProposalCard({
   projectId: string;
 }) {
   const [state, setState] = useState<CardState>({ kind: "parsing" });
+  const [dropped, setDropped] = useState<ReadonlySet<number>>(new Set());
+  const [focused, setFocused] = useState(0);
+  const [editing, setEditing] = useState<number | null>(null);
+  const [editText, setEditText] = useState("");
   const [applyError, setApplyError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  // Ref mirror of `editing`: blur-commit races Escape-cancel through stale
+  // closures otherwise (cancel clears the ref, so the late blur no-ops).
+  const editingRef = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,7 +55,7 @@ export default function ProposalCard({
     };
   }, [raw]);
 
-  if (state.kind === "invalid" || state.kind === "dismissed") {
+  if (state.kind === "invalid") {
     return <pre className="proposal-raw">{raw}</pre>;
   }
   if (state.kind === "parsing") {
@@ -48,102 +64,182 @@ export default function ProposalCard({
   if (state.kind === "applied") {
     return (
       <div className="proposal-card applied">
-        ✓ {state.count} {state.count === 1 ? "issue" : "issues"} added to the board
+        ✓ {state.count} {state.count === 1 ? "issue" : "issues"} added to Backlog
       </div>
     );
   }
 
   const { proposal } = state;
+  const approveCount = proposal.issues.length - dropped.size;
 
-  const update = (next: ProposalDto) => setState({ kind: "ready", proposal: next });
-
-  const setIssue = (i: number, patch: Partial<ProposalDto["issues"][number]>) => {
-    const issues = proposal.issues.map((iss, j) => {
-      if (j !== i) return iss;
-      // Title renames must not strand blockedBy references to the old title.
-      const next = { ...iss, ...patch };
-      return next;
-    });
-    // If the patch renamed a title, rewrite blockedBy references.
-    if (patch.title !== undefined && patch.title !== proposal.issues[i].title) {
-      const oldTitle = proposal.issues[i].title;
-      for (const iss of issues) {
-        iss.blockedBy = iss.blockedBy.map((t) => (t === oldTitle ? patch.title! : t));
-      }
-    }
-    update({ ...proposal, issues });
+  const beginEdit = (i: number) => {
+    if (dropped.has(i) || applying) return;
+    setFocused(i);
+    editingRef.current = i;
+    setEditing(i);
+    setEditText(proposal.issues[i].title);
   };
 
-  const dropIssue = (i: number) => {
-    const dropped = proposal.issues[i].title;
-    const issues = proposal.issues
-      .filter((_, j) => j !== i)
-      .map((iss) => ({
-        ...iss,
-        // Dropping a row drops edges to it (backend would reject the
-        // unknown title otherwise).
-        blockedBy: iss.blockedBy.filter((t) => t !== dropped),
-      }));
-    update({ ...proposal, issues });
+  const cancelEdit = () => {
+    editingRef.current = null;
+    setEditing(null);
+  };
+
+  const commitEdit = () => {
+    const i = editingRef.current;
+    editingRef.current = null;
+    setEditing(null);
+    if (i === null) return;
+    const title = editText.trim();
+    const oldTitle = proposal.issues[i].title;
+    if (!title || title === oldTitle) return;
+    // Title renames must not strand blockedBy references to the old title.
+    const issues = proposal.issues.map((iss, j) => ({
+      ...iss,
+      title: j === i ? title : iss.title,
+      blockedBy: iss.blockedBy.map((t) => (t === oldTitle ? title : t)),
+    }));
+    setState({ kind: "ready", proposal: { ...proposal, issues } });
+  };
+
+  const toggleDrop = (i: number) => {
+    setDropped((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
   };
 
   const approve = () => {
+    if (applying || approveCount === 0) return;
+    const droppedTitles = new Set(
+      proposal.issues.filter((_, i) => dropped.has(i)).map((iss) => iss.title),
+    );
+    // Dropped rows leave the payload, and edges to them go with it.
+    const issues = proposal.issues
+      .filter((_, i) => !dropped.has(i))
+      .map((iss) => ({
+        ...iss,
+        blockedBy: iss.blockedBy.filter((t) => !droppedTitles.has(t)),
+      }));
     setApplying(true);
     setApplyError(null);
-    issueApplyProposal(projectId, proposal)
+    issueApplyProposal(projectId, { ...proposal, issues })
       .then((created) => setState({ kind: "applied", count: created.length }))
       .catch((e) => setApplyError(String(e)))
       .finally(() => setApplying(false));
   };
 
+  /** Right-aligned mono note: blockers as 1-based row numbers (titles from
+   * outside the proposal pass through verbatim); dropped blockers vanish. */
+  const blockedNote = (blockedBy: string[]): string | null => {
+    if (blockedBy.length === 0) return null;
+    const refs: string[] = [];
+    for (const title of blockedBy) {
+      const j = proposal.issues.findIndex((iss) => iss.title === title);
+      if (j === -1) refs.push(title);
+      else if (!dropped.has(j)) refs.push(String(j + 1));
+    }
+    return refs.length > 0 ? `blocked by ${refs.join(", ")}` : null;
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (editing !== null) return; // the row input owns the keyboard
+    const last = proposal.issues.length - 1;
+    if (e.key === "ArrowDown" || e.key === "j") {
+      setFocused((f) => Math.min(f + 1, last));
+    } else if (e.key === "ArrowUp" || e.key === "k") {
+      setFocused((f) => Math.max(f - 1, 0));
+    } else if (e.key === "e") {
+      beginEdit(focused);
+    } else if (e.key === "x") {
+      toggleDrop(focused);
+    } else if (e.key === "Enter") {
+      approve();
+    } else {
+      return;
+    }
+    e.preventDefault();
+  };
+
   return (
-    <div className="proposal-card">
+    <div
+      ref={cardRef}
+      className="proposal-card"
+      tabIndex={0}
+      role="group"
+      aria-label="Proposal"
+      onKeyDown={onKeyDown}
+    >
       <div className="proposal-card-header">
-        <span>Proposed issues</span>
+        <span className="proposal-card-label">Proposal</span>
         {proposal.prd && (
-          <span className="proposal-prd" title={proposal.prd.title ?? undefined}>
-            {proposal.prd.path}
+          <span
+            className="proposal-prd"
+            title={proposal.prd.title ?? proposal.prd.path}
+          >
+            {prdFilename(proposal.prd.path)}
           </span>
         )}
       </div>
       <ul className="proposal-rows">
-        {proposal.issues.map((issue, i) => (
-          <li key={i} className="proposal-row">
-            <input
-              className="proposal-row-title"
-              value={issue.title}
-              onChange={(e) => setIssue(i, { title: e.target.value })}
-              aria-label={`Issue ${i + 1} title`}
-            />
-            {issue.blockedBy.length > 0 && (
-              <span className="proposal-row-edges">⟵ {issue.blockedBy.join(", ")}</span>
-            )}
-            <input
-              className="proposal-row-provider"
-              value={issue.provider ?? ""}
-              placeholder="provider"
-              onChange={(e) => setIssue(i, { provider: e.target.value || null })}
-              aria-label={`Issue ${i + 1} provider`}
-            />
-            <button
-              className="proposal-row-drop"
-              onClick={() => dropIssue(i)}
-              aria-label={`Drop ${issue.title}`}
+        {proposal.issues.map((issue, i) => {
+          const isDropped = dropped.has(i);
+          const note = isDropped ? "dropped" : blockedNote(issue.blockedBy);
+          return (
+            <li
+              key={i}
+              className={`proposal-row${i === focused ? " focused" : ""}${
+                isDropped ? " dropped" : ""
+              }`}
+              onClick={() => {
+                setFocused(i);
+                cardRef.current?.focus();
+              }}
+              onDoubleClick={() => beginEdit(i)}
             >
-              ×
-            </button>
-          </li>
-        ))}
+              <span className="proposal-row-index">{i + 1}</span>
+              {editing === i ? (
+                <input
+                  className="proposal-row-edit"
+                  value={editText}
+                  autoFocus
+                  onFocus={(e) => e.currentTarget.select()}
+                  onChange={(e) => setEditText(e.target.value)}
+                  onBlur={commitEdit}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      commitEdit();
+                      cardRef.current?.focus();
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      cancelEdit();
+                      cardRef.current?.focus();
+                    }
+                  }}
+                  aria-label={`Issue ${i + 1} title`}
+                />
+              ) : (
+                <span className="proposal-row-title">{issue.title}</span>
+              )}
+              {note && <span className="proposal-row-note">{note}</span>}
+            </li>
+          );
+        })}
       </ul>
       {applyError && <p className="error">{applyError}</p>}
-      <div className="proposal-actions">
-        <button onClick={() => setState({ kind: "dismissed" })}>Dismiss</button>
+      <div className="proposal-card-footer">
+        <span className="proposal-keys">e edit · x drop</span>
         <button
-          className="primary"
-          disabled={applying || proposal.issues.length === 0}
+          className="proposal-approve"
+          disabled={applying || approveCount === 0}
           onClick={approve}
         >
-          {applying ? "Applying…" : `Approve ${proposal.issues.length}`}
+          <span className="key">↵</span>{" "}
+          {applying ? "applying…" : `approve ${approveCount} → Backlog`}
         </button>
       </div>
     </div>

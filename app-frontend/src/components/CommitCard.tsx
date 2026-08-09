@@ -1,10 +1,11 @@
-// Commit card (E4-06): bottom of the Changes sidebar — commit message +
-// Commit / Commit & Push / Commit & Create PR. Disabled states derive from
-// the backend CommitState (branch, push remote, PR-open guard); git errors
-// surface inline and the message stays for retry. Deviations from the
-// reference commit-card: no autoStage (the card commits exactly the staged
-// set — "Stage all" lives in the panel header), no description field, and
-// explicit buttons instead of a split button with a remembered action.
+// Commit card (E4-06, restyled to design_handoff_v2 §5d): inset card at the
+// bottom of the Changes sidebar — bare message input (idle fc-caret ghost,
+// native caret in accent once focused) over three key-first rows:
+// Commit ↵ / Commit & push ⌘↵ / Commit, push & open PR ⌘⇧↵. All three key
+// combos work from the input. Disabled states derive from the backend
+// CommitState (branch, push remote, PR-open guard); git errors surface
+// inline and the message stays for retry. The card commits exactly the
+// staged set — stage-all lives on the Changed section label ("a stage all").
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-shell";
 import { gitCreatePr } from "../lib/tauri";
@@ -27,7 +28,6 @@ export default function CommitCard({ workspaceId }: { workspaceId: string }) {
   // push additionally needs a push remote.
   const commitDisabled = busy || message.trim().length === 0 || !st?.branch || stagedCount === 0;
   const pushDisabled = commitDisabled || !st?.hasRemote;
-
 
   const fail = (e: unknown) => {
     setError(String(e));
@@ -71,73 +71,102 @@ export default function CommitCard({ workspaceId }: { workspaceId: string }) {
     setPhase("idle");
   };
 
-  const commitLabel =
-    phase === "committing"
-      ? "Committing…"
-      : phase === "pushing"
-        ? "Pushing…"
-        : phase === "creating-pr"
-          ? "Opening PR…"
-          : "Commit";
-
   if (!st) return null;
 
+  const commitTitle = !st.branch
+    ? "HEAD is detached — nothing to commit"
+    : stagedCount === 0
+      ? "Nothing staged"
+      : `Commit the ${stagedCount} staged file${stagedCount === 1 ? "" : "s"}`;
+  const pushTitle = !st.hasRemote
+    ? "No push remote configured"
+    : st.published
+      ? `Push to ${st.remote}`
+      : `Push and set upstream on ${st.remote}`;
+
   return (
-    <div className="commit-card">
-      <input
-        className="commit-message"
-        placeholder="Commit message"
-        value={message}
-        disabled={busy}
-        onChange={(e) => setMessage(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !commitDisabled) void doCommit(null);
-        }}
-      />
-      <div className="commit-card-actions">
-        <button
-          className="primary commit-action"
-          disabled={commitDisabled}
-          title={
-            !st.branch
-              ? "HEAD is detached — nothing to commit"
-              : stagedCount === 0
-                ? "Nothing staged"
-                : `Commit the ${stagedCount} staged file${stagedCount === 1 ? "" : "s"}`
-          }
-          onClick={() => void doCommit(null)}
-        >
-          {commitLabel}
-        </button>
-        <button
-          className="commit-action"
-          disabled={pushDisabled}
-          title={
-            !st.hasRemote
-              ? "No push remote configured"
-              : st.published
-                ? `Push to ${st.remote}`
-                : `Push and set upstream on ${st.remote}`
-          }
-          onClick={() => void doCommit("push")}
-        >
-          Commit &amp; Push
-        </button>
-        {/* PR-open guard (reference): when a PR is already open the action
-            degrades to push-only — the button is replaced by the note. */}
-        {st.canCreatePr ? (
-          <button
-            className="commit-action"
-            disabled={commitDisabled}
-            onClick={() => void doCommit("pr")}
-          >
-            Commit &amp; Create PR
-          </button>
-        ) : (
-          st.prOpen && <span className="commit-note">PR already open — push instead</span>
+    <div className="fc-commit-card">
+      <div className="fc-commit-input">
+        <input
+          className="fc-commit-message"
+          aria-label="Commit message"
+          value={message}
+          disabled={busy}
+          onChange={(e) => setMessage(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.metaKey && e.shiftKey) {
+              if (!commitDisabled && st.canCreatePr) void doCommit("pr");
+            } else if (e.metaKey) {
+              if (!pushDisabled) void doCommit("push");
+            } else if (!commitDisabled) {
+              void doCommit(null);
+            }
+          }}
+        />
+        {message === "" && (
+          <span className="fc-commit-ghost" aria-hidden>
+            <i className="fc-ghost-caret" />
+            Commit message
+          </span>
         )}
       </div>
-      {error && <p className="commit-error" role="alert">{error}</p>}
+      <div className="fc-commit-keys">
+        <div
+          className={`fc-krow fc-krow-primary${commitDisabled ? " disabled" : ""}`}
+          role="button"
+          aria-disabled={commitDisabled}
+          title={commitTitle}
+          onClick={() => {
+            if (!commitDisabled) void doCommit(null);
+          }}
+        >
+          <span className="fc-krow-label">
+            {phase === "committing" ? "Committing…" : "Commit"}
+          </span>
+          <span className="fc-krow-key">↵</span>
+        </div>
+        <div
+          className={`fc-krow${pushDisabled ? " disabled" : ""}`}
+          role="button"
+          aria-disabled={pushDisabled}
+          title={pushTitle}
+          onClick={() => {
+            if (!pushDisabled) void doCommit("push");
+          }}
+        >
+          <span className="fc-krow-label">
+            {phase === "pushing" ? "Pushing…" : "Commit & push"}
+          </span>
+          <span className="fc-krow-key">⌘↵</span>
+        </div>
+        {/* PR-open guard (reference): when a PR is already open the action
+            degrades to push-only — the row is replaced by the note. */}
+        {st.canCreatePr ? (
+          <div
+            className={`fc-krow${commitDisabled ? " disabled" : ""}`}
+            role="button"
+            aria-disabled={commitDisabled}
+            onClick={() => {
+              if (!commitDisabled) void doCommit("pr");
+            }}
+          >
+            <span className="fc-krow-label">
+              {phase === "creating-pr" ? "Opening PR…" : "Commit, push & open PR"}
+            </span>
+            <span className="fc-krow-key">⌘⇧↵</span>
+          </div>
+        ) : (
+          st.prOpen && <div className="fc-commit-note">PR already open — push instead</div>
+        )}
+      </div>
+      {error && (
+        <p className="fc-commit-error" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

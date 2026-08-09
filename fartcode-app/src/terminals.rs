@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use fartcode_core::terminals::lifecycle::LifecycleScriptType;
 use fartcode_core::terminals::pty::{EnvPolicy, PtyHandle, PtyManager, PtySize};
@@ -68,6 +68,13 @@ struct Entry {
     /// Set when the PTY process has exited (pump). Plain entries are then
     /// removed from the map; retained lifecycle entries stay listable.
     exited: AtomicBool,
+    /// Exit code recorded by the pump when the process ends (`None` while
+    /// running, and for exits the OS reports no code for). Only retained
+    /// lifecycle entries outlive the exit, so this is what
+    /// `terminal_list_for_task` surfaces for finished script runs (7b).
+    exit_code: Mutex<Option<u32>>,
+    /// Spawn time — the 7b trailing exit line reports elapsed wall time.
+    started: Instant,
     handle: Mutex<Box<dyn PtyHandle>>,
     /// Rolling output tail (replayed on frontend reattach after a webview
     /// reload — plain PTYs have no scrollback server, and a tmux session
@@ -77,6 +84,47 @@ struct Entry {
 
 /// Cap for the scrollback tail replayed on reattach.
 const TAIL_CAP: usize = 64 * 1024;
+
+/// Appends `chunk` to the rolling scrollback tail, enforcing `TAIL_CAP`
+/// (oldest bytes drained first — the replay contract is byte-oriented).
+fn push_tail(tail: &mut Vec<u8>, chunk: &[u8]) {
+    tail.extend_from_slice(chunk);
+    if tail.len() > TAIL_CAP {
+        let excess = tail.len() - TAIL_CAP;
+        tail.drain(..excess);
+    }
+}
+
+/// Compact mono elapsed for the 7b exit line: "830ms", "4.2s", "1m04s".
+fn format_elapsed(elapsed: Duration) -> String {
+    let secs = elapsed.as_secs_f64();
+    if secs < 1.0 {
+        format!("{}ms", elapsed.as_millis())
+    } else if secs < 60.0 {
+        format!("{secs:.1}s")
+    } else {
+        let total = elapsed.as_secs();
+        format!("{}m{:02}s", total / 60, total % 60)
+    }
+}
+
+/// 7b log body trailing line: `<scriptType> exited <code> · <elapsed>` —
+/// ANSI red (31) for a non-zero (or unreported) code, dim (2) for 0.
+/// `\r\n`-framed so it lands on its own line no matter how the script's
+/// last output ended.
+fn lifecycle_exit_line(script_type: &str, exit_code: Option<u32>, elapsed: Duration) -> Vec<u8> {
+    let style = if exit_code == Some(0) {
+        "\x1b[2m"
+    } else {
+        "\x1b[31m"
+    };
+    let code = exit_code.map_or_else(|| "?".to_string(), |c| c.to_string());
+    format!(
+        "\r\n{style}{script_type} exited {code} \u{b7} {}\x1b[0m\r\n",
+        format_elapsed(elapsed)
+    )
+    .into_bytes()
+}
 
 /// Everything needed to open one interactive terminal (ADR-0025 merged with
 /// the agent-terminal spawn: program + args for plain PTYs, project id +
@@ -136,6 +184,12 @@ pub struct TerminalInfo {
     pub kind: String,
     /// Script type (`setup`/`run`/`teardown`) when `kind` is `lifecycle`.
     pub script_type: Option<String>,
+    /// `false` once the process exited (only retained lifecycle entries are
+    /// still listed then).
+    pub running: bool,
+    /// Exit code for finished retained entries; `None` while running or
+    /// when the OS reported none.
+    pub exit_code: Option<u32>,
 }
 
 impl<R: tauri::Runtime> TerminalManager<R> {
@@ -260,6 +314,8 @@ impl<R: tauri::Runtime> TerminalManager<R> {
             tmux_session_id,
             lifecycle_type: lifecycle.map(|t| t.as_str().to_string()),
             exited: AtomicBool::new(false),
+            exit_code: Mutex::new(None),
+            started: Instant::now(),
             handle: Mutex::new(handle),
             tail: Mutex::new(Vec::new()),
         });
@@ -286,14 +342,7 @@ impl<R: tauri::Runtime> TerminalManager<R> {
                     } else {
                         std::mem::take(&mut buf)
                     };
-                    {
-                        let mut tail = entry.tail.lock();
-                        tail.extend_from_slice(&chunk);
-                        if tail.len() > TAIL_CAP {
-                            let excess = tail.len() - TAIL_CAP;
-                            tail.drain(..excess);
-                        }
-                    }
+                    push_tail(&mut entry.tail.lock(), &chunk);
                     use base64::Engine as _;
                     let data = base64::engine::general_purpose::STANDARD.encode(&chunk);
                     use tauri::Emitter as _;
@@ -311,6 +360,32 @@ impl<R: tauri::Runtime> TerminalManager<R> {
                     handle.try_wait_exit().ok().flatten()
                 };
                 if let Some(exit) = exited {
+                    // Record the code BEFORE flipping `exited` so a reader
+                    // that observes exited=true never sees a stale None.
+                    *entry.exit_code.lock() = exit.exit_code;
+                    // 7b log body: a lifecycle run ends with a trailing
+                    // "<scriptType> exited <code> · <elapsed>" line (red on
+                    // failure, dim on 0) — appended to the retained tail so
+                    // a reattached drawer shows how the run ended, and
+                    // emitted like normal output for a live-attached one.
+                    if let Some(script_type) = &entry.lifecycle_type {
+                        let line = lifecycle_exit_line(
+                            script_type,
+                            exit.exit_code,
+                            entry.started.elapsed(),
+                        );
+                        push_tail(&mut entry.tail.lock(), &line);
+                        use base64::Engine as _;
+                        let data = base64::engine::general_purpose::STANDARD.encode(&line);
+                        use tauri::Emitter as _;
+                        let _ = app.emit(
+                            "terminal:output",
+                            TerminalOutput {
+                                terminal_id: pump_id.clone(),
+                                data,
+                            },
+                        );
+                    }
                     entry.exited.store(true, Ordering::Relaxed);
                     use tauri::Emitter as _;
                     let _ = app.emit(
@@ -401,6 +476,8 @@ impl<R: tauri::Runtime> TerminalManager<R> {
                     agent: e.agent.clone(),
                     kind,
                     script_type,
+                    running: !e.exited.load(Ordering::Relaxed),
+                    exit_code: *e.exit_code.lock(),
                 }
             })
             .collect()
@@ -419,6 +496,21 @@ impl<R: tauri::Runtime> TerminalManager<R> {
                     && !e.exited.load(Ordering::Relaxed)
             })
             .map(|(id, _)| id.clone())
+    }
+
+    /// Blocks until the terminal's process exits and returns its exit code
+    /// (`Some(None)` when the OS reported none). Returns `None` when the
+    /// terminal is unknown or its entry is dropped before an exit is
+    /// observed (closed tab, plain terminal reaped) — 7b gates the default-
+    /// agent launch on the auto-run setup script's clean exit through this.
+    pub fn wait_for_exit(&self, id: &str) -> Option<Option<u32>> {
+        loop {
+            let entry = self.terminals.lock().get(id).cloned()?;
+            if entry.exited.load(Ordering::Relaxed) {
+                return Some(*entry.exit_code.lock());
+            }
+            std::thread::sleep(PUMP_INTERVAL);
+        }
     }
 
     /// Id of the task's IN-FLIGHT agent terminal, if any (ADR-0033: one

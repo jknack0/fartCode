@@ -380,6 +380,68 @@ impl DbSettingsStore {
         })
     }
 
+    /// Which source wins each shareable key under the effective merge
+    /// `defaults < .fartCode.json < DB` (7c shared-vs-local tags):
+    /// `"local"` = a DB override beats the file/defaults, `"shared"` = the
+    /// repo `.fartCode.json` value wins, `"default"` = neither defines it.
+    /// Keys are the wire names (`preservePatterns`, `shellSetup`, `scripts`).
+    ///
+    /// Seeding materializes the default preserve patterns into the DB blob
+    /// (see `seed_project_settings`); a DB value that still EQUALS the
+    /// default with no file behind it therefore reports `"default"`, not
+    /// `"local"` — a fresh project carries no override tags.
+    pub fn shareable_provenance(
+        &self,
+        project_id: &str,
+        repo_dir: &Path,
+    ) -> Result<std::collections::BTreeMap<String, String>, Error> {
+        self.ensure_row(project_id, repo_dir)?;
+        let Some((_, shareable_json, _)) = self.read_project_row(project_id)? else {
+            return Err(Error::Internal(
+                "project settings row vanished after ensure".into(),
+            ));
+        };
+        let local: ShareableProjectSettings =
+            parse_or_default(&shareable_json, "shareable_project_settings_json");
+        let file = self.read_ade_json(repo_dir).unwrap_or_default();
+        let defaults = default_shareable();
+
+        fn source<T: PartialEq>(
+            local: &Option<T>,
+            file: &Option<T>,
+            default: &Option<T>,
+        ) -> &'static str {
+            match (local, file) {
+                // A local value identical to the default with no file
+                // underneath is the seed materialization, not an override.
+                (Some(l), None) if Some(l) == default.as_ref() => "default",
+                (Some(_), _) => "local",
+                (None, Some(_)) => "shared",
+                (None, None) => "default",
+            }
+        }
+
+        let mut out = std::collections::BTreeMap::new();
+        out.insert(
+            "preservePatterns".to_string(),
+            source(
+                &local.preserve_patterns,
+                &file.preserve_patterns,
+                &defaults.preserve_patterns,
+            )
+            .to_string(),
+        );
+        out.insert(
+            "shellSetup".to_string(),
+            source(&local.shell_setup, &file.shell_setup, &defaults.shell_setup).to_string(),
+        );
+        out.insert(
+            "scripts".to_string(),
+            source(&local.scripts, &file.scripts, &defaults.scripts).to_string(),
+        );
+        Ok(out)
+    }
+
     // -- Internal helpers ---------------------------------------------------
 
     fn ensure_row(&self, project_id: &str, repo_dir: &Path) -> Result<(), Error> {
@@ -779,5 +841,85 @@ fn apply_shareable(config: &mut serde_json::Value, shareable: &ShareableProjectS
                 map.insert("teardown".into(), serde_json::json!(v));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::SqliteDb;
+
+    fn fixture() -> (tempfile::TempDir, DbSettingsStore, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = SqliteDb::init(Some(tmp.path().join("test.db").to_str().unwrap())).unwrap();
+        let store = DbSettingsStore::new(db);
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        // project_settings FKs projects; share_with_team also needs the
+        // path lookup.
+        store
+            .db
+            .conn()
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO projects (id, name, path) VALUES ('p1', 'fx', ?1)",
+                [repo.to_str().unwrap()],
+            )
+            .unwrap();
+        (tmp, store, repo)
+    }
+
+    #[test]
+    fn provenance_fresh_project_is_all_default() {
+        let (_tmp, store, repo) = fixture();
+        let prov = store.shareable_provenance("p1", &repo).unwrap();
+        // Seeding materializes default preservePatterns into the DB blob —
+        // that must NOT read as a local override.
+        assert_eq!(prov["preservePatterns"], "default");
+        assert_eq!(prov["shellSetup"], "default");
+        assert_eq!(prov["scripts"], "default");
+    }
+
+    #[test]
+    fn provenance_file_values_are_shared_and_db_overrides_are_local() {
+        let (_tmp, store, repo) = fixture();
+        std::fs::write(
+            repo.join(PROJECT_CONFIG_FILE),
+            r#"{"shellSetup": "export A=1", "preservePatterns": [".env"]}"#,
+        )
+        .unwrap();
+        let prov = store.shareable_provenance("p1", &repo).unwrap();
+        assert_eq!(prov["shellSetup"], "shared");
+        assert_eq!(prov["preservePatterns"], "shared");
+        assert_eq!(prov["scripts"], "default");
+
+        // A DB value differing from the file is a local override.
+        let mut settings = store.get_project_settings("p1", &repo).unwrap();
+        settings.shell_setup = Some("export A=2".into());
+        store
+            .update_project_settings("p1", &repo, &settings)
+            .unwrap();
+        let prov = store.shareable_provenance("p1", &repo).unwrap();
+        assert_eq!(prov["shellSetup"], "local");
+        // Unchanged-vs-file fields stay attributed to the file (delta write).
+        assert_eq!(prov["preservePatterns"], "shared");
+    }
+
+    #[test]
+    fn provenance_local_only_value_is_local_and_share_flips_it_shared() {
+        let (_tmp, store, repo) = fixture();
+        let mut settings = store.get_project_settings("p1", &repo).unwrap();
+        settings.shell_setup = Some("export B=1".into());
+        store
+            .update_project_settings("p1", &repo, &settings)
+            .unwrap();
+        let prov = store.shareable_provenance("p1", &repo).unwrap();
+        assert_eq!(prov["shellSetup"], "local");
+
+        // E1-02 share: local values move into .fartCode.json → "shared".
+        assert!(store.share_with_team("p1").unwrap());
+        let prov = store.shareable_provenance("p1", &repo).unwrap();
+        assert_eq!(prov["shellSetup"], "shared");
     }
 }

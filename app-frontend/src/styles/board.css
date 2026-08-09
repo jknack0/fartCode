@@ -22,9 +22,13 @@
   width: 24px;
   height: 24px;
   /* Beat the global button padding (6px 12px) — it crushes the 24px
-     content box to zero width and the icon collapses. */
+     content box to zero width and the glyph collapses. */
   padding: 0;
   border-radius: var(--radius-sm);
+  /* Text glyph ("+"), mono — no icon sets. */
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1;
   color: var(--foreground-muted);
 }
 
@@ -41,6 +45,7 @@
 /* -- the board surface --------------------------------------------------- */
 
 .board {
+  position: relative; /* anchors the §5g confirm overlay */
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -51,82 +56,57 @@
   overflow: hidden;
 }
 
-.board-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.board-title {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  color: var(--foreground-passive);
-}
-
-.board-total {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--foreground-passive);
-}
-
-.board-add {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 9px;
-  font-size: 12px;
-  border: 1px solid var(--border);
-  background: var(--surface-elevated);
-}
-
-.board-add:hover {
-  background: var(--surface-elevated-hover);
-  color: var(--foreground);
-}
-
 .board-error {
   margin: 0;
 }
 
-/* Inline "add issue" row above the frame. */
+/* Inline "add issue" row above the frame: a quiet hairline input with a
+   mono key footer (↵ add · esc cancel) — no buttons. */
 .board-new-card {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
 }
 
 .board-new-input {
   flex: 1;
   min-width: 0;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--background-1);
-  color: var(--foreground);
+  padding: 6px 2px;
+  border: none;
+  border-bottom: 1px solid var(--hairline);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-card);
   font-family: var(--font-sans);
   font-size: 13px;
 }
 
 .board-new-input:focus {
-  outline: 2px solid var(--border-primary);
-  outline-offset: 0;
-  border-color: var(--border-1);
+  outline: none;
+  border-bottom-color: var(--hairline-strong);
 }
 
-/* The frame: one plate, five lanes. Below the lane floor the frame
-   scrolls sideways — heads and lanes share the same grid floor so they
-   never drift apart. */
+.board-new-keys {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-key);
+  white-space: nowrap;
+}
+
+/* The key glyph itself reads brighter than its label (DESIGN.md). */
+.board-key {
+  color: var(--text-secondary);
+}
+
+/* The frame: five lanes separated by hairlines — no outer plate (left-nav
+   redesign). Below the lane floor the frame scrolls sideways — heads and
+   lanes share the same grid floor so they never drift apart. */
 .board-frame {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--background-1);
   overflow-x: auto;
   overflow-y: hidden;
 }
@@ -135,8 +115,6 @@
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   min-width: 750px;
-  border-bottom: 1px solid var(--border);
-  background: var(--background-1);
   flex-shrink: 0;
 }
 
@@ -145,27 +123,38 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  height: 32px;
-  padding: 0 12px;
+  padding: 0 12px 12px;
+  border-bottom: 1px solid rgba(255,255,255,.07);
+  margin-bottom: 16px;
 }
 
 .board-lane-head + .board-lane-head {
-  border-left: 1px solid var(--border);
+  border-left: 1px solid rgba(255,255,255,.05);
+}
+
+/* Right side of a lane head: optional add key (Backlog) + count. */
+.board-lane-side {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .board-lane-name {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--foreground-muted);
+  font-size: 13px;
+  color: #c9c9cf;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.board-lane-head[data-lane="done"] .board-lane-name {
+  color: #6e6e75;
+}
+
 .board-lane-count {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--foreground-passive);
+  color: var(--meta);
 }
 
 .board-lanes {
@@ -183,20 +172,16 @@
 }
 
 .board-lane + .board-lane {
-  border-left: 1px solid var(--border);
-}
-
-.board-lane.over {
-  background: var(--background-2);
+  border-left: 1px solid rgba(255,255,255,.05);
 }
 
 .board-lane-cards {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 18px; /* spec: 18px between cards */
   width: 100%;
   min-width: 0;
-  padding: 8px;
+  padding: 4px 10px 8px 14px;
   overflow-y: auto;
 }
 
@@ -206,6 +191,8 @@
   min-height: 96px;
 }
 
+/* Empty state: quiet centered copy, no dashed box (the only dashed
+   strokes are the queued dot ring and the add-project tile). */
 .board-empty {
   flex: 1;
   display: flex;
@@ -215,8 +202,6 @@
   gap: 10px;
   padding: 24px;
   text-align: center;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-lg);
 }
 
 .board-empty p {
@@ -225,174 +210,279 @@
   font-size: 13px;
 }
 
-/* -- cards --------------------------------------------------------------- */
+.board-empty-add {
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-key);
+  cursor: pointer;
+}
 
+.board-empty-add:hover {
+  color: var(--text-secondary);
+  background: none;
+}
+
+/* -- cards (frames 4a/4b) ------------------------------------------------- */
+
+/* Boxless cards: rest = 2px transparent border-left, padding 8px 12px;
+   hover paints a background; keyboard focus adds the accent rail;
+   dragging lifts a solid card — no rotation, no scale. */
 .board-card {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-  padding: 8px 10px;
-  background: var(--background-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-left: 2px solid transparent;
+  border-radius: 0 6px 6px 0;
   cursor: grab;
-  transition: background-color 120ms ease, border-color 120ms ease;
 }
 
 .board-card:hover {
-  background: var(--background-tertiary-1);
+  background: var(--hover-bg);
 }
 
-.board-card.selected {
-  background: var(--background-tertiary-2);
-  border-color: var(--border-1);
+.board-card.selected,
+.board-card.focused {
+  background: var(--focus-bg);
+  border-left-color: var(--accent);
 }
 
 .board-card.dragging {
-  opacity: 0.4;
+  opacity: 0.92;
+  background: #1a1a1e;
+  border-radius: 6px;
+  box-shadow: 0 12px 28px rgba(0,0,0,.55);
 }
 
-.board-card.blocked {
-  opacity: 0.72;
+/* Queued rows recede whole (frame 4a). */
+.board-card.dim-row {
+  opacity: 0.55;
 }
 
-.board-card.blocked:hover {
-  opacity: 1;
+/* Run-state dot rides the canonical .status-dot colors at card scale. */
+.board-card .board-run-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 6px;
 }
 
-.board-card-main {
+.board-card .board-run-dot.status-needs-you {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+}
+
+/* Stopped: gray, quieter than neutral (frame 4a). */
+.board-card .board-run-dot.run-stopped {
+  background: #46464d;
+}
+
+/* Queued: dashed ring, not yet real. */
+.board-card .board-run-dot.run-queued {
+  background: transparent;
+  border: 1px dashed #6e6e75;
+}
+
+.board-card-body {
   display: flex;
-  align-items: baseline;
-  gap: 7px;
+  flex-direction: column;
+  flex: 1;
   min-width: 0;
 }
 
-.board-card-main .status-dot {
-  align-self: center;
-}
-
-.board-card-title {
-  font-size: 13px;
-  line-height: 18px;
-  color: var(--foreground);
-  overflow-wrap: anywhere;
-}
-
-/* Acceptance tally — quiet, to the right of the title. */
-.board-card-ac {
-  margin-left: auto;
-  flex-shrink: 0;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--foreground-passive);
-}
-
-.board-card-ac-unit {
-  margin-left: 2px;
-}
-
-.board-card-chips {
+/* Mono meta line above the title: ref · run state · elapsed · blocked by
+   · gh · ac. Right side reveals "↵ open" on hover. */
+.board-card-meta {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.board-card-chips:empty {
-  display: none;
-}
-
-.board-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 1px 5px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--foreground-passive);
-  text-decoration: none;
-}
-
-a.board-chip:hover {
-  color: var(--foreground-muted);
-  border-color: var(--border-1);
-}
-
-.board-chip-provider {
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 15px;
+  margin-bottom: 5px;
   font-family: var(--font-mono);
-  font-size: 10px;
-  max-width: 100%;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--meta);
+}
+
+.board-card-meta-left {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.board-chip-gh {
-  padding: 2px 5px;
+/* Failed cards: the WHOLE meta line reads bad — ref, separators and
+   labels included (container modifier set when rs.bad). */
+.board-meta-bad {
+  color: var(--fc-bad-text);
 }
 
-/* Blocked chip keeps the amber status hue — the dependency IS state. */
-.board-chip-blocked {
-  position: relative;
-  font-size: 10px;
-  color: var(--status-in-progress);
-  border-color: var(--status-in-progress);
-  cursor: default;
+.board-meta-sep {
+  color: var(--meta);
 }
 
-.board-card.blocked:hover .board-chip-blocked {
-  color: var(--status-in-progress);
+.board-card-meta.board-meta-bad .board-meta-sep {
+  color: var(--fc-bad-text);
 }
 
-.blocked-popover {
+/* Blocker refs are clickable — brighter than meta, never a link-out blue. */
+.board-blocked-ref {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: #9a9aa1;
+  cursor: pointer;
+}
+
+.board-blocked-ref:hover {
+  color: #9a9aa1;
+  background: none;
+  text-decoration: underline;
+}
+
+/* External tracker link — the only blue on a card (links out ONLY). */
+.board-gh-link {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--info);
+  cursor: pointer;
+}
+
+.board-gh-link:hover {
+  color: var(--info);
+  background: none;
+  text-decoration: underline;
+}
+
+.board-card-open {
   display: none;
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  z-index: 30;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 170px;
-  max-width: 240px;
-  background: var(--background-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 6px;
-  color: var(--foreground);
-  cursor: default;
-}
-
-.board-chip-blocked:hover .blocked-popover,
-.board-chip-blocked:focus-within .blocked-popover {
-  display: flex;
-}
-
-.blocked-popover-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 2px 4px;
-  font-size: 12px;
-  line-height: 16px;
-}
-
-.blocked-popover-row em {
-  color: var(--foreground-passive);
-  font-style: normal;
-  font-family: var(--font-mono);
-  font-size: 10px;
   flex-shrink: 0;
+  color: #7c7c83;
 }
 
-.blocked-confirm-list {
-  margin: 8px 0;
-  padding-left: 18px;
+.board-card:hover .board-card-open {
+  display: inline;
 }
 
-.blocked-confirm-list em {
-  color: var(--foreground-passive);
-  font-style: normal;
+.board-card-title {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-card);
+  overflow-wrap: anywhere;
+}
+
+/* Blocked/stopped/queued titles recede (§5g, frame 4a). */
+.board-card.dim-title .board-card-title {
+  color: #a4a4ab;
+}
+
+.board-card:hover .board-card-title {
+  color: #fff;
+}
+
+/* Failed follow-up actions: a second mono line (frame 4a). */
+.board-card-action {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: #66666d;
+}
+
+.board-card-action button {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.board-card-action button:hover {
+  color: #a4a4ab;
+  background: none;
+}
+
+/* Drop target: a 1px accent line between cards, never a ghost box. */
+.board-drop-line {
+  flex-shrink: 0;
+  height: 1px;
+  background: var(--accent);
+}
+
+/* -- §5g confirm overlay (in-board, key-first) ----------------------------- */
+
+.board-confirm-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 18vh 24px 0;
+  /* Same dim as the app's .modal-backdrop convention. */
+  background: rgba(0,0,0,.55);
+}
+
+.board-confirm {
+  width: 100%;
+  max-width: 440px;
+  border-radius: 10px;
+  background: var(--overlay);
+  border: 1px solid var(--hairline-strong);
+  box-shadow: 0 16px 40px rgba(0,0,0,.5);
+  overflow: hidden;
+}
+
+.board-confirm-body {
+  padding: 14px 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-card);
+  text-wrap: pretty;
+}
+
+.board-confirm-ref {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.board-confirm-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid rgba(255,255,255,.07);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
+}
+
+.board-confirm-foot button {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.board-confirm-foot button:hover {
+  color: #a4a4ab;
+  background: none;
+}
+
+.board-confirm-key {
+  color: #a4a4ab;
 }
 
 /* -- card detail (right-sheet inspector) ---------------------------------- */
@@ -403,8 +493,159 @@ a.board-chip:hover {
   width: 380px;
   min-width: 280px;
   min-height: 0;
-  border-left: 1px solid var(--border);
-  background: var(--background-1);
+  border-left: 1px solid var(--hairline);
+  background: var(--flyout-bg);
+  position: relative; /* anchors the select-to-prompt FAB/popover */
+}
+
+/* -- rendered ticket body (markdown) -------------------------------------- */
+
+.card-detail-md {
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.card-detail-md > * {
+  margin: 0 0 8px;
+}
+
+.card-detail-md > *:last-child {
+  margin-bottom: 0;
+}
+
+.card-detail-md h3,
+.card-detail-md h4,
+.card-detail-md h5,
+.card-detail-md h6 {
+  margin-top: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-card);
+}
+
+.card-detail-md > h3:first-child,
+.card-detail-md > h4:first-child {
+  margin-top: 0;
+}
+
+.card-detail-md ul,
+.card-detail-md ol {
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.card-detail-md code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--hover-bg);
+  border: 1px solid var(--hairline);
+  border-radius: 4px; /* chip radius */
+  padding: 0 4px;
+}
+
+/* Code blocks sit as inset cards on the panel (#14141a, DESIGN.md). */
+.card-detail-md pre {
+  background: #14141a;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  overflow-x: auto;
+}
+
+.card-detail-md pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.card-detail-md a {
+  color: var(--info);
+  text-decoration: none;
+}
+
+.card-detail-md a:hover {
+  text-decoration: underline;
+}
+
+.card-detail-md-wrap {
+  position: relative;
+}
+
+/* Hover-only affordance (sidebar pattern): Edit appears over the body —
+   mono key-label voice, no transition (two-keyframes rule). */
+.card-detail-edit-key {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--flyout-bg);
+  color: var(--text-key);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  opacity: 0;
+}
+
+.card-detail-md-wrap:hover .card-detail-edit-key,
+.card-detail-edit-key:focus-visible {
+  opacity: 1;
+}
+
+.card-detail-edit-key:hover {
+  background: var(--flyout-bg);
+  color: var(--text-secondary);
+}
+
+/* -- ticket-edit approval card (chat) ------------------------------------- */
+
+.ticket-edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ticket-edit-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--meta);
+}
+
+.ticket-edit-old {
+  font-size: 12px;
+  color: var(--meta);
+  text-decoration: line-through;
+}
+
+.ticket-edit-new {
+  font-size: 13px;
+  color: var(--text-card);
+}
+
+/* Inset card on the panel (proposal/commit card colour). */
+.ticket-edit-md {
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-md);
+  background: #14141a;
+  padding: 8px 10px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.ticket-edit-ac {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .card-detail-header {
@@ -415,36 +656,32 @@ a.board-chip:hover {
   height: 41px;
   flex-shrink: 0;
   padding: 0 8px 0 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--hairline);
 }
 
+.card-detail-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.card-detail-header .card-detail-dispatch {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+/* Lane row — its dot is the canonical .status-dot (styles.css), no
+   local dot rules. */
 .card-detail-lane {
   display: inline-flex;
   align-items: center;
   gap: 7px;
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--foreground-muted);
+  color: var(--text-secondary);
 }
 
-/* Lane dot rides the canonical status mapping: amber working, green
-   review, gray otherwise. */
-.card-detail-lane-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 9999px;
-  flex-shrink: 0;
-  background: var(--status-neutral);
-}
-
-.card-detail-lane-dot.status-in_progress {
-  background: var(--status-in-progress);
-}
-
-.card-detail-lane-dot.status-review {
-  background: var(--status-in-review);
-}
-
+/* Text glyph ("×"), mono — no icon sets. */
 .card-detail-close {
   display: flex;
   align-items: center;
@@ -453,12 +690,15 @@ a.board-chip:hover {
   height: 24px;
   padding: 0;
   border-radius: var(--radius-sm);
-  color: var(--foreground-passive);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-mid);
 }
 
 .card-detail-close:hover {
-  background: var(--background-tertiary-1);
-  color: var(--foreground);
+  background: var(--hover-bg);
+  color: var(--text-card);
 }
 
 .card-detail-loading,
@@ -481,18 +721,10 @@ a.board-chip:hover {
   padding: 12px;
 }
 
-/* Agent row: provider/model left, blocked note, one emerald key right. */
-.card-detail-agent-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
 .card-detail-agent {
   font-family: var(--font-mono);
   font-size: 12px;
-  color: var(--foreground-muted);
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -500,7 +732,7 @@ a.board-chip:hover {
 
 .card-detail-agent em {
   margin-left: 6px;
-  color: var(--foreground-passive);
+  color: var(--meta);
   font-style: normal;
 }
 
@@ -521,36 +753,36 @@ a.board-chip:hover {
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--foreground);
+  color: var(--text-card);
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
-  line-height: 20px;
+  line-height: 24px;
+  letter-spacing: -0.01em;
 }
 
 .card-detail-title:focus {
-  outline: 2px solid var(--border-primary);
-  outline-offset: 2px;
+  outline: none;
 }
 
+/* Quiet hairline textarea — focus strengthens the hairline, no outline. */
 .card-detail-body-edit {
   width: 100%;
   resize: vertical;
   min-height: 72px;
   padding: 8px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
-  background: var(--background);
-  color: var(--foreground-body);
+  background: transparent;
+  color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 18px;
 }
 
 .card-detail-body-edit:focus {
-  outline: 2px solid var(--border-primary);
-  outline-offset: 0;
-  border-color: var(--border-1);
+  outline: none;
+  border-color: var(--hairline-strong);
 }
 
 .card-detail-save {
@@ -562,7 +794,7 @@ a.board-chip:hover {
 
 .card-detail-dirty {
   font-size: 11px;
-  color: var(--foreground-passive);
+  color: var(--meta);
 }
 
 /* Meta grid — dt label, dd value. */
@@ -572,7 +804,7 @@ a.board-chip:hover {
   gap: 4px;
   margin: 2px 0 0;
   padding-top: 10px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--hairline);
 }
 
 .card-detail-meta-row {
@@ -587,14 +819,14 @@ a.board-chip:hover {
   width: 52px;
   font-size: 11px;
   font-weight: 500;
-  color: var(--foreground-passive);
+  color: var(--meta);
 }
 
 .card-detail-meta-row dd {
   margin: 0;
   min-width: 0;
   font-size: 12px;
-  color: var(--foreground-muted);
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -606,10 +838,11 @@ a.board-chip:hover {
 }
 
 .card-detail-meta-row em {
-  color: var(--foreground-passive);
+  color: var(--meta);
   font-style: normal;
 }
 
+/* Link-out only (Source → GitHub) — in-app jumps use .card-detail-edge-jump. */
 .card-detail-link {
   border: none;
   background: none;
@@ -626,13 +859,15 @@ a.board-chip:hover {
   background: none;
 }
 
+/* Section labels in the group-label voice (mono uppercase, DESIGN.md). */
 .card-detail-body h3 {
   margin: 14px 0 2px;
-  font-size: 11px;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--foreground-passive);
+  color: var(--meta);
 }
 
 .card-detail-empty {
@@ -653,14 +888,24 @@ a.board-chip:hover {
 .card-detail-ac li,
 .card-detail-edges li {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   gap: 8px;
-  font-size: 12px;
-  line-height: 17px;
-  background: var(--background-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 4px 6px 4px 8px;
+  font-size: 13px;
+  line-height: 19px;
+  padding: 1px 0;
+  color: var(--text-secondary);
+}
+
+/* List marker — same voice as the rendered markdown bullets. */
+.card-detail-ac li::before,
+.card-detail-edges li::before {
+  content: "";
+  flex: none;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--dot-idle);
+  margin: 8px 2px 0;
 }
 
 .card-detail-ac-text,
@@ -669,16 +914,35 @@ a.board-chip:hover {
   overflow-wrap: anywhere;
 }
 
+/* In-app jump rows (blockers §5g, linked task) — plain text, never
+   link-out blue. */
+.card-detail-edge-jump {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.card-detail-edge-jump:hover {
+  background: none;
+  color: var(--text-card);
+  text-decoration: underline;
+}
+
 .card-detail-edges em {
   margin-left: auto;
   flex-shrink: 0;
-  color: var(--foreground-passive);
+  color: var(--meta);
   font-style: normal;
   font-family: var(--font-mono);
   font-size: 10px;
 }
 
-/* Hover-only remove keys, destructive on hover. */
+/* Hover-only remove keys — "×" text glyph, mono; never red (red text
+   belongs to the delete confirm alone). */
 .row-remove {
   display: inline-flex;
   align-items: center;
@@ -689,17 +953,20 @@ a.board-chip:hover {
   flex-shrink: 0;
   padding: 0;
   border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1;
   color: transparent;
 }
 
 .card-detail-ac li:hover .row-remove,
 .card-detail-edges li:hover .row-remove,
 .row-remove:focus-visible {
-  color: var(--foreground-passive);
+  color: var(--text-mid);
 }
 
 .row-remove:hover {
-  color: var(--destructive);
+  color: var(--text-secondary);
   background: transparent;
 }
 
@@ -709,35 +976,44 @@ a.board-chip:hover {
   gap: 6px;
 }
 
+/* Quiet add row: reads as the next list item until focused. */
 .card-detail-ac-add input {
   flex: 1;
   min-width: 0;
-  padding: 5px 8px;
-  border: 1px solid var(--border);
+  padding: 3px 8px;
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
-  background: var(--background);
-  color: var(--foreground);
+  background: transparent;
+  color: var(--text-card);
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: 13px;
+}
+
+.card-detail-ac-add input:hover {
+  border-color: var(--hairline);
+}
+
+.card-detail-ac-add input:focus {
+  border-color: var(--hairline-strong);
+  background: transparent;
+  outline: none;
 }
 
 .card-detail-edge-add select {
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--hairline-strong);
   border-radius: var(--radius-md);
-  background: var(--background);
-  color: var(--foreground-muted);
+  background: var(--flyout-bg);
+  color: var(--text-secondary);
   font-family: var(--font-sans);
   font-size: 12px;
 }
 
-.card-detail-ac-add input:focus,
 .card-detail-edge-add select:focus {
-  outline: 2px solid var(--border-primary);
-  outline-offset: 0;
-  border-color: var(--border-1);
+  outline: none;
+  border-color: var(--hairline-strong);
 }
 
 .card-detail-footer {
@@ -746,22 +1022,52 @@ a.board-chip:hover {
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--hairline);
 }
 
-.card-detail-delete {
-  padding: 4px 8px;
-  font-size: 12px;
-  color: var(--foreground-passive);
+/* Delete is quiet mono key-labelled text; red appears ONLY inside the
+   confirm step (7a: red action labels are confirm-only). */
+.card-detail-delete,
+.card-detail-keep {
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-key);
+  cursor: pointer;
 }
 
-.card-detail-delete:hover {
-  color: var(--destructive);
-  background: transparent;
+.card-detail-delete:hover,
+.card-detail-keep:hover {
+  color: var(--text-secondary);
+  background: none;
+}
+
+.card-detail-confirm {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.card-detail-delete-go {
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fc-bad-text);
+  cursor: pointer;
+}
+
+.card-detail-delete-go:hover {
+  color: var(--fc-bad-text);
+  background: none;
 }
 
 .card-detail-confirm-note {
   font-size: 12px;
-  color: var(--foreground-muted);
+  color: var(--text-secondary);
   margin-right: auto;
 }

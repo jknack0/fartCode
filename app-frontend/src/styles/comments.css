@@ -1,0 +1,277 @@
+/* Line comments: diff selection, popover, placed comment (design_handoff_v2 5f).
+   Namespace: lc-* — the legacy .diff-sel-* rules in styles.css are still used
+   by board/CardDetail.tsx and stay untouched. */
+
+/* -- Selected diff lines: green wash + accent outline ---------------------- */
+/* CodeMirror draws selections in its own layer; !important outbids the
+   injected editor-theme rules (DiffView's token theme sets the same wash —
+   this override adds the accent outline on top). */
+.diff-body .cm-editor .cm-selectionLayer .cm-selectionBackground {
+  background: rgba(110, 231, 168, 0.14) !important;
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.diff-body .cm-content ::selection {
+  background: rgba(110, 231, 168, 0.14) !important;
+}
+
+/* -- Gutter marker (one per comment anchor line) --------------------------- */
+.lc-marker {
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  color: #a4a4ab;
+}
+.lc-marker:hover {
+  color: var(--foreground);
+}
+.lc-marker.resolved {
+  color: #66666d;
+}
+.cm-comment-gutter {
+  width: 18px;
+}
+
+/* -- "+ comment" affordance on an active selection ------------------------- */
+.lc-fab {
+  position: absolute;
+  z-index: 20;
+  padding: 4px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #a4a4ab;
+  background: var(--overlay);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+.lc-fab:hover {
+  color: var(--foreground);
+  background: var(--hover-bg);
+}
+
+/* -- Popover (indented to the code start column) --------------------------- */
+.lc-popover {
+  position: absolute;
+  z-index: 20;
+  width: 380px; /* kept in sync with POPOVER_WIDTH in DiffSelectionPopover */
+  max-width: calc(100% - 8px);
+  background: var(--overlay);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.lc-input {
+  display: block;
+  width: 100%;
+  padding: 12px 14px;
+  background: transparent;
+  border: none;
+  resize: none;
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #e8e8ea;
+  caret-color: var(--accent);
+}
+.lc-input:focus {
+  outline: none;
+}
+.lc-input::placeholder {
+  color: var(--meta);
+}
+
+.lc-error {
+  margin: 0;
+  padding: 0 14px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fc-bad-text);
+}
+
+.lc-popover-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+/* Key-first action label: mono 11px #66666d, key glyph #a4a4ab. */
+.lc-key-action {
+  padding: 0;
+  background: none;
+  border: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
+  cursor: pointer;
+}
+.lc-key-action kbd {
+  font-family: inherit;
+  font-size: inherit;
+  color: #a4a4ab;
+}
+.lc-key-action:hover:not(:disabled) {
+  color: #a4a4ab;
+}
+.lc-key-action:hover:not(:disabled) kbd {
+  color: var(--foreground);
+}
+.lc-key-action:disabled {
+  color: var(--meta-dim);
+  cursor: default;
+}
+.lc-key-action:disabled kbd {
+  color: var(--meta-dim);
+}
+
+/* -- Thread panel (placed comments for one file/side) ---------------------- */
+.lc-thread {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  z-index: 30;
+  width: 340px;
+  max-height: 70%;
+  overflow-y: auto;
+  padding: 12px 14px;
+  background: var(--overlay);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+.lc-thread-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--hairline);
+}
+.lc-thread-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--meta);
+}
+.lc-thread-path {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #9a9aa1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lc-thread-close {
+  padding: 0;
+  background: none;
+  border: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
+  cursor: pointer;
+}
+.lc-thread-close:hover {
+  color: var(--foreground);
+}
+
+.lc-empty {
+  margin: 10px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--meta);
+}
+
+/* -- Placed comment row: dot + mono meta + title --------------------------- */
+.lc-row {
+  display: flex;
+  gap: 9px;
+  padding: 12px 0 10px;
+}
+.lc-row + .lc-row {
+  border-top: 1px solid var(--hairline);
+}
+.lc-row .status-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 4px;
+}
+.lc-row-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.lc-meta-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.lc-meta {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--meta);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lc-task-link {
+  padding: 0;
+  background: none;
+  border: none;
+  font: inherit;
+  color: var(--info); /* links out only */
+  cursor: pointer;
+}
+.lc-task-link:hover {
+  text-decoration: underline;
+}
+
+.lc-row-actions {
+  display: flex;
+  flex: none;
+  gap: 10px;
+  visibility: hidden;
+}
+.lc-row:hover .lc-row-actions,
+.lc-row:focus-within .lc-row-actions {
+  visibility: visible;
+}
+.lc-action {
+  padding: 0;
+  background: none;
+  border: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
+  cursor: pointer;
+}
+.lc-action:hover {
+  color: #a4a4ab;
+}
+/* Delete stays gray on hover — red is exclusive to the delete confirm. */
+.lc-action.danger:hover {
+  color: #a4a4ab;
+}
+
+.lc-title {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-card);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.lc-row.resolved .lc-title {
+  color: #7c7c83;
+  text-decoration: line-through;
+}

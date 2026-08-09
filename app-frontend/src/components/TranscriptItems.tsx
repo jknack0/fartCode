@@ -9,9 +9,11 @@
 // glyphs — running pulses, done is a passive check, error is destructive —
 // and awaiting-permission overrides with an info-blue key (the prompt
 // itself docks at the composer, reference PermissionBand placement).
-import { memo, useState } from "react";
+import { Fragment, memo, useState, type ReactNode } from "react";
 import { extractProposalBlocks, stripProposalBlocks } from "../lib/proposal";
+import { extractTicketEditBlocks, stripTicketEditBlocks } from "../lib/ticketEdit";
 import ProposalCard from "./projectChat/ProposalCard";
+import TicketEditCard from "./projectChat/TicketEditCard";
 import type {
   MessageItem,
   ThinkingItem,
@@ -73,6 +75,68 @@ function dirname(path: string): string {
 
 // -- messages -----------------------------------------------------------------
 
+/** File mentions in PM prose (§5c): wraps path-looking tokens (a slash and
+ * an extension, e.g. docs/prds/invite-vetting.md) in a styled span — mono
+ * 11.5px --info under .pm-chat, inert everywhere else. Display only, like
+ * the frame: there is no file surface to open yet (E5). */
+const FILE_MENTION = /(?:^|[\s(`])((?:[\w.-]+\/)+[\w.-]+\.[A-Za-z]{1,8})/g;
+
+function withFileMentions(text: string): ReactNode {
+  const out: ReactNode[] = [];
+  let last = 0;
+  for (const m of text.matchAll(FILE_MENTION)) {
+    const start = m.index! + m[0].length - m[1].length;
+    if (start > last) out.push(text.slice(last, start));
+    out.push(
+      <span
+        key={start}
+        className="chat-file-mention"
+        title="file mention — file surfaces land with E5"
+      >
+        {m[1]}
+      </span>,
+    );
+    last = start + m[1].length;
+  }
+  if (out.length === 0) return text;
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+/** Minimal inline markdown for PM prose (§5c): *em*, **strong**, `code` —
+ * the token grammar mirrors lib/markdown.tsx's inline() (links excluded;
+ * PM prose has no link affordance yet). Runs BEFORE the file-mention wrap:
+ * plain and emphasized segments still get mention spans, code stays raw.
+ * PM branch only — the task ACP transcript keeps literal text. */
+const PM_INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\n]+\*)/g;
+
+function renderPmProse(text: string): ReactNode {
+  const out: ReactNode[] = [];
+  let last = 0;
+  for (const m of text.matchAll(PM_INLINE)) {
+    const idx = m.index!;
+    if (idx > last) {
+      out.push(
+        <Fragment key={`t${last}`}>{withFileMentions(text.slice(last, idx))}</Fragment>,
+      );
+    }
+    const tok = m[0];
+    if (tok.startsWith("`")) {
+      out.push(<code key={idx}>{tok.slice(1, -1)}</code>);
+    } else if (tok.startsWith("**")) {
+      out.push(<strong key={idx}>{withFileMentions(tok.slice(2, -2))}</strong>);
+    } else {
+      out.push(<em key={idx}>{withFileMentions(tok.slice(1, -1))}</em>);
+    }
+    last = idx + tok.length;
+  }
+  if (out.length === 0) return withFileMentions(text);
+  if (last < text.length) {
+    out.push(<Fragment key={`t${last}`}>{withFileMentions(text.slice(last))}</Fragment>);
+  }
+  return out;
+}
+
 function MessageRow({
   item,
   proposalProjectId,
@@ -87,19 +151,29 @@ function MessageRow({
   }
   if (proposalProjectId) {
     const blocks = extractProposalBlocks(item.text);
-    if (blocks.length > 0) {
-      const prose = stripProposalBlocks(item.text);
+    const edits = extractTicketEditBlocks(item.text);
+    if (blocks.length > 0 || edits.length > 0) {
+      const prose = stripTicketEditBlocks(stripProposalBlocks(item.text));
+      // `has-cards` / `chat-prose` are styling hooks only (PM panel scope —
+      // src/styles/project-chat.css); behavior is identical either way.
       return (
-        <div className="chat-assistant">
-          {prose && <div>{prose}</div>}
+        <div className="chat-assistant has-cards">
+          {prose && <div className="chat-prose">{renderPmProse(prose)}</div>}
           {blocks.map((raw, i) => (
-            <ProposalCard key={i} raw={raw} projectId={proposalProjectId} />
+            <ProposalCard key={`p${i}`} raw={raw} projectId={proposalProjectId} />
+          ))}
+          {edits.map((raw, i) => (
+            <TicketEditCard key={`e${i}`} raw={raw} projectId={proposalProjectId} />
           ))}
         </div>
       );
     }
   }
-  return <div className="chat-assistant">{item.text}</div>;
+  return (
+    <div className="chat-assistant">
+      {proposalProjectId ? renderPmProse(item.text) : item.text}
+    </div>
+  );
 }
 
 // -- thinking -----------------------------------------------------------------

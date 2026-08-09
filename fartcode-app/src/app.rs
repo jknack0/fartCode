@@ -57,6 +57,10 @@ pub struct App {
     pub columns: Arc<fartcode_core::issues::columns::ColumnStore>,
     /// E18-04 step engine state: in-memory parked (queue-mode) steps.
     pub steps: crate::step_engine::StepEngine,
+    /// E3-02 host dependencies (agent CLIs): detection cache +
+    /// install/update (7d agents-on-this-machine). Shared with the
+    /// rehydrator, which already consumed the store.
+    pub host_dependencies: Arc<HostDependencyStore>,
 }
 
 impl App {
@@ -82,15 +86,19 @@ impl App {
         // and task deletion (cancel + reap).
         let sessions = Arc::new(SessionRegistry::new());
 
+        // E3-02/7d: one host-dependency store shared by the rehydrator and
+        // the `host_dependency_*` commands (same kv detection cache).
+        let host_dependencies = Arc::new(HostDependencyStore::new(
+            db.clone(),
+            Arc::new(ProcessInstallRunner),
+        ));
+
         // E2-07 boot rehydration: previously-spawned PTY conversations are
         // resumed after DB init (reference boot order). The app shell calls
         // `rehydrate_all` on a background thread (each launch blocks).
         let rehydrator = Rehydrator::new(
             Arc::new(fartcode_terminal::PortablePtyManager),
-            Arc::new(HostDependencyStore::new(
-                db.clone(),
-                Arc::new(ProcessInstallRunner),
-            )),
+            host_dependencies.clone(),
             event_bus.clone(),
             conversations.clone(),
             tasks.clone(),
@@ -170,6 +178,7 @@ impl App {
             issues,
             columns,
             steps: crate::step_engine::StepEngine::new(),
+            host_dependencies,
         }))
     }
 }
@@ -195,6 +204,14 @@ pub fn event_to_value(event: &InternalEvent) -> Option<serde_json::Value> {
         InternalEvent::TaskDeleted { id } => Some(json!({ "type": "task:deleted", "taskId": id })),
         InternalEvent::TaskStatusChanged { id, new_status, .. } => {
             Some(json!({ "type": "task:status_changed", "taskId": id, "status": new_status }))
+        }
+        // 7a archive (⌘⌫ "a archive instead") / ⌘K restore — consumers
+        // refetch the project task list (archivedAt filters the board).
+        InternalEvent::TaskArchived { id } => {
+            Some(json!({ "type": "task:archived", "taskId": id }))
+        }
+        InternalEvent::TaskRestored { id } => {
+            Some(json!({ "type": "task:restored", "taskId": id }))
         }
         InternalEvent::ConversationCreated {
             id, task_id, title, ..
@@ -299,6 +316,11 @@ pub fn event_to_value(event: &InternalEvent) -> Option<serde_json::Value> {
         } => Some(json!({
             "type": "step:settled", "issueId": issue_id, "projectId": project_id,
             "columnId": column_id, "taskId": task_id,
+        })),
+        // App settings (set_default_agent): consumers refetch the changed
+        // key (the ProjectSettings "Default agent · model" row).
+        InternalEvent::SettingChanged { key } => Some(json!({
+            "type": "setting:changed", "key": key,
         })),
         _ => None,
     }
@@ -445,6 +467,17 @@ mod tests {
         };
         let v = event_to_value(&ev).unwrap();
         assert_eq!(v["type"], "step:settled");
+        assert_eq!(v["taskId"], "t1");
+
+        // 7a archive/restore events reach the frontend envelope.
+        let ev = InternalEvent::TaskArchived { id: "t1".into() };
+        let v = event_to_value(&ev).unwrap();
+        assert_eq!(v["type"], "task:archived");
+        assert_eq!(v["taskId"], "t1");
+
+        let ev = InternalEvent::TaskRestored { id: "t1".into() };
+        let v = event_to_value(&ev).unwrap();
+        assert_eq!(v["type"], "task:restored");
         assert_eq!(v["taskId"], "t1");
 
         // Events the UI doesn't consume are skipped, not panicked on.

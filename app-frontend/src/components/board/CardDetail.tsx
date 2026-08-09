@@ -4,15 +4,17 @@
 // style (E4-06 pattern): dirty title/body behind an explicit Save, busy
 // phase, inline errors, draft retained on failure for retry.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-shell";
 import {
+  acpStart,
   issueDelete,
   issueDispatch,
   issueLink,
   issueList,
   issueUnlink,
   issueUpdate,
+  listProviders,
   onFartcodeEvent,
   terminalOpenAgent,
   terminalWrite,
@@ -20,9 +22,11 @@ import {
   type Lane,
   type TaskDto,
 } from "../../lib/tauri";
+import { renderMarkdown } from "../../lib/markdown";
+import { useConversations } from "../../store/conversations";
 import { useSidebar } from "../../store/sidebar";
 import { useUi } from "../../store/ui";
-import { IconClose } from "../icons";
+import { PM_PROMPT } from "../projectChat/pmPrompt";
 import { LANE_LABEL } from "./BoardView";
 
 /** Lane → linked-task status mapping used for the lane dot. */
@@ -52,6 +56,16 @@ export default function CardDetail({
   const [edgeTarget, setEdgeTarget] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [dispatching, setDispatching] = useState(false);
+  // Body: rendered markdown by default; Edit toggles the textarea.
+  const [editing, setEditing] = useState(false);
+  // Select-to-prompt (diff-review pattern): selection in the rendered body
+  // grows a FAB → popover → prompt + excerpt go to the PM project chat.
+  const [sel, setSel] = useState<{ text: string; left: number; top: number } | null>(null);
+  const [askOpen, setAskOpen] = useState(false);
+  const [askPrompt, setAskPrompt] = useState("");
+  const [askSending, setAskSending] = useState(false);
+  const asideRef = useRef<HTMLElement | null>(null);
+  const mdRef = useRef<HTMLDivElement | null>(null);
   const projectTasks = useSidebar((s) => s.tasksByProject[projectId]);
   const close = () => useUi.getState().setBoardDetailIssueId(null);
 
@@ -111,9 +125,83 @@ export default function CardDetail({
     if (!dirty || saving) return;
     setSaving(true);
     setError(null);
-    void apply(issueUpdate(issueId, { title: title.trim(), body: body || null })).finally(
-      () => setSaving(false),
-    );
+    issueUpdate(issueId, { title: title.trim(), body: body || null })
+      .then((iss) => {
+        setIssue(iss);
+        setEditing(false);
+      })
+      .catch((e) => setError(String(e)))
+      .finally(() => setSaving(false));
+  };
+
+  const cancelEdit = () => {
+    if (issue) {
+      setTitle(issue.title);
+      setBody(issue.body ?? "");
+    }
+    setEditing(false);
+  };
+
+  /** Selection in the rendered body → FAB anchored below it. */
+  const onBodyMouseUp = () => {
+    const s = window.getSelection();
+    const host = asideRef.current;
+    const md = mdRef.current;
+    if (!s || s.isCollapsed || !host || !md) {
+      setSel(null);
+      return;
+    }
+    const text = s.toString().trim();
+    if (!text || !md.contains(s.anchorNode) || !md.contains(s.focusNode)) {
+      setSel(null);
+      return;
+    }
+    const rect = s.getRangeAt(0).getBoundingClientRect();
+    const box = host.getBoundingClientRect();
+    setSel({
+      text,
+      left: Math.max(4, Math.min(rect.left - box.left, box.width - 308)),
+      top: rect.bottom - box.top + 6,
+    });
+    setAskOpen(false);
+  };
+
+  const closeAsk = () => {
+    setSel(null);
+    setAskOpen(false);
+    setAskPrompt("");
+  };
+
+  /** Send excerpt + prompt to the PM project chat, then swap the sheet to
+   * the chat so the reply (and its approval card) is visible. */
+  const ask = async () => {
+    const q = askPrompt.trim();
+    if (!q || !sel || !issue || askSending) return;
+    setAskSending(true);
+    setError(null);
+    try {
+      const provider = (await listProviders()).find((p) =>
+        p.capabilities.includes("acp"),
+      );
+      if (!provider) throw new Error("no ACP-capable provider available");
+      const conv = await useConversations.getState().ensureProject(projectId, provider.id);
+      await acpStart(conv.id);
+      const full =
+        `Ticket "${issue.title}" (issueId: ${issue.id}) — selected excerpt:\n` +
+        "```\n" +
+        sel.text +
+        "\n```\n\n" +
+        q;
+      await useConversations.getState().sendPrompt(conv.id, full, PM_PROMPT);
+      closeAsk();
+      const ui = useUi.getState();
+      ui.setBoardDetailIssueId(null);
+      ui.setProjectChatOpen(true);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setAskSending(false);
+    }
   };
 
   const setAcceptance = (items: string[]) =>
@@ -167,17 +255,39 @@ export default function CardDetail({
     : null;
 
   return (
-    <aside className="card-detail" data-issue-id={issueId}>
+    <aside className="card-detail" data-issue-id={issueId} ref={asideRef}>
       <header className="card-detail-header">
         <span className="card-detail-lane">
           <span
-            className={`card-detail-lane-dot${dotStatus ? ` status-${dotStatus}` : ""}`}
+            className={`status-dot${dotStatus ? ` status-${dotStatus}` : ""}`}
           />
           {LANE_LABEL[issue?.lane ?? "backlog"] ?? issue?.lane}
+          {issue?.blocked && (
+            <span className="card-detail-blocked-note">
+              blocked by {issue.blockers.length}
+            </span>
+          )}
         </span>
-        <button className="card-detail-close" onClick={close} aria-label="Close detail">
-          <IconClose size={10} />
-        </button>
+        <div className="card-detail-header-actions">
+          {issue &&
+            (linkedTask ? (
+              <button className="primary card-detail-dispatch" onClick={openTask}>
+                Open task
+              </button>
+            ) : (
+              <button
+                className="primary card-detail-dispatch"
+                disabled={dispatching}
+                onClick={() => void dispatch()}
+                title="Create a worktree and launch an agent for this issue"
+              >
+                {dispatching ? "Dispatching…" : "Dispatch"}
+              </button>
+            ))}
+          <button className="card-detail-close" onClick={close} aria-label="Close detail">
+            ×
+          </button>
+        </div>
       </header>
 
       {error && (
@@ -189,34 +299,6 @@ export default function CardDetail({
       {issue && (
         <div className="card-detail-scroll">
           <div className="card-detail-body">
-            <div className="card-detail-agent-row">
-              {issue.provider && (
-                <span className="card-detail-agent">
-                  {issue.provider}
-                  {issue.model ? <em>· {issue.model}</em> : null}
-                </span>
-              )}
-              {issue.blocked && (
-                <span className="card-detail-blocked-note">
-                  blocked by {issue.blockers.length}
-                </span>
-              )}
-              {linkedTask ? (
-                <button className="primary card-detail-dispatch" onClick={openTask}>
-                  Open task
-                </button>
-              ) : (
-                <button
-                  className="primary card-detail-dispatch"
-                  disabled={dispatching}
-                  onClick={() => void dispatch()}
-                  title="Create a worktree and launch an agent for this issue"
-                >
-                  {dispatching ? "Dispatching…" : "Dispatch"}
-                </button>
-              )}
-            </div>
-
             <input
               className="card-detail-title"
               value={title}
@@ -224,76 +306,69 @@ export default function CardDetail({
               onKeyDown={(e) => e.key === "Enter" && save()}
               aria-label="Issue title"
             />
-            <textarea
-              className="card-detail-body-edit"
-              value={body}
-              placeholder="Describe the ticket…"
-              rows={6}
-              onChange={(e) => setBody(e.target.value)}
-              aria-label="Issue description"
-            />
-            <div className="card-detail-save">
-              {dirty && (
-                <span className="card-detail-dirty" aria-live="polite">
-                  Unsaved changes
-                </span>
-              )}
-              <button
-                className="primary"
-                disabled={!dirty || saving}
-                onClick={save}
-              >
-                {saving ? "Saving…" : "Save"}
-              </button>
-            </div>
+            {issue.provider && (
+              <span className="card-detail-agent">
+                {issue.provider}
+                {issue.model ? <em>· {issue.model}</em> : null}
+              </span>
+            )}
 
-            <dl className="card-detail-meta">
-              {issue.externalRef && (
-                <div className="card-detail-meta-row">
-                  <dt>Source</dt>
-                  <dd>
-                    <button
-                      className="card-detail-link"
-                      onClick={() => void open(issue.externalRef!).catch(() => {})}
-                    >
-                      {ghLabel(issue.externalRef)}
+            {editing ? (
+              <>
+                <textarea
+                  className="card-detail-body-edit"
+                  value={body}
+                  placeholder="Describe the ticket…"
+                  rows={10}
+                  autoFocus
+                  onChange={(e) => setBody(e.target.value)}
+                  aria-label="Issue description"
+                />
+                <div className="card-detail-save">
+                  {dirty && (
+                    <span className="card-detail-dirty" aria-live="polite">
+                      Unsaved changes
+                    </span>
+                  )}
+                  <button onClick={cancelEdit}>Cancel</button>
+                  <button className="primary" disabled={!dirty || saving} onClick={save}>
+                    {saving ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="card-detail-md-wrap">
+                <button
+                  className="card-detail-edit-key"
+                  onClick={() => setEditing(true)}
+                >
+                  Edit
+                </button>
+                <div
+                  className="card-detail-md"
+                  ref={mdRef}
+                  onMouseUp={onBodyMouseUp}
+                  onDoubleClick={() => setEditing(true)}
+                >
+                  {body ? (
+                    renderMarkdown(body)
+                  ) : (
+                    <p className="muted">No description — double-click to add one.</p>
+                  )}
+                </div>
+                {dirty && (
+                  <div className="card-detail-save">
+                    <span className="card-detail-dirty" aria-live="polite">
+                      Unsaved changes
+                    </span>
+                    <button onClick={cancelEdit}>Cancel</button>
+                    <button className="primary" disabled={saving} onClick={save}>
+                      {saving ? "Saving…" : "Save"}
                     </button>
-                  </dd>
-                </div>
-              )}
-              {issue.prdPath && (
-                <div className="card-detail-meta-row">
-                  <dt>PRD</dt>
-                  <dd>
-                    <code>{issue.prdPath}</code>
-                    {issue.prdSection ? <em> · {issue.prdSection}</em> : ""}
-                  </dd>
-                </div>
-              )}
-              {linkedTask && (
-                <div className="card-detail-meta-row">
-                  <dt>Task</dt>
-                  <dd>
-                    <button className="card-detail-link" onClick={openTask}>
-                      {linkedTask.name}
-                    </button>
-                    <em> · {linkedTask.status.replace("_", " ")}</em>
-                  </dd>
-                </div>
-              )}
-              {issue.createdAt && (
-                <div className="card-detail-meta-row">
-                  <dt>Created</dt>
-                  <dd>{stamp(issue.createdAt)}</dd>
-                </div>
-              )}
-              {issue.updatedAt && issue.updatedAt !== issue.createdAt && (
-                <div className="card-detail-meta-row">
-                  <dt>Updated</dt>
-                  <dd>{stamp(issue.updatedAt)}</dd>
-                </div>
-              )}
-            </dl>
+                  </div>
+                )}
+              </div>
+            )}
 
             <h3>Acceptance</h3>
             {issue.acceptance.length === 0 ? (
@@ -310,7 +385,7 @@ export default function CardDetail({
                         setAcceptance(issue.acceptance.filter((_, j) => j !== i))
                       }
                     >
-                      <IconClose size={9} />
+                      ×
                     </button>
                   </li>
                 ))}
@@ -319,7 +394,7 @@ export default function CardDetail({
             <div className="card-detail-ac-add">
               <input
                 value={newAc}
-                placeholder="Add criterion"
+                placeholder="+ Add criterion"
                 onChange={(e) => setNewAc(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && newAc.trim()) {
@@ -337,14 +412,20 @@ export default function CardDetail({
               <ul className="card-detail-edges">
                 {issue.blockers.map((b) => (
                   <li key={b.id}>
-                    <span className="card-detail-edge-title">{b.title}</span>
+                    <button
+                      className="card-detail-edge-title card-detail-edge-jump"
+                      title={`Open ${b.title}`}
+                      onClick={() => useUi.getState().setBoardDetailIssueId(b.id)}
+                    >
+                      {b.title}
+                    </button>
                     <em>{LANE_LABEL[b.lane] ?? b.lane}</em>
                     <button
                       className="row-remove"
                       aria-label={`Remove blocker ${b.title}`}
                       onClick={() => void apply(issueUnlink(issueId, b.id))}
                     >
-                      <IconClose size={9} />
+                      ×
                     </button>
                   </li>
                 ))}
@@ -375,32 +456,155 @@ export default function CardDetail({
                 </button>
               </div>
             )}
+
+            <dl className="card-detail-meta">
+              {issue.externalRef && (
+                <div className="card-detail-meta-row">
+                  <dt>Source</dt>
+                  <dd>
+                    <button
+                      className="card-detail-link"
+                      onClick={() => void open(issue.externalRef!).catch(() => {})}
+                    >
+                      {ghLabel(issue.externalRef)}
+                    </button>
+                  </dd>
+                </div>
+              )}
+              {issue.prdPath && (
+                <div className="card-detail-meta-row">
+                  <dt>PRD</dt>
+                  <dd>
+                    <code>{issue.prdPath}</code>
+                    {issue.prdSection ? <em> · {issue.prdSection}</em> : ""}
+                  </dd>
+                </div>
+              )}
+              {linkedTask && (
+                <div className="card-detail-meta-row">
+                  <dt>Task</dt>
+                  <dd>
+                    {/* In-app navigation — plain text, never link-out blue. */}
+                    <button className="card-detail-edge-jump" onClick={openTask}>
+                      {linkedTask.name}
+                    </button>
+                    <em> · {linkedTask.status.replace("_", " ")}</em>
+                  </dd>
+                </div>
+              )}
+              {issue.createdAt && (
+                <div className="card-detail-meta-row">
+                  <dt>Created</dt>
+                  <dd>{stamp(issue.createdAt)}</dd>
+                </div>
+              )}
+              {issue.updatedAt && issue.updatedAt !== issue.createdAt && (
+                <div className="card-detail-meta-row">
+                  <dt>Updated</dt>
+                  <dd>{stamp(issue.updatedAt)}</dd>
+                </div>
+              )}
+            </dl>
           </div>
 
           <div className="card-detail-footer">
             {confirmDelete ? (
-              <>
+              // Key-first confirm: esc keeps, ↵ deletes (the focused red
+              // button activates natively). stopPropagation keeps the
+              // board's global ↵/esc handlers out of it.
+              <div
+                className="card-detail-confirm"
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.stopPropagation();
+                    setConfirmDelete(false);
+                  } else if (e.key === "Enter") {
+                    e.stopPropagation();
+                  }
+                }}
+              >
                 <span className="card-detail-confirm-note">Delete this issue?</span>
                 <button
-                  className="danger"
+                  type="button"
+                  className="card-detail-keep"
+                  onClick={() => setConfirmDelete(false)}
+                >
+                  esc keep
+                </button>
+                <button
+                  type="button"
+                  className="card-detail-delete-go"
+                  autoFocus
                   onClick={() =>
                     void issueDelete(issueId)
                       .then(close)
                       .catch((e) => setError(String(e)))
                   }
                 >
-                  Delete
+                  ↵ delete
                 </button>
-                <button onClick={() => setConfirmDelete(false)}>Keep</button>
-              </>
+              </div>
             ) : (
               <button
                 className="card-detail-delete"
                 onClick={() => setConfirmDelete(true)}
               >
-                Delete issue
+                delete issue
               </button>
             )}
+          </div>
+        </div>
+      )}
+
+      {sel && !askOpen && (
+        <button
+          className="diff-sel-fab"
+          style={{ left: sel.left, top: sel.top }}
+          onClick={() => setAskOpen(true)}
+        >
+          Ask PM
+        </button>
+      )}
+      {sel && askOpen && (
+        <div
+          className="diff-sel-popover"
+          style={{ left: sel.left, top: sel.top }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.stopPropagation();
+              closeAsk();
+            }
+          }}
+        >
+          <div className="diff-sel-header">
+            {sel.text.length > 80 ? `${sel.text.slice(0, 80)}…` : sel.text}
+          </div>
+          <textarea
+            value={askPrompt}
+            placeholder="Change this part of the ticket…  (Enter sends, ⇧Enter breaks)"
+            rows={3}
+            autoFocus
+            disabled={askSending}
+            onChange={(e) => setAskPrompt(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void ask();
+              }
+            }}
+          />
+          <div className="diff-sel-actions">
+            <span className="diff-sel-dest">→ Project chat</span>
+            <button onClick={closeAsk} disabled={askSending}>
+              Cancel
+            </button>
+            <button
+              className="primary"
+              disabled={!askPrompt.trim() || askSending}
+              onClick={() => void ask()}
+            >
+              {askSending ? "Sending…" : "Send to PM"}
+            </button>
           </div>
         </div>
       )}

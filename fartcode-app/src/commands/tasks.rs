@@ -22,18 +22,25 @@ use crate::terminals::{TerminalManager, TerminalSpec};
 /// Creates a task AND provisions its workspace (worktree + branch) in one
 /// shot — the E2-04 create_with_provision flow. The branch name follows the
 /// project group settings (prefix `fartCode` + random suffix by default); the
-/// source ref is the project's base ref.
+/// source ref is the project's base ref. `workspace` selects the target:
+/// `new-worktree` (default, isolated) or `project-root` (worktree-less,
+/// current checkout — the dogfood mode). `branch` picks an existing branch
+/// for the worktree instead of creating one.
 #[tauri::command]
 pub fn create_task(
     app: State<'_, Arc<App>>,
     terminals: State<'_, Arc<TerminalManager>>,
     project_id: String,
     name: String,
+    workspace: Option<String>,
+    branch: Option<String>,
 ) -> Result<TaskDto, String> {
     let params = create_task_params(
         &app,
         &project_id,
         &name,
+        workspace.as_deref(),
+        branch.as_deref(),
         TaskConfigParams {
             name: name.clone(),
             initial_status: None,
@@ -47,12 +54,51 @@ pub fn create_task(
         .map_err(|e| e.to_string())?;
     // E1-06: auto-run setup/run scripts on task creation when the project
     // configured them. Best-effort — the task stands either way.
-    run_auto_lifecycle_scripts(&terminals, &app, &created.task.id);
+    let setup_terminal = run_auto_lifecycle_scripts(&terminals, &app, &created.task.id);
     // PRD workflow: Add Task → spawn the chosen agent in its worktree.
     // Best-effort — without the agent binary the frontend's terminal
     // fallback covers the surface; with it, the agent tab IS the task.
-    launch_default_agent(&terminals, &app, &created.task.id);
+    match setup_terminal {
+        // 7b "A failed setup blocks agent start": when auto-run spawned a
+        // setup script, the launch waits (off-thread — creation returns
+        // immediately) for the setup terminal to exit 0.
+        Some(setup_id) => {
+            let terminals = terminals.inner().clone();
+            let app = app.inner().clone();
+            let task_id = created.task.id.clone();
+            std::thread::spawn(move || {
+                launch_default_agent_after_setup(&terminals, &app, &task_id, &setup_id);
+            });
+        }
+        // No auto-run setup → unchanged: launch right away.
+        None => launch_default_agent(&terminals, &app, &created.task.id),
+    }
     Ok(TaskDto::from(&created.task))
+}
+
+/// 7b "A failed setup blocks agent start": blocks until the auto-run setup
+/// terminal exits, then launches the default agent ONLY on exit 0 — a
+/// non-zero (or unreported) code, or a setup tab closed mid-run, skips the
+/// launch with a warn trace. Synchronous so the regression test can drive
+/// it directly; `create_task` runs it on a background thread.
+pub fn launch_default_agent_after_setup<R: tauri::Runtime>(
+    terminals: &TerminalManager<R>,
+    app: &App,
+    task_id: &str,
+    setup_terminal_id: &str,
+) {
+    match terminals.wait_for_exit(setup_terminal_id) {
+        Some(Some(0)) => launch_default_agent(terminals, app, task_id),
+        Some(code) => tracing::warn!(
+            task_id,
+            exit_code = ?code,
+            "setup script failed — default agent launch skipped"
+        ),
+        None => tracing::warn!(
+            task_id,
+            "setup terminal closed before exit — default agent launch skipped"
+        ),
+    }
 }
 
 /// Spawns the default agent CLI in the task's worktree (the left-nav
@@ -104,10 +150,16 @@ pub fn launch_default_agent<R: tauri::Runtime>(
 /// Builds [`CreateTaskParams`] for the standard flow (E2-04 naming +
 /// project base ref), shared by `create_task` and E4-10's
 /// `create_task_from_comment` (which layers an initial conversation).
-pub(crate) fn create_task_params(
+/// `workspace`/`branch` override the default (new worktree + fresh branch
+/// off the base ref); the comment/dispatch callers pass `None`.
+/// `pub` for the integration tests (same pattern as
+/// `create_task_from_comment_core`).
+pub fn create_task_params(
     app: &App,
     project_id: &str,
     name: &str,
+    workspace: Option<&str>,
+    branch: Option<&str>,
     task_config: TaskConfigParams,
 ) -> Result<CreateTaskParams, String> {
     let project = app
@@ -121,35 +173,64 @@ pub(crate) fn create_task_params(
         .get(&fartcode_core::settings::registry::PROJECT)
         .map_err(|e| e.to_string())?;
 
-    let raw_branch = generate_task_name(Some(name), None, true);
-    let branch_name = resolve_task_branch_name(&BranchNameOptions {
-        raw_branch: &raw_branch,
-        branch_prefix: Some(&group.branch_prefix),
-        suffix: &random_suffix(),
-        append_random_suffix: group.append_random_branch_suffix,
-        linked_issue: None,
-        disable_random_suffix: false,
-    });
-
-    // Base ref: "origin/main" (remote) or "main" (local).
-    let base_ref = project.base_ref();
-    let from_branch = match base_ref.split_once('/') {
-        Some((remote, branch)) => SourceBranchRef::remote(branch, remote),
-        None => SourceBranchRef::local(base_ref),
+    // Project-root tasks run in the live checkout — never mint or switch
+    // branches there (the checkout is the user's; GitSetup::None leaves it
+    // untouched).
+    let (git, workspace_target) = match workspace {
+        Some("project-root") => (GitSetup::None, WorkspaceTarget::ProjectRoot),
+        None | Some("new-worktree") => {
+            let git = match branch {
+                Some(b) if !b.trim().is_empty() => GitSetup::UseBranch {
+                    branch_name: b.trim().to_string(),
+                },
+                _ => {
+                    let raw_branch = generate_task_name(Some(name), None, true);
+                    let branch_name = resolve_task_branch_name(&BranchNameOptions {
+                        raw_branch: &raw_branch,
+                        branch_prefix: Some(&group.branch_prefix),
+                        suffix: &random_suffix(),
+                        append_random_suffix: group.append_random_branch_suffix,
+                        linked_issue: None,
+                        disable_random_suffix: false,
+                    });
+                    // Base ref: "origin/main" (remote) or "main" (local).
+                    let base_ref = project.base_ref();
+                    let from_branch = match base_ref.split_once('/') {
+                        Some((remote, branch)) => SourceBranchRef::remote(branch, remote),
+                        None => SourceBranchRef::local(base_ref),
+                    };
+                    GitSetup::CreateBranch {
+                        branch_name,
+                        from_branch,
+                        push_branch: group.push_on_create,
+                    }
+                }
+            };
+            (git, WorkspaceTarget::NewWorktree)
+        }
+        Some(other) => return Err(format!("invalid workspace target: {other}")),
     };
 
     Ok(CreateTaskParams {
         id: None,
         project_id: project_id.to_string(),
         task_config,
-        git: GitSetup::CreateBranch {
-            branch_name,
-            from_branch,
-            push_branch: group.push_on_create,
-        },
-        workspace: WorkspaceTarget::NewWorktree,
+        git,
+        workspace: workspace_target,
         automation_run_id: None,
     })
+}
+
+/// Branch list for the create-task dialog's start-source picker (reference
+/// `git branch -a` list in the dialog).
+#[tauri::command]
+pub fn list_project_branches(
+    app: State<'_, Arc<App>>,
+    project_id: String,
+) -> Result<Vec<fartcode_core::git::BranchRef>, String> {
+    app.task_creation
+        .list_branches(&project_id)
+        .map_err(|e| e.to_string())
 }
 
 /// Idempotent re-provision (E2-04 provision): materializes the task's
@@ -177,6 +258,27 @@ pub fn toggle_pin(app: State<'_, Arc<App>>, id: String) -> Result<TaskDto, Strin
     let task = task.ok_or_else(|| format!("task not found: {id}"))?;
     app.tasks
         .set_pinned(&id, !task.is_pinned)
+        .map(|t| TaskDto::from(&t))
+        .map_err(|e| e.to_string())
+}
+
+/// 7a "a archive instead": sets `archived_at` — the card leaves the board
+/// but the row, worktree, and branch all survive (delete is the only
+/// destructive path). Emits `task:archived` so stores refetch.
+#[tauri::command]
+pub fn task_archive(app: State<'_, Arc<App>>, task_id: String) -> Result<TaskDto, String> {
+    app.tasks
+        .archive(&task_id)
+        .map(|t| TaskDto::from(&t))
+        .map_err(|e| e.to_string())
+}
+
+/// ⌘K restore: clears `archived_at`, the task returns to the board.
+/// Emits `task:restored` so stores refetch.
+#[tauri::command]
+pub fn task_restore(app: State<'_, Arc<App>>, task_id: String) -> Result<TaskDto, String> {
+    app.tasks
+        .restore(&task_id)
         .map(|t| TaskDto::from(&t))
         .map_err(|e| e.to_string())
 }

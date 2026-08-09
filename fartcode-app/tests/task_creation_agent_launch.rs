@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use fartcode_app_lib::app::App;
 use fartcode_app_lib::commands::lifecycle::run_auto_lifecycle_scripts;
-use fartcode_app_lib::commands::tasks::launch_default_agent;
+use fartcode_app_lib::commands::tasks::{launch_default_agent, launch_default_agent_after_setup};
 use fartcode_app_lib::terminals::TerminalManager;
 use fartcode_core::projects::ProjectStore;
 use fartcode_core::settings::{LocalProjectGroup, DEFAULT_AGENT, LOCAL_PROJECT};
@@ -124,10 +124,15 @@ fn install_fake_claude(tmp: &tempfile::TempDir) -> PathBuf {
     bin
 }
 
+/// PATH is process-global and tests run in parallel threads — every test
+/// that prepends the fake-claude bin dir serializes on this.
+static PATH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn add_task_launches_default_agent_and_dedupes() {
     let fx = fixture();
     let bin = install_fake_claude(&fx._tmp);
+    let _path_guard = PATH_LOCK.lock().unwrap();
     let old_path = std::env::var_os("PATH").expect("PATH");
     let mut dirs: Vec<PathBuf> = std::env::split_paths(&old_path).collect();
     dirs.insert(0, bin);
@@ -222,4 +227,74 @@ fn setup_script_auto_run_respects_the_project_flag() {
         .filter(|t| t.kind == "lifecycle")
         .collect();
     assert_eq!(lifecycle.len(), 1, "flag on → setup script auto-runs");
+}
+
+/// 7b "A failed setup blocks agent start": with auto-run setup on, the
+/// default agent launches only AFTER the setup terminal exits 0 — a
+/// non-zero exit skips the launch entirely (even with the agent binary
+/// present on PATH).
+#[test]
+fn failed_setup_blocks_the_default_agent_launch() {
+    let fx = fixture();
+    let bin = install_fake_claude(&fx._tmp);
+    let _path_guard = PATH_LOCK.lock().unwrap();
+    let old_path = std::env::var_os("PATH").expect("PATH");
+    let mut dirs: Vec<PathBuf> = std::env::split_paths(&old_path).collect();
+    dirs.insert(0, bin);
+    std::env::set_var("PATH", std::env::join_paths(dirs).unwrap());
+
+    let mut settings = fx
+        .app
+        .settings
+        .get_project_settings(&fx.project_id, &fx.project_path)
+        .unwrap();
+    settings.scripts = Some(fartcode_core::settings::Scripts {
+        setup: Some("exit 3".into()),
+        run: None,
+        teardown: None,
+    });
+    settings.auto_run_setup_script_on_task_creation = Some(true);
+    fx.app
+        .settings
+        .update_project_settings(&fx.project_id, &fx.project_path, &settings)
+        .unwrap();
+
+    let manager = TerminalManager::new(tauri::test::mock_app().handle().clone());
+
+    // Failing setup (exit 3) → the deferred launch is skipped.
+    let task1 = create_task(&fx, "setup-fails");
+    let setup_id =
+        run_auto_lifecycle_scripts(&manager, &fx.app, &task1).expect("setup auto-run spawned");
+    launch_default_agent_after_setup(&manager, &fx.app, &task1, &setup_id);
+    assert!(
+        manager
+            .list_for_task(&task1)
+            .iter()
+            .all(|t| t.kind != "agent"),
+        "a failed setup must block the agent start"
+    );
+
+    // Clean setup (exit 0) → the agent launches after the script ends.
+    settings.scripts = Some(fartcode_core::settings::Scripts {
+        setup: Some("true".into()),
+        run: None,
+        teardown: None,
+    });
+    fx.app
+        .settings
+        .update_project_settings(&fx.project_id, &fx.project_path, &settings)
+        .unwrap();
+    let task2 = create_task(&fx, "setup-clean");
+    let setup_id =
+        run_auto_lifecycle_scripts(&manager, &fx.app, &task2).expect("setup auto-run spawned");
+    launch_default_agent_after_setup(&manager, &fx.app, &task2, &setup_id);
+    let agents: Vec<_> = manager
+        .list_for_task(&task2)
+        .into_iter()
+        .filter(|t| t.kind == "agent")
+        .collect();
+    assert_eq!(agents.len(), 1, "clean setup → the agent launches");
+    assert_eq!(agents[0].agent.as_deref(), Some("claude"));
+
+    std::env::set_var("PATH", old_path);
 }

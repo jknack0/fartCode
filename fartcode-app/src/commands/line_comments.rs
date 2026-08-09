@@ -197,6 +197,8 @@ pub fn create_task_from_comment_core<R: tauri::Runtime>(
         app,
         project_id,
         name,
+        None,
+        None,
         TaskConfigParams {
             name: name.to_string(),
             initial_status: None,

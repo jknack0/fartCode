@@ -16,6 +16,7 @@ export default function TerminalView({
   active: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const pokeRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     const container = containerRef.current;
@@ -23,17 +24,40 @@ export default function TerminalView({
 
     const session = getTerminalSession(terminalId);
     container.appendChild(session.host);
-    session.fit.fit();
-    session.term.focus();
 
-    const resizeObserver = new ResizeObserver(() => {
+    const sync = () => {
       session.fit.fit();
       const { cols, rows } = session.term;
       void terminalResize(terminalId, cols, rows).catch(() => {});
-    });
+    };
+
+    // xterm measures char size off a DOM span, which is 0 while the host is
+    // detached/hidden — getTerminalSession opens the term BEFORE attach, so
+    // fit() silently no-ops and the PTY would sit at its 80x24 spawn size
+    // until some unrelated layout change. xterm re-measures a frame after
+    // becoming visible (IntersectionObserver); retry until that lands.
+    let cancelled = false;
+    const poke = () => {
+      let retries = 0;
+      const step = () => {
+        if (cancelled) return;
+        sync();
+        const dims = session.fit.proposeDimensions();
+        if ((!dims || Number.isNaN(dims.cols) || dims.cols <= 2) && retries++ < 600) {
+          requestAnimationFrame(step);
+        }
+      };
+      step();
+    };
+    pokeRef.current = poke;
+    poke();
+    session.term.focus();
+
+    const resizeObserver = new ResizeObserver(sync);
     resizeObserver.observe(container);
 
     return () => {
+      cancelled = true;
       resizeObserver.disconnect();
       // Detach, never kill: the session + PTY belong to the TAB, and the
       // view remounts whenever the user comes back to this tab/task.
@@ -46,6 +70,8 @@ export default function TerminalView({
   // helper textarea — the keyboard lives in the shell (terminal-first).
   useEffect(() => {
     if (!active) return;
+    // First activation of a hidden-mounted tab: refit now that it's visible.
+    pokeRef.current();
     const target = containerRef.current?.querySelector(
       ".xterm-helper-textarea",
     ) as HTMLElement | null;

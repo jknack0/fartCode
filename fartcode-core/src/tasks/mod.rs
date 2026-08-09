@@ -438,6 +438,9 @@ impl TaskStore for DbTaskStore {
             )?;
             Ok(())
         })?;
+        self.event_bus
+            .send(InternalEvent::TaskRestored { id: id.into() });
+        lifecycle::telemetry("task_restored", &[("task_id", id.into())]);
         self.get(id)?.ok_or_else(|| Error::TaskNotFound(id.into()))
     }
 

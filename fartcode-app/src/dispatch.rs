@@ -103,6 +103,8 @@ pub(crate) fn provision_issue_task(app: &App, issue: &Issue) -> Result<(TaskDto,
         app,
         &issue.project_id,
         &issue.title,
+        None,
+        None,
         TaskConfigParams {
             name: issue.title.clone(),
             initial_status: None,

@@ -20,7 +20,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use agent_client_protocol_schema::v1::{
-    ContentBlock, PermissionOption, SessionId, StopReason, ToolCallUpdate,
+    ContentBlock, PermissionOption, SessionId, SessionUpdate, StopReason, ToolCallUpdate,
 };
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -651,7 +651,10 @@ impl SessionCell {
     /// the in-flight prompt): folds it into the transcript parser, appends
     /// it to the raw log, and fires `acp:update` + `acp:transcript`.
     pub fn record_update(&self, event: SessionUpdateEvent) {
-        {
+        // Hidden-context blocks echoed back (live) or replayed (session/load)
+        // as user chunks stay out of the visible transcript; the raw log
+        // below still records them for debugging.
+        if !is_hidden_context_echo(&event.update) {
             let mut inner = self.inner.lock();
             inner.parser.push(&event.update, now_ms());
         }
@@ -681,7 +684,7 @@ impl SessionCell {
                 blocks.push(text_block(&text)?);
             }
             if let Some(hidden) = &hidden_context {
-                blocks.push(text_block(hidden)?);
+                blocks.push(text_block(&format!("{HIDDEN_CONTEXT_SENTINEL}\n{hidden}"))?);
             }
             self.raw_log.lock().record(RawAcpEvent::Prompt {
                 session_id: self.acp_session_id.0.to_string(),
@@ -862,9 +865,54 @@ fn parse_stop_reason(reason: &str) -> Option<DoneTurnReason> {
     }
 }
 
+/// Prefixed to hidden-context prompt blocks so copies that come back as
+/// `user_message_chunk` (live echo or `session/load` replay) can be
+/// recognized and suppressed from the transcript.
+pub const HIDDEN_CONTEXT_SENTINEL: &str = "[fartCode:hidden-context]";
+
+/// True for a user chunk that is an echoed/replayed hidden-context block.
+// ponytail: only catches the chunk carrying the sentinel; an adapter that
+// splits one text block across chunks would leak the tail — none do today.
+fn is_hidden_context_echo(update: &SessionUpdate) -> bool {
+    match update {
+        SessionUpdate::UserMessageChunk(chunk) => match &chunk.content {
+            ContentBlock::Text(t) => t.text.starts_with(HIDDEN_CONTEXT_SENTINEL),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 fn text_block(text: &str) -> Result<ContentBlock, Error> {
     serde_json::from_value(serde_json::json!({ "type": "text", "text": text }))
         .map_err(|e| Error::Protocol(format!("text content block: {e}")))
+}
+
+#[cfg(test)]
+mod hidden_context_tests {
+    use super::*;
+
+    fn user_chunk(text: &str) -> SessionUpdate {
+        serde_json::from_value(serde_json::json!({
+            "sessionUpdate": "user_message_chunk",
+            "content": { "type": "text", "text": text },
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn suppresses_only_sentinel_user_chunks() {
+        let hidden = format!("{HIDDEN_CONTEXT_SENTINEL}\nYou are the PM.");
+        assert!(is_hidden_context_echo(&user_chunk(&hidden)));
+        assert!(!is_hidden_context_echo(&user_chunk("implement the feature")));
+        // Agent chunks are never suppressed, even with the sentinel.
+        let agent: SessionUpdate = serde_json::from_value(serde_json::json!({
+            "sessionUpdate": "agent_message_chunk",
+            "content": { "type": "text", "text": hidden },
+        }))
+        .unwrap();
+        assert!(!is_hidden_context_echo(&agent));
+    }
 }
 
 fn stop_reason_str(reason: &StopReason) -> &'static str {

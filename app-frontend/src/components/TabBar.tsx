@@ -1,8 +1,8 @@
 // Tab bar (E2-10): one per task pane, pure tab switching. Tabs are
-// terminals; click to activate, × to close (⌘W), ⌘T adds another. Diff
+// terminals; click to activate, × to close (⌘W), ⌘⇧T adds another. Diff
 // tabs show a dirty dot while their editor holds unsaved changes (E4-05).
-// Scope chrome (scripts, changes toggle) lives in the app header row —
-// the top chrome stays identical across scopes.
+// Scope chrome (scripts, changes toggle) lives in the task header row —
+// lifecycle scripts are never tabs (7b: the ⌘J drawer owns them).
 import { useDiffs } from "../store/diffs";
 import { useTabs, type PaneId } from "../store/tabs";
 import { TAB_KINDS } from "../lib/tab-registry";
@@ -44,6 +44,7 @@ export default function TabBar({
           <button
             className="tab-close"
             title="Close tab (⌘W)"
+            aria-label={`Close tab ${tab.title}`}
             onClick={(e) => {
               e.stopPropagation();
               useTabs.getState().closeTab(taskId, pane, tab.id);

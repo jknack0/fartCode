@@ -1,27 +1,34 @@
-/* fartCode — emdash world. seed e3c1a90f
+/* fartCode — "The Quiet Terminal" (design_handoff_left_nav + design_handoff_v2;
+ * DESIGN.md is the authority — the emdash world is superseded).
  *
- * THESIS: fartCode wears emdash's working surface — a neutral charcoal chassis with
- * an emerald primary action, blue selection, and status hues reserved for
- * agent state. It refuses the warm-faceplate instrument costume and the
- * neon-on-black dev-tool default alike: flat surfaces, hairline borders,
- * rounded-lg rows, one sans voice (Inter) and one mono (JetBrains Mono).
- * OWN-WORLD: background #111111, sidebar tertiary #201f20, tab bar secondary
- * #181818, borders #383738, foreground #e9e8e8 / muted #b8b7b8 / passive
- * #929192; accent #00a67b (primary keys), info blue #82baff (selection,
- * focus, links), status amber #dbae50 (in progress) and green #59b358
- * (review), destructive #f27470. Radii 6/8/10/14. No glow, no gradient.
- * STORY: pick a task in the sidebar, its row fills tertiary-2; the tab bar
- * and terminal inherit the chassis; commit is the emerald key.
- * FORM: Inter Variable everywhere, JetBrains Mono Variable for machine
- * strings (paths, chords, terminals); 14px body, 32px rows, 41px tab bar.
- */
+ * THESIS: a near-black chassis (#0b0b0d rail / #101012 window / #0e0e10
+ * panels) with hairlines instead of borders, boxless cards, and exactly
+ * four meaningful colours: accent oklch(.78 .15 155) selection/additions,
+ * working amber oklch(.8 .13 80) (filled = running, hollow = needs you),
+ * #c96b6b a run ended badly (#c98d8d its text form), #7c8fd0 a link out
+ * and nothing else. #5f5f66 is the meta floor. System sans for human
+ * text, JetBrains Mono for machine text; glyph icons only; motion is
+ * fc-pulse + fc-caret and nothing else.
+ *
+ * Tokens live ONLY in :root below. Per-surface rules live in styles/*.css
+ * (one file per redesigned surface). The legacy emdash-era neutral ramp
+ * (--background-1..3, --border-*, --foreground-*) remains for surfaces the
+ * redesign hasn't reached (resource monitor, diff view, palette) — do not
+ * use it for new work. */
 
 @import "./styles/board.css";
 @import "./styles/project-chat.css";
+@import "./styles/taskview.css";
+@import "./styles/changes.css";
+@import "./styles/pr.css";
+@import "./styles/comments.css";
+@import "./styles/diff.css";
+@import "./styles/modals.css";
+@import "./styles/settings.css";
 
 :root {
-  color-scheme: dark;  /* neutral ramp (emdash .emdark) */
-  --background: #111111;
+  color-scheme: dark;  /* design_handoff_left_nav tokens (react/theme.ts) */
+  --background: #101012;          /* window */
   --background-1: #181818;
   --background-2: #201f20;
   --background-3: #282728;
@@ -36,7 +43,7 @@
   --surface-elevated: var(--background-tertiary-1);
   --surface-elevated-hover: var(--background-tertiary-2);
   --surface-elevated-selected: var(--background-tertiary-3);
-  --foreground: #e9e8e8;
+  --foreground: #e8e8ea;          /* text primary */
   --foreground-body: #d5d4d5;
   --foreground-muted: #b8b7b8;
   --foreground-passive: #929192;
@@ -45,30 +52,55 @@
   --border-2: #787778;
   --border-primary: #929192;
 
-  /* action + state */
-  --accent: #00a67b;
-  --accent-hover: #00b589;
-  --accent-border: #006c50;
-  --accent-contrast: #ffffff;
-  --selection: #173865;
-  --selection-foreground: #d1ebff;
-  --info: #82baff;
+  /* nav + board (design handoff) */
+  --rail-bg: #0b0b0d;
+  --flyout-bg: #0e0e10;
+  --overlay: #17171b;
+  --tile-active: #1e1e22;
+  --hairline: rgba(255,255,255,.06);
+  --hairline-strong: rgba(255,255,255,.12);
+  --hover-bg: rgba(255,255,255,.035);
+  --focus-bg: rgba(255,255,255,.05);
+  --text-card: #dcdce1;
+  --meta: #5f5f66;                /* legibility floor — nothing dimmer */
+  --meta-dim: #4e4e55;            /* disabled/empty only */
+  --fc-bad: #c96b6b;              /* a run ended badly. nothing else */
+  --fc-bad-text: #c98d8d;         /* readable text form of --fc-bad */
+  --card-inset: #14141a;          /* inset cards on panels (proposal, commit) */
+  --brand-green: #45d68a;         /* fC mark tile + wordmark "Code" + settings tags only */
+  --backdrop: rgba(0, 0, 0, 0.55);  /* modal scrim */
+  --dot-idle: #46464d;            /* idle/stopped status dot */
+  --text-secondary: #a4a4ab;      /* DESIGN.md text ramp */
+  --text-mid: #7c7c83;
+  --text-key: #66666d;            /* key footers; the key glyph itself is #a4a4ab */
+  --drag-lift: #1a1a1e;           /* dragged card / user bubble */
+
+  /* action + state — meaningful colour only: green selection/additions,
+     amber agent working, red ended badly, blue is only ever a link out */
+  --accent: oklch(.78 .15 155);
+  --accent-hover: oklch(.83 .15 155);
+  --accent-border: oklch(.65 .15 155);
+  --accent-contrast: #0b0b0d;
+  --selection: oklch(.78 .15 155 / .28);
+  --selection-foreground: #e8e8ea;
+  --info: #7c8fd0;                /* link out */
   --info-background: #18202b;
   --info-border: #173865;
   --destructive: #f27470;
   --destructive-background: #2a1b1a;
   --destructive-background-hover: #36201e;
   --destructive-border: #964441;
-  --status-in-progress: #dbae50;
-  --status-in-review: #59b358;
+  --status-in-progress: oklch(.8 .13 80);  /* agent working */
   --status-neutral: #929192;
 
   /* terminals (emdash dark xterm vars) */
-  --xterm-bg: #181818;
-  --xterm-fg: #e9e8e8;
-  --xterm-cursor: #e9e8e8;
-  --xterm-selection-bg: rgba(57, 142, 255, 0.475);
-  --xterm-selection-fg: #82baff;
+  /* xterm reads these at session creation (lib/terminals.ts); its color
+     parser takes hex/rgb(a) only. Selection wash = the accent's rgb form. */
+  --xterm-bg: #101012;
+  --xterm-fg: #e8e8ea;
+  --xterm-cursor: #e8e8ea;
+  --xterm-selection-bg: rgba(110, 231, 168, 0.28);
+  --xterm-selection-fg: #e8e8ea;
 
   /* type */
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -111,9 +143,9 @@ body {
   color: var(--foreground-passive);
 }
 
-/* Keyboard focus: emdash ring — 2px primary border, offset on the chassis. */
+/* Keyboard focus: accent ring (selection/focus is the accent's one job). */
 :focus-visible {
-  outline: 2px solid var(--border-primary);
+  outline: 2px solid var(--accent-border);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
@@ -145,39 +177,6 @@ body {
     "sidebar header header"
     "sidebar main sheet";
   height: 100%;
-}
-
-/* Full-width project header row (E17 dogfood) — the right sheet renders
-   below it, never over it. */
-.app-header {
-  grid-area: header;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--background-secondary-3);
-  min-width: 0;
-}
-
-.app-header-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted, #b8b7b8);
-}
-
-.app-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.project-sync-note {
-  font-size: 11px;
-  color: var(--muted, #b8b7b8);
-  max-width: 280px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 
@@ -225,173 +224,15 @@ body {
   flex: 1;
 }
 
-.changes-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  /* Matches .tab-bar so the panel's top edge aligns with the main content's. */
-  height: 41px;
-  padding: 0 12px;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
-  color: var(--foreground-muted);
-}
-
-.changes-header .changes-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--foreground);
-}
-
-.changes-count {
-  padding: 0 6px;
-  border-radius: var(--radius-sm);
-  background: var(--background-tertiary-2);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--foreground-muted);
-}
-
-.changes-header .header-actions {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.changes-stage-all {
-  font-size: 11px;
-}
-
-.changes-body {
-  padding: 8px 8px 16px;
-}
-
-.changes-section h3 {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 10px 8px 6px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--foreground-passive);
-}
-
-.changes-section ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.change-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 32px;
-  padding: 4px 8px;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  color: var(--foreground-body);
-}
-
-.change-row:hover {
-  background: var(--surface-elevated-hover);
-}
-
-/* Project-scope rows (no task): diffs open in the task view, so no pointer. */
-.change-row.no-diff {
-  cursor: default;
-}
-
-.change-row.no-diff:hover {
-  background: none;
-}
-
-.change-glyph {
-  flex: none;
-  width: 16px;
-  text-align: center;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.change-row.status-added .change-glyph {
-  color: var(--status-in-review);
-}
-
-.change-row.status-modified .change-glyph {
-  color: var(--status-in-progress);
-}
-
-.change-row.status-deleted .change-glyph {
-  color: var(--destructive);
-}
-
-.change-row.status-renamed .change-glyph {
-  color: var(--info);
-}
-
-.change-row.status-conflicted .change-glyph {
-  color: var(--destructive);
-}
-
-.change-row.status-conflicted {
-  background: var(--destructive-background);
-}
-
-.change-path {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-.change-orig {
-  color: var(--foreground-passive);
-}
-
-.change-arrow {
-  margin: 0 4px;
-  color: var(--foreground-passive);
-}
-
-.change-stats {
-  flex: none;
-  display: flex;
-  gap: 4px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
-.change-stats em {
-  font-style: normal;
-}
 
 .change-stats .add {
-  color: var(--status-in-review);
+  color: var(--accent);
 }
 
 .change-stats .del {
   color: var(--destructive);
 }
 
-.change-actions {
-  flex: none;
-  display: none;
-  align-items: center;
-  gap: 2px;
-}
-
-.change-row:hover .change-actions,
-.change-row:focus-within .change-actions {
-  display: flex;
-}
 
 .change-actions button.danger:hover {
   color: var(--destructive);
@@ -407,68 +248,7 @@ body {
   padding: 8px;
 }
 
-/* E4-06 commit card — pinned to the bottom of the changes panel. */
-.commit-card {
-  margin-top: auto;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px;
-  border-top: 1px solid var(--border);
-  background: var(--background-tertiary);
-}
-.commit-message {
-  width: 100%;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--background-1);
-  color: var(--foreground);
-  font-family: var(--font-sans);
-  font-size: 12px;
-}
-.commit-message:focus {
-  outline: 2px solid var(--border-primary);
-  outline-offset: 0;
-  border-color: var(--border-1);
-}
-.commit-card-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-.commit-action {
-  font-size: 11px;
-  padding: 3px 8px;
-}
-.commit-note {
-  align-self: center;
-  font-size: 11px;
-  color: var(--foreground-passive);
-}
-.commit-error {
-  margin: 0;
-  font-size: 11px;
-  color: var(--destructive);
-  overflow-wrap: anywhere;
-}
 
-/* E4-08 git footer — under the commit card, same pinned column. */
-.git-footer {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px;
-  border-top: 1px solid var(--border);
-  background: var(--background-tertiary);
-}
-.git-footer-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
 .git-branch {
   flex: 1;
   min-width: 0;
@@ -479,127 +259,250 @@ body {
   font-size: 11px;
   color: var(--foreground-muted);
 }
-.git-counts {
-  margin-left: 6px;
-}
-.git-ahead {
-  color: var(--foreground-muted);
-}
-.git-behind {
-  margin-left: 4px;
-  color: var(--accent);
-}
-.git-footer-actions {
-  display: flex;
-  gap: 4px;
-}
-.git-footer-btn {
-  font-size: 11px;
-  padding: 2px 7px;
-}
-.git-add-remote input {
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--background-1);
-  color: var(--foreground);
-  font-size: 11px;
-}
-.git-add-remote .git-remote-name {
-  width: 76px;
-}
-.git-add-remote .git-remote-url {
-  flex: 1;
-  min-width: 0;
-}
-.git-footer-error {
-  margin: 0;
-  font-size: 11px;
-  color: var(--destructive);
-  overflow-wrap: anywhere;
-}
 
-.sidebar {
+
+/* Left nav redesign (design_handoff_left_nav): a 56px icon rail plus a
+   244px project flyout. The flyout shows in-flight work only — the board
+   owns everything else; ⌘K jumps to any task. */
+.shell-nav {
   grid-area: sidebar;
-  width: 264px;
-  position: relative;
   display: flex;
-  flex-direction: column;
   min-height: 0;
-  background: var(--background-tertiary);
-  border-right: 1px solid var(--border);
-  overflow-y: auto;
 }
 
-.sidebar-rail {
-  grid-area: sidebar;
-  width: 48px;
+.rail {
+  width: 56px;
+  flex: none;
+  background: var(--rail-bg);
+  border-right: 1px solid var(--hairline);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 8px 0;
-  background: var(--background-tertiary);
-  border-right: 1px solid var(--border);
+  gap: 14px;
+  /* Overlay titlebar: clear the floating traffic lights. */
+  padding: 28px 0 14px;
   min-height: 0;
-  overflow: hidden;
 }
 
-.sidebar-rail button {
-  display: inline-flex;
+/* The fC mark (inline SVG in Nav.tsx paints the tile + glyphs). */
+.rail-mark {
+  width: 18px;
+  height: 18px;
+  margin-bottom: 6px;
+  flex: none;
+}
+
+.rail-tile {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
   padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--foreground-muted);
+  border-radius: 10px;
   cursor: pointer;
-  transition: color 120ms ease, background-color 120ms ease;
-  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,.07);
+  color: #7c7c83;
+  font-size: 13px;
+  font-weight: 600;
 }
 
-.sidebar-rail button:hover:not(:disabled) {
-  background: var(--background-tertiary-1);
+.rail-tile.glyph {
+  border-color: transparent;
+  color: #55555c;
+  font-size: 18px;
+  font-weight: 400;
+}
+
+.rail-tile.glyph.dashed {
+  border: 1px dashed rgba(255,255,255,.14);
+  color: #7c7c83;
+}
+
+/* ⌘ settings tile: borderless, dimmest glyph (the frames draw it bare);
+   the shared .active treatment still applies while settings is open. */
+.rail-tile.mono {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  border-color: transparent;
+  color: #55555c;
+}
+
+.rail-tile:hover {
+  color: var(--text-card);
+}
+
+.rail-tile.active {
+  background: var(--tile-active);
+  border-color: rgba(255,255,255,.14);
   color: var(--foreground);
 }
 
-.sidebar-rail button:disabled {
-  opacity: 0.4;
-  cursor: default;
+/* Active marker sits in the rail's left gutter. */
+.rail-tile.active::before {
+  content: "";
+  position: absolute;
+  left: -14px;
+  top: 9px;
+  width: 2px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--accent);
 }
 
-.rail-chip {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--foreground-passive);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 1px 3px;
-  background: var(--background-1);
+/* Agent-state badge: worst of the project's runs. */
+.rail-tile .tile-dot {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--rail-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.rail-projects {
+.rail-spacer {
   flex: 1;
-  min-height: 0;
-  overflow-y: auto;
+}
+
+/* -- project flyout: name, path · branch, in-flight work only ------------ */
+
+.flyout {
+  width: 244px;
+  flex: none;
+  background: var(--flyout-bg);
+  border-right: 1px solid var(--hairline);
   display: flex;
   flex-direction: column;
+  padding: 32px 14px 18px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.flyout-head {
+  display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.flyout-name {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.flyout-collapse {
+  background: none;
+  border: 0;
+  color: #55555c;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.flyout-collapse:hover {
+  color: var(--foreground-muted);
+}
+
+.flyout-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
+  margin-bottom: 28px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.flyout-group {
+  margin-bottom: 26px;
+}
+
+/* mono 10px uppercase — the design's group label */
+.flyout-group-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--meta);
+  margin-bottom: 14px;
+}
+
+.flyout-rows {
+  display: flex;
+  flex-direction: column;
+  /* rows sit 16px apart; 5px of row padding on each side covers 10 of it */
+  gap: 6px;
+}
+
+.flyout-row {
+  display: flex;
+  gap: 9px;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 8px;
+  margin: -5px -8px; /* padding grows the hover zone without shifting the text */
+  text-align: left;
+  font: inherit;
+}
+
+.flyout-row .status-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+}
+
+.flyout-row-title {
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-card);
+}
+
+.flyout-row:hover .flyout-row-title {
+  color: #fff;
+}
+
+.flyout-row-meta {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--meta);
+  margin-top: 4px;
+}
+
+.flyout-empty {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--meta-dim);
+  margin-bottom: 14px;
+}
+
+.flyout-new-task {
   width: 100%;
-  padding-top: 6px;
-  border-top: 1px solid var(--border);
+  background: none;
+  border: 1px dashed rgba(255,255,255,.22);
+  border-radius: 7px;
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 12.5px;
+  color: var(--text-card);
+  cursor: pointer;
 }
 
-.rail-project {
-  background: var(--background-1);
-}
-
-.rail-project.active {
-  background: var(--background-tertiary-2);
+.flyout-new-task:hover {
+  border-color: rgba(255,255,255,.4);
   color: var(--foreground);
 }
 
@@ -615,309 +518,94 @@ body {
 
 .gutter-handle:hover,
 .gutter-handle:active {
-  background: var(--background-tertiary-2);
+  background: var(--border-1);
 }
 
-.sidebar-handle {
-  right: 0;
+.gutter-handle:focus-visible {
+  outline: none;
+  background: var(--selection);
 }
 
 .sheet-handle {
   left: 0;
 }
 
-.sidebar-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 48px;
-  padding: 0 12px 0 16px;
-  flex-shrink: 0;
-}
-
+/* Wordmark (design_handoff_v2 logo): JetBrains Mono 500 — `fart` in the
+   text colour, `Code` in the brand green. Brand colour, not the accent. */
 .brand {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--foreground);
-}
-
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.sidebar-header button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--foreground-muted);
-  cursor: pointer;
-  transition: color 120ms ease, background-color 120ms ease;
-}
-.sidebar-header button:hover:not(:disabled) {
-  background: var(--background-tertiary-1);
-  color: var(--foreground);
-}
-.sidebar-header button:active:not(:disabled) {
-  background: var(--background-tertiary-2);
-}
-.sidebar-header button:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.sidebar-header .palette-chip {
-  width: auto;
-  padding: 0 8px;
   font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--foreground-passive);
-  border: 1px solid var(--border);
-  background: var(--background-1);
-}
-.sidebar-header .palette-chip:hover {
-  color: var(--foreground);
-  border-color: var(--border-1);
-}
-
-/* section micro-labels */
-.sidebar-section {
-  margin-top: 12px;
-}
-.sidebar-section h3 {
-  margin: 0 0 4px;
-  padding: 0 16px;
-  font-size: 12px;
+  font-size: 20px;
+  line-height: 1.3;
   font-weight: 500;
-  color: var(--foreground-passive);
-  user-select: none;
-}
-
-.sidebar ul {
-  list-style: none;
-  margin: 0;
-  padding: 0 8px;
-}
-
-.sidebar li {
-  position: relative;
-}
-
-/* ---- project row ---- */
-
-.project-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 8px 0 10px;
-  margin: 0 0 1px;
-  border-radius: var(--radius-lg);
-  cursor: pointer;
-  color: var(--foreground-muted);
-  transition: background-color 120ms ease, color 120ms ease;
-}
-
-.project-row:hover {
-  background: var(--background-tertiary-1);
-  color: var(--foreground);
-}
-.project-row.selected {
-  background: var(--background-tertiary-2);
   color: var(--foreground);
 }
 
-.project-row .chevron {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--foreground-passive);
-  cursor: pointer;
-  padding: 0;
-  transition: transform 120ms ease, color 120ms ease;
-}
-.project-row .chevron.open {
-  transform: rotate(90deg);
-}
-.project-row .chevron:hover {
-  color: var(--foreground);
-}
-
-.project-name {
-  flex: 1;
-  min-width: 0;
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.add-task-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--foreground-passive);
-  opacity: 0;
-  cursor: pointer;
-  padding: 0;
-  transition: opacity 120ms ease, color 120ms ease;
-}
-.add-task-btn:hover {
-  color: var(--foreground);
-  background: var(--background-tertiary-2);
-}
-.project-row:hover .add-task-btn,
-.project-row:focus-within .add-task-btn {
-  opacity: 1;
-}
-.add-task-btn:disabled {
-  /* Pull in flight: stay visible, read as busy. */
-  opacity: 0.5;
-  cursor: default;
-  animation: pull-busy 900ms ease-in-out infinite;
-}
-@keyframes pull-busy {
-  50% {
-    color: var(--foreground);
-  }
-}
-
-.project-pull-error {
-  margin: 2px 0 4px;
-  padding: 0 10px 0 30px; /* aligns under the project name, past the chevron */
-  font-size: 11px;
-  color: var(--destructive);
-  overflow-wrap: anywhere;
-}
-
-
-/* ---- task rows ---- */
-
-.project-row + ul {
-  margin: 0 0 6px;
-  /* Task rows are indented by their own left padding (hierarchy cue);
-     zeroing the nested-list padding keeps their background box the same
-     width as the parent project row's. */
-  padding: 0;
-}
-
-.task-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 30px;
-  padding: 0 8px 0 30px;
-  margin: 0 0 1px;
-  border-radius: var(--radius-lg);
-  cursor: pointer;
-  color: var(--foreground-muted);
-  transition: background-color 120ms ease, color 120ms ease;
-}
-
-.task-row:hover {
-  background: var(--background-tertiary-1);
-  color: var(--foreground);
-}
-.task-row.selected {
-  background: var(--background-tertiary-2);
-  color: var(--foreground);
-}
-
-.task-row .task-name {
-  flex: 1;
-  min-width: 0;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* status dots: emdash status hues — amber working, green review,
-   neutral gray otherwise (done is not attention) */
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 9999px;
-  flex-shrink: 0;
-  background: var(--status-neutral);
-}
-
-.status-dot.status-in_progress {
-  background: var(--status-in-progress);
-}
-.status-dot.status-todo {
-  background: var(--status-neutral);
-}
-.status-dot.status-done {
-  background: var(--status-neutral);
-}
-.status-dot.status-review {
-  background: var(--status-in-review);
-}
-.status-dot.status-cancelled {
-  background: var(--status-neutral);
-  opacity: 0.5;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  * {
-    transition: none !important;
-  }
-}
-
-.pin {
-  display: inline-flex;
-  color: var(--foreground-passive);
-}
-
-.delete-task-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--foreground-passive);
-  opacity: 0;
-  cursor: pointer;
-  padding: 0;
-  transition: opacity 120ms ease, color 120ms ease;
-}
-.task-row:hover .delete-task-btn,
-.task-row:focus-within .delete-task-btn {
-  opacity: 1;
-}
-.delete-task-btn:hover {
-  color: var(--destructive);
+.brand-accent {
+  color: var(--brand-green);
 }
 
 .empty {
   padding: 6px 10px;
   font-size: 12px;
   color: var(--foreground-passive);
+}
+
+/* status dots (DESIGN.md vocabulary): amber an agent is working (pulsing),
+   hollow amber needs you (review), idle gray #46464d everything at rest —
+   done is not attention. */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--dot-idle);
+}
+
+.status-dot.status-in_progress {
+  background: var(--status-in-progress);
+  animation: fc-pulse 1.8s ease-in-out infinite;
+}
+.status-dot.status-todo {
+  background: var(--dot-idle);
+}
+.status-dot.status-done {
+  background: var(--dot-idle);
+}
+/* Review = the agent needs the user: same hollow ring as status-needs-you. */
+.status-dot.status-review {
+  background: transparent;
+  border: 1.5px solid var(--status-in-progress);
+}
+.status-dot.status-cancelled {
+  background: var(--dot-idle);
+  opacity: 0.5;
+}
+/* Hollow amber ring: the agent needs the user. */
+.status-dot.status-needs-you {
+  background: transparent;
+  border: 1.5px solid var(--status-in-progress);
+}
+.status-dot.status-failed {
+  background: var(--fc-bad);
+}
+
+@keyframes fc-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
+
+/* The input caret (composer, commit message, comment input) — with
+   fc-pulse, the app's entire motion vocabulary (DESIGN.md). */
+@keyframes fc-caret {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
 }
 
 /* Main -------------------------------------------------------------------- */
@@ -943,13 +631,8 @@ body {
   min-height: 0;
 }
 
-.placeholder h1 {
-  margin: 0 0 8px;
-  font-size: 20px;
-  line-height: 28px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--foreground);
+.placeholder h1.brand {
+  margin: 0 0 8px; /* type comes from .brand (the wordmark) */
 }
 
 .placeholder p {
@@ -971,6 +654,17 @@ body {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--foreground-muted);
+}
+
+/* One chip grammar: a visible chord is always clickable and runs its
+   command (empty-state teaching chips, palette rows). */
+button.kbd-hint {
+  cursor: pointer;
+}
+
+button.kbd-hint:hover {
+  color: var(--foreground);
+  border-color: var(--border-1);
 }
 
 .error {
@@ -995,7 +689,6 @@ button {
   border-radius: var(--radius-md);
   padding: 6px 12px;
   cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 
 button:hover:not(:disabled):not(.primary):not(.danger) {
@@ -1037,7 +730,7 @@ button.danger:hover {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1052,7 +745,7 @@ button.danger:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
   padding: 16px 20px 20px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
 }
 
 .modal.onboarding {
@@ -1061,8 +754,8 @@ button.danger:hover {
 
 .modal h2 {
   margin: 0 0 12px;
-  font-size: 17px;
-  line-height: 25px;
+  font-size: 15px;
+  line-height: 1.4;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--foreground);
@@ -1093,98 +786,6 @@ button.danger:hover {
   border-color: var(--border-1);
 }
 
-.path-picker {
-  display: flex;
-  gap: 6px;
-}
-.path-picker input {
-  flex: 1;
-}
-.path-picker button {
-  flex-shrink: 0;
-  border: 1px solid var(--border);
-  background: var(--surface-elevated);
-  color: var(--foreground-muted);
-}
-.path-picker button:hover {
-  background: var(--surface-elevated-hover);
-  color: var(--foreground);
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.modal-actions button:not(.primary):not(.danger) {
-  border: 1px solid var(--border);
-  background: var(--surface-elevated);
-}
-.modal-actions button:not(.primary):not(.danger):hover {
-  background: var(--surface-elevated-hover);
-  color: var(--foreground);
-}
-
-/* Settings ------------------------------------------------------------------ */
-
-.settings-modal {
-  width: 560px;
-}
-
-.settings-modal h3 {
-  margin: 20px 0 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--foreground);
-}
-
-.settings-modal label {
-  display: block;
-  margin: 8px 0;
-  font-size: 13px;
-  color: var(--foreground-muted);
-}
-
-.settings-modal label.check {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.settings-modal input,
-.settings-modal select,
-.settings-modal textarea {
-  margin-top: 4px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--background-1);
-  color: var(--foreground);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 6px 10px;
-}
-.settings-modal input:focus,
-.settings-modal select:focus,
-.settings-modal textarea:focus {
-  outline: 2px solid var(--border-primary);
-  outline-offset: 0;
-}
-
-.settings-modal label.check input {
-  width: auto;
-  margin: 0;
-  accent-color: var(--accent);
-}
-
-.settings-modal .row {
-  display: flex;
-  gap: 12px;
-}
-.settings-modal .row label {
-  flex: 1;
-}
 
 .resource-panel {
   position: fixed;
@@ -1194,7 +795,7 @@ button.danger:hover {
   background: var(--background-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
   z-index: 30;
   overflow: hidden;
 }
@@ -1220,7 +821,7 @@ button.danger:hover {
   background: var(--background-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
   overflow: hidden;
 }
 
@@ -1349,14 +950,14 @@ button.danger:hover {
 
 .meter-bar {
   height: 4px;
-  border-radius: 9999px;
+  border-radius: 50%;
   background: var(--background-3);
   overflow: hidden;
 }
 
 .meter-fill {
   height: 100%;
-  border-radius: 9999px;
+  border-radius: 50%;
   background: var(--foreground-passive);
 }
 
@@ -1389,16 +990,19 @@ button.danger:hover {
 }
 
 .pane + .pane {
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--hairline);
 }
 
+/* Summoned tab bar (5a: appears only with 2+ tabs or a split) — the 5e/7b
+   tab grammar: mono 11px, accent underline on the active tab. */
 .tab-bar {
   display: flex;
   align-items: stretch;
-  height: 41px;
+  gap: 4px;
+  height: 34px;
   flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--background-secondary);
+  padding: 0 12px;
+  border-bottom: 1px solid var(--hairline);
   overflow-x: auto;
   overflow-y: hidden;
 }
@@ -1407,119 +1011,51 @@ button.danger:hover {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 8px 0 12px;
-  border-right: 1px solid var(--border);
+  padding: 0 6px;
   background: transparent;
-  color: var(--foreground-muted);
-  font-size: 13px;
+  color: #55555c;
+  font-family: var(--font-mono);
+  font-size: 11px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background-color 120ms ease, color 120ms ease;
 }
 
 .tab:hover {
-  background: var(--background-secondary-1);
-  color: var(--foreground);
+  color: var(--text-secondary);
 }
 
+/* Active tab: text brightens; the accent underline marks the pane holding
+   keyboard focus, a hairline underline the other pane's active tab. */
 .tab.active {
-  background: var(--background-secondary-1);
   color: var(--foreground);
+  box-shadow: inset 0 -1px 0 var(--hairline-strong);
+}
+
+.tab-bar.active .tab.active {
+  box-shadow: inset 0 -1px 0 var(--accent);
 }
 
 .tab-kind {
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.08em;
-  color: var(--foreground-passive);
-}
-.tab.active .tab-kind {
-  color: var(--foreground-muted);
+  color: var(--meta);
 }
 
 
 .tab-dirty {
   color: var(--status-in-progress);
-  font-size: 9px;
+  font-size: 10px;
   line-height: 1;
 }
 
-.diff-badge.dirty {
-  color: var(--status-in-progress);
-  background: transparent;
-  padding: 0 2px;
-  font-size: 10px;
-}
-
-.diff-save-error {
-  flex: none;
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  background: var(--destructive-background);
-  border: 1px solid var(--destructive-border);
-  color: var(--destructive);
-  font-size: 11px;
-  font-weight: 600;
-  cursor: help;
-}
-
-/* Lifecycle script launchers (E1-06): one small key per configured
- * script, in the app header row (same chrome across scopes). */
-.script-run {
-  padding: 2px 7px;
-  height: 22px;
-  border-radius: var(--radius-sm);
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: lowercase;
-  letter-spacing: 0.04em;
-  color: var(--foreground-passive);
-  background: var(--background-secondary);
-  border: 1px solid var(--border);
-}
-
-.script-run:hover {
-  background: var(--surface-elevated-hover);
-  color: var(--foreground);
-  border-color: var(--border-1);
-}
-
-.script-run:active {
-  background: var(--background-tertiary-2);
-}
-
-/* Task-scope header: project / task breadcrumb in the title slot. */
-.task-header-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--foreground-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.task-header-title em {
-  color: var(--foreground-passive);
-  font-style: normal;
-  margin: 0 2px;
-}
-
-/* the pane holding keyboard focus tints its active tab's kind glyph */
-.tab-bar.active .tab.active::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 9999px;
-  background: var(--info);
-  flex-shrink: 0;
-}
 
 .tab-title {
   max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .tab-close {
@@ -1530,17 +1066,13 @@ button.danger:hover {
   height: 16px;
   padding: 0;
   border: none;
-  border-radius: 4px;
   background: transparent;
-  color: var(--foreground-passive);
-  opacity: 0.6;
+  color: #55555c;
   cursor: pointer;
-  transition: opacity 120ms ease, color 120ms ease;
 }
 
 .tab-close:hover {
-  opacity: 1;
-  color: var(--destructive);
+  color: var(--text-secondary);
 }
 
 .pane-content {
@@ -1549,251 +1081,12 @@ button.danger:hover {
   background: var(--xterm-bg);
 }
 
-/* A pane with no tabs: summon hints, never an auto-spawned shell. */
-.pane-empty {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 24px;
-  text-align: center;
-}
-
-.pane-empty p {
-  margin: 0;
-  font-size: 13px;
-}
 
 /* every tab stays mounted (a hidden tab keeps its session alive) */
 .tab-content {
   height: 100%;
 }
 
-/* -- shortcuts settings --------------------------------------------------------- */
-
-.shortcuts-settings {
-  width: 640px;
-}
-
-.shortcut-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.shortcut-table th {
-  text-align: left;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--foreground-passive);
-}
-
-.shortcut-table td {
-  padding: 5px 8px;
-  border-bottom: 1px solid var(--border);
-  color: var(--foreground-muted);
-}
-
-.shortcut-label {
-  color: var(--foreground);
-}
-
-.customized-mark {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-left: 6px;
-  border-radius: 9999px;
-  background: var(--info);
-}
-
-.shortcut-scope {
-  font-size: 11px;
-  color: var(--foreground-passive);
-}
-
-.shortcut-chord {
-  display: inline-block;
-  padding: 2px 8px;
-  border: 1px solid var(--border-1);
-  border-radius: var(--radius-md);
-  background: var(--background-3);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--foreground-muted);
-}
-
-.shortcut-chord.customized {
-  border-color: var(--info-border);
-  color: var(--info);
-}
-
-.shortcut-chord:hover {
-  border-color: var(--border-2);
-  color: var(--foreground);
-}
-
-.shortcut-editing {
-  display: inline-block;
-  padding: 2px 8px;
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  background: var(--background-1);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--foreground);
-}
-
-.shortcut-reset {
-  padding: 2px 6px;
-  border: none;
-  background: transparent;
-  font-size: 11px;
-  color: var(--foreground-passive);
-}
-
-.shortcut-reset:hover {
-  color: var(--destructive);
-}
-
-/* -- provider accounts ----------------------------------------------------------- */
-
-.provider-accounts {
-  margin-top: 16px;
-}
-
-.account-list {
-  list-style: none;
-  margin: 8px 0;
-  padding: 0;
-}
-
-.account-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--border);
-  font-size: 13px;
-}
-
-.account-provider {
-  font-weight: 600;
-  color: var(--foreground);
-}
-
-.account-id {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--foreground-muted);
-}
-
-.account-secret {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--foreground-passive);
-}
-
-.account-method {
-  padding: 1px 8px;
-  border-radius: 9999px;
-  background: var(--background-3);
-  font-size: 11px;
-  color: var(--foreground-muted);
-  white-space: nowrap;
-}
-
-.account-full {
-  grid-column: 1 / -1;
-}
-
-.account-login-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-  min-height: 32px;
-}
-
-.account-ok {
-  color: var(--success, #3fb950);
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-.account-muted {
-  color: var(--foreground-passive);
-  font-size: 12px;
-}
-
-.account-login-btn {
-  margin-left: 4px;
-}
-
-.account-actions {
-  display: flex;
-  align-items: flex-end;
-}
-
-.account-default {
-  padding: 1px 8px;
-  border-radius: 9999px;
-  background: var(--background-3);
-  font-size: 11px;
-  color: var(--foreground-muted);
-}
-
-.account-remove {
-  padding: 2px 6px;
-  border: none;
-  background: transparent;
-  font-size: 11px;
-  color: var(--foreground-passive);
-}
-
-.account-remove:hover {
-  color: var(--destructive);
-}
-
-.account-add {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.account-add label {
-  display: block;
-  font-size: 12px;
-  color: var(--foreground-muted);
-}
-
-.account-add input,
-.account-add select {
-  width: 100%;
-  margin-top: 4px;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--background-1);
-  color: var(--foreground);
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-.account-add input:focus,
-.account-add select:focus {
-  outline: 2px solid var(--border-primary);
-  outline-offset: 0;
-}
 
 /* -- task terminals -------------------------------------------------------------- */
 
@@ -1831,10 +1124,10 @@ button.danger:hover {
 .chat-transcript {
   max-width: 720px;
   margin: 0 auto;
-  padding: 20px 20px 12px;
+  padding: 16px 14px 12px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 18px;
 }
 
 .chat-turn {
@@ -1876,16 +1169,11 @@ button.danger:hover {
 
 .chat-status.running::before {
   content: "";
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: var(--foreground-passive);
-  animation: chat-pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes chat-pulse {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 1; }
+  background: var(--status-in-progress);
+  animation: fc-pulse 1.8s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2111,7 +1399,7 @@ button.danger:hover {
 
 .chat-jump {
   position: absolute;
-  right: 16px;
+  right: 14px;
   bottom: 140px;
   background: var(--surface-elevated);
   border: 1px solid var(--border);
@@ -2119,14 +1407,14 @@ button.danger:hover {
   color: var(--foreground-muted);
   font-size: 12px;
   padding: 4px 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
 }
 
 /* ---- dock: plan, queued, permission, notices, composer ---- */
 
 .chat-dock {
   border-top: 1px solid var(--border);
-  padding: 10px 16px 12px;
+  padding: 10px 14px 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -2335,140 +1623,10 @@ button.danger:hover {
 .chat-send,
 .chat-stop {
   font-size: 12px;
-  padding: 4px 12px;
-}
-
-/* Diff view (E4-04) — CodeMirror merge surface ------------------------------ */
-
-.diff-view {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-  background: var(--background);
-}
-
-.diff-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 36px;
-  padding: 0 12px;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.diff-path {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--foreground-body);
-}
-
-.diff-orig {
-  color: var(--foreground-passive);
-}
-
-.diff-arrow {
-  margin: 0 4px;
-  color: var(--foreground-passive);
-}
-
-.diff-side-badge,
-.diff-badge {
-  flex: none;
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.diff-side-badge.side-staged {
-  background: var(--info-background);
-  color: var(--info);
-}
-
-.diff-side-badge.side-unstaged {
-  background: var(--background-tertiary-2);
-  color: var(--foreground-muted);
-}
-
-.diff-badge.added {
-  background: var(--info-background);
-  color: var(--status-in-review);
-}
-
-.diff-badge.deleted {
-  background: var(--destructive-background);
-  color: var(--destructive);
-}
-
-.diff-mode-toggle {
-  flex: none;
-  display: flex;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-
-.diff-mode-toggle button {
-  border-radius: 0;
   padding: 3px 10px;
-  font-size: 11px;
-  color: var(--foreground-muted);
-}
-
-.diff-mode-toggle button.active {
-  background: var(--background-tertiary-2);
-  color: var(--foreground);
-}
-
-.diff-body {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.diff-body .cm-editor {
-  height: 100%;
-}
-
-.diff-body .cm-mergeView,
-.diff-body .cm-mergeViewEditors {
-  height: 100%;
-}
-
-.diff-body .cm-scroller {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.diff-notice {
-  margin: 16px;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--background-1);
-  font-size: 13px;
-  color: var(--foreground-muted);
 }
 
-.diff-notice.error {
-  border-color: var(--destructive-border);
-  background: var(--destructive-background);
-  color: var(--destructive);
-}
-
-/* Diff selection popover (selection → agent) ------------------------------- */
-
-.diff-body {
-  position: relative;
-}
 
 .diff-sel-fab {
   position: absolute;
@@ -2479,7 +1637,7 @@ button.danger:hover {
   color: var(--accent-contrast);
   font-size: 11px;
   font-weight: 600;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
 }
 
 .diff-sel-fab:hover {
@@ -2497,7 +1655,7 @@ button.danger:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface-elevated);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
 }
 
 .diff-sel-header {
@@ -2533,11 +1691,6 @@ button.danger:hover {
   gap: 6px;
 }
 
-.diff-sel-error {
-  margin: 0;
-  font-size: 11px;
-  color: var(--destructive);
-}
 
 .diff-sel-dest {
   margin-right: auto;
@@ -2545,113 +1698,7 @@ button.danger:hover {
   color: var(--foreground-passive);
 }
 
-/* E4-10 line comments — gutter markers + thread panel (§14). */
-.comment-marker {
-  cursor: pointer;
-  font-size: 10px;
-  line-height: 1;
-}
-.comment-marker.resolved {
-  color: var(--success, #3fb950);
-}
-.cm-comment-gutter {
-  width: 18px;
-}
-.comment-thread {
-  position: absolute;
-  right: 8px;
-  top: 8px;
-  z-index: 30;
-  width: 320px;
-  max-height: 70%;
-  overflow-y: auto;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--background-1);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-}
-.comment-thread-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--foreground);
-}
-.comment-row {
-  padding: 6px 0;
-  border-top: 1px solid var(--border);
-}
-.comment-row.resolved .comment-content {
-  color: var(--foreground-passive);
-  text-decoration: line-through;
-}
-.comment-row-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--foreground-muted);
-}
-.comment-lines {
-  font-family: var(--font-mono);
-}
-.comment-row-actions {
-  margin-left: auto;
-  display: flex;
-  gap: 2px;
-}
-.comment-content {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--foreground);
-  white-space: pre-wrap;
-}
-.comment-task-badge {
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  background: var(--background-tertiary-2);
-  font-size: 10px;
-  color: var(--foreground-muted);
-}
-.comment-task-badge.status-done {
-  color: var(--success, #3fb950);
-}
-.comment-task-badge.status-in_progress {
-  color: var(--accent);
-}
-/* E4-11: agent-authored comment chip */
-.comment-author-badge.agent {
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  background: var(--info-background);
-  border: 1px solid var(--info-border);
-  font-size: 10px;
-  color: var(--info);
-}
-.comment-resolved-mark {
-  color: var(--success, #3fb950);
-  font-size: 11px;
-}
 
-/* E4-07 Pull Requests tab ---------------------------------------------- */
-.changes-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
-}
-.changes-tabs button {
-  font-size: 11px;
-  padding: 3px 8px;
-  border-radius: 4px;
-  color: var(--foreground-passive);
-  background: transparent;
-  border: 1px solid transparent;
-  cursor: pointer;
-}
 .changes-tabs button.active {
   color: var(--foreground);
   background: var(--background-tertiary-1);
@@ -2664,37 +1711,10 @@ button.danger:hover {
   gap: 8px;
   padding: 8px 0;
 }
-.pr-header {
-  padding: 0 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.pr-title {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  font-weight: 600;
-  font-size: 12px;
-  color: var(--foreground);
-  text-decoration: none;
-}
-.pr-title:hover { text-decoration: underline; }
-.pr-number { color: var(--foreground-passive); font-weight: 400; }
-.pr-badges { display: flex; gap: 4px; flex-wrap: wrap; }
-.pr-badge {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  color: var(--foreground-muted);
-}
-.pr-badge.status-open { color: var(--accent); border-color: var(--accent-border); }
-.pr-badge.status-merged { color: var(--info); border-color: var(--info-border); }
-.pr-badge.status-closed { color: var(--destructive); border-color: var(--destructive-border); }
+
+
 .pr-refs { font-size: 11px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.pr-stats { margin-left: 4px; }
-.pr-syncing { font-size: 10px; }
+
 
 .pr-check, .pr-commit {
   display: flex;
@@ -2705,7 +1725,7 @@ button.danger:hover {
 }
 .pr-check a, .pr-commit a { color: var(--foreground-body); text-decoration: none; }
 .pr-check a:hover, .pr-commit a:hover { text-decoration: underline; }
-.pr-check-glyph { width: 12px; text-align: center; }
+
 .pr-check.conclusion-failure .pr-check-glyph,
 .pr-check.conclusion-timed_out .pr-check-glyph,
 .pr-check.conclusion-startup_failure .pr-check-glyph { color: var(--destructive); }
@@ -2731,7 +1751,7 @@ button.danger:hover {
 a.pr-comment-body:hover { text-decoration: underline; }
 
 .pr-empty { padding: 0 10px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
-.pr-refresh-row { padding: 4px 10px 8px; }
+
 .pr-refresh { font-size: 11px; padding: 3px 10px; }
 
 .pr-token-gate { padding: 0 10px; display: flex; flex-direction: column; gap: 8px; }

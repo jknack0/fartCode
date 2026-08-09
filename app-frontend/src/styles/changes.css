@@ -1,0 +1,471 @@
+/* Changes sidebar + commit card (design_handoff_v2 5d).
+ *
+ * This file is @imported ahead of styles.css's own rules, so the legacy
+ * .changes-* selectors there outrank equal-specificity ones here. New
+ * markup uses fc-* classes (no legacy rules match), and the few kept
+ * legacy names (.changes-panel, .changes-scroll, .changes-empty,
+ * .changes-error) are overridden with heavier selectors.
+ *
+ * Colours: tokens from styles.css :root; design values with no token
+ * (#66666d, #a4a4ab) are literal per the handoff. */
+
+aside.changes-panel {
+  background: var(--flyout-bg);
+  border-left: 1px solid var(--hairline);
+}
+
+/* Focusable key-target wrapper for the whole changes surface (a/s/u/d). */
+.changes-panel .fc-changes-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  outline: none;
+}
+
+/* -- Header: 46px, "Changes" left, task · branch right ------------------- */
+
+.changes-panel .fc-changes-header {
+  height: 46px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.changes-panel .fc-changes-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.changes-panel .fc-changes-ref {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -- Panel tabs (Changed | Pull Requests) -------------------------------- */
+
+.changes-panel .fc-panel-tabs {
+  flex: none;
+  display: flex;
+  gap: 16px;
+  padding: 10px 18px 0;
+}
+
+.changes-panel .fc-panel-tab {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
+  cursor: pointer;
+  padding-bottom: 5px;
+}
+
+.changes-panel .fc-panel-tab:hover {
+  color: #a4a4ab;
+}
+
+.changes-panel .fc-panel-tab.active {
+  color: var(--foreground);
+  box-shadow: inset 0 -1px 0 var(--accent);
+}
+
+/* -- Scroll column ------------------------------------------------------- */
+
+.changes-panel .fc-changes-scroll {
+  padding: 18px;
+  gap: 22px;
+}
+
+/* -- Sections: mono uppercase labels with counts ------------------------- */
+
+.changes-panel .fc-section {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.changes-panel .fc-section-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0 0 9px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--meta);
+}
+
+.changes-panel .fc-section-meta {
+  flex: none;
+}
+
+/* Inline typographic actions (a stage all · s · d · u). */
+.changes-panel .fc-act {
+  cursor: pointer;
+  color: var(--meta);
+}
+
+.changes-panel .fc-act:hover {
+  color: #a4a4ab;
+}
+
+/* -- File rows ----------------------------------------------------------- */
+
+.changes-panel .fc-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.changes-panel .fc-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 3px 6px;
+  margin: 0 -6px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.changes-panel .fc-row:hover {
+  background: var(--hover-bg);
+}
+
+.changes-panel .fc-row:focus {
+  outline: none;
+  background: var(--focus-bg);
+}
+
+/* Project-scope rows (no task): diffs open in the task view, so no pointer. */
+.changes-panel .fc-row.no-diff {
+  cursor: default;
+}
+
+.changes-panel .fc-row.no-diff:hover {
+  background: none;
+}
+
+.changes-panel .fc-row-status {
+  flex: none;
+}
+
+/* Status letters: M unstaged = working amber; A/M staged = accent green;
+   C conflict = red. Deletes/renames follow their side's colour. */
+.changes-panel .fc-row.unstaged .fc-row-status {
+  color: var(--status-in-progress);
+}
+
+.changes-panel .fc-row.staged .fc-row-status {
+  color: var(--accent);
+}
+
+.changes-panel .fc-row.conflicted .fc-row-status {
+  color: var(--fc-bad);
+}
+
+.changes-panel .fc-row-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-card);
+}
+
+.changes-panel .fc-row.conflicted .fc-row-path {
+  color: var(--fc-bad-text);
+}
+
+.changes-panel .fc-row-orig,
+.changes-panel .fc-row-arrow {
+  color: var(--meta);
+}
+
+.changes-panel .fc-row-meta {
+  margin-left: auto;
+  flex: none;
+  color: var(--meta);
+}
+
+/* -- Inline discard confirm (overlay card) ------------------------------- */
+
+.changes-panel .fc-confirm {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  top: 140px;
+  z-index: 40;
+  background: var(--overlay);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  /* DESIGN.md popover shadow (inline confirms). */
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  outline: none;
+}
+
+.changes-panel .fc-confirm-body {
+  padding: 14px 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-card);
+}
+
+.changes-panel .fc-confirm-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.changes-panel .fc-confirm-sub {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--meta);
+}
+
+.changes-panel .fc-confirm-footer {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-top: 1px solid var(--hairline);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
+}
+
+.changes-panel .fc-confirm-act {
+  cursor: pointer;
+}
+
+.changes-panel .fc-confirm-act:hover {
+  color: #a4a4ab;
+}
+
+.changes-panel .fc-key {
+  color: #a4a4ab;
+}
+
+/* -- Commit card ---------------------------------------------------------- */
+
+.changes-panel .fc-commit-card {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--card-inset);
+  padding: 12px 14px;
+}
+
+.changes-panel .fc-commit-input {
+  position: relative;
+}
+
+.changes-panel .fc-commit-message {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-card);
+  caret-color: var(--accent);
+}
+
+.changes-panel .fc-commit-message:focus {
+  outline: none;
+}
+
+/* Idle ghost: fc-caret bar + placeholder; the bar yields to the real text
+   caret the moment the input focuses. */
+.changes-panel .fc-commit-ghost {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--meta);
+}
+
+.changes-panel .fc-ghost-caret {
+  display: inline-block;
+  width: 1px;
+  height: 13px;
+  vertical-align: -2px;
+  margin-right: 3px;
+  background: var(--accent);
+  animation: fc-caret 1.1s step-end infinite;
+}
+
+.changes-panel .fc-commit-input:focus-within .fc-ghost-caret {
+  display: none;
+}
+
+/* Key rows: mono 11px #66666d, primary label #a4a4ab, keys right. */
+.changes-panel .fc-commit-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
+}
+
+.changes-panel .fc-krow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.changes-panel .fc-krow-primary .fc-krow-label {
+  color: #a4a4ab;
+}
+
+.changes-panel .fc-krow:hover:not(.disabled) .fc-krow-label {
+  color: var(--foreground);
+}
+
+.changes-panel .fc-krow.disabled {
+  cursor: default;
+  color: var(--meta-dim);
+}
+
+.changes-panel .fc-krow.disabled .fc-krow-label {
+  color: var(--meta-dim);
+}
+
+.changes-panel .fc-krow-key {
+  flex: none;
+}
+
+.changes-panel .fc-commit-note {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
+}
+
+.changes-panel .fc-commit-error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--fc-bad-text);
+  overflow-wrap: anywhere;
+}
+
+/* -- Footer: hint line + add-remote edge case ----------------------------- */
+
+.changes-panel .fc-git-footer {
+  margin-top: auto;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.changes-panel .fc-footer-hint {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--meta-dim);
+}
+
+.changes-panel .fc-footer-error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--fc-bad-text);
+  overflow-wrap: anywhere;
+}
+
+.changes-panel .fc-add-remote {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.changes-panel .fc-add-remote input {
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 4px;
+  background: var(--card-inset);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-card);
+}
+
+.changes-panel .fc-add-remote input:focus {
+  outline: none;
+  border-color: var(--hairline-strong);
+}
+
+.changes-panel .fc-add-remote .fc-remote-name {
+  flex: none;
+  width: 76px;
+}
+
+.changes-panel .fc-add-remote .fc-remote-url {
+  flex: 1;
+}
+
+.changes-panel .fc-add-remote-btn {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #a4a4ab;
+  cursor: pointer;
+}
+
+.changes-panel .fc-add-remote-btn:hover:not([aria-disabled="true"]) {
+  color: var(--foreground);
+}
+
+.changes-panel .fc-add-remote-btn[aria-disabled="true"] {
+  color: var(--meta-dim);
+  cursor: default;
+}
+
+/* -- Kept-legacy-name states (heavier selectors beat styles.css) ---------- */
+
+.changes-panel .changes-empty {
+  padding: 18px;
+  font-size: 12.5px;
+  color: var(--meta);
+}
+
+.changes-panel .changes-empty p {
+  margin: 0 0 10px;
+}
+
+.changes-panel .changes-error {
+  padding: 18px;
+}
+
+.changes-panel .changes-error .error {
+  margin: 0 0 10px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 12.5px;
+  color: var(--fc-bad-text);
+}

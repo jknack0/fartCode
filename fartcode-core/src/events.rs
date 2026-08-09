@@ -46,6 +46,10 @@ pub enum InternalEvent {
     TaskArchived {
         id: String,
     },
+    /// `archived_at` cleared — the task is back on the board.
+    TaskRestored {
+        id: String,
+    },
     TaskDeleted {
         id: String,
     },

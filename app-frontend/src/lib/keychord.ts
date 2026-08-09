@@ -144,6 +144,17 @@ export function chordsEqual(a: KeyChord, b: KeyChord): boolean {
   );
 }
 
+/** US-layout shifted symbols → their base key. Bindings are written in
+ * base form ("⌘⇧1", "⌘⇧."), but engines differ on whether e.key reports
+ * the shifted character while a modifier chord is held — normalize so
+ * both report shapes match the same stored chord. */
+const SHIFTED_KEYS: Record<string, string> = {
+  "!": "1", "@": "2", "#": "3", "$": "4", "%": "5",
+  "^": "6", "&": "7", "*": "8", "(": "9", ")": "0",
+  "_": "-", "+": "=", "{": "[", "}": "]", "|": "\\",
+  ":": ";", '"': "'", "<": ",", ">": ".", "?": "/", "~": "`",
+};
+
 /** Builds the chord for a KeyboardEvent (DOM or React synthetic). */
 export function chordFromEvent(e: {
   metaKey: boolean;
@@ -152,12 +163,13 @@ export function chordFromEvent(e: {
   shiftKey: boolean;
   key: string;
 }): KeyChord {
+  const key = normalizeKey(e.key);
   return {
     meta: e.metaKey,
     ctrl: e.ctrlKey,
     alt: e.altKey,
     shift: e.shiftKey,
-    key: normalizeKey(e.key),
+    key: e.shiftKey && SHIFTED_KEYS[key] ? SHIFTED_KEYS[key] : key,
   };
 }
 

@@ -6,9 +6,10 @@ PATH := $(HOME)/.cargo/bin:$(PATH)
 ## dev — launch the Tauri app (starts Vite dev server, then runs the Rust app)
 dev:
 	@echo "Starting Vite dev server on :1420 ..."
+	@lsof -ti:1420 | xargs kill 2>/dev/null || true
 	@(cd app-frontend && npm run dev -- --port 1420 --strictPort) &
 	@echo "Running fartcode-app (wait for window) ..."
-	cargo run -p fartcode-app
+	@cargo run -p fartcode-app; lsof -ti:1420 | xargs kill 2>/dev/null || true
 
 ## build — compile the workspace (requires app-frontend/dist for fartcode-app)
 build:

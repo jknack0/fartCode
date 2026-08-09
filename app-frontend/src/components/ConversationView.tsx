@@ -164,6 +164,18 @@ export default function ConversationView({
     if (active) textareaRef.current?.focus();
   }, [active]);
 
+  // Composer auto-grow: measured height (not newline count) so wrapped
+  // lines grow it and short content never shows a scrollbar. Scrolls only
+  // past the cap.
+  const maxComposerPx = COMPOSER_MAX_ROWS * 20; // 20px body line height
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, maxComposerPx)}px`;
+    el.style.overflowY = el.scrollHeight > maxComposerPx ? "auto" : "hidden";
+  }, [draft, maxComposerPx]);
+
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -237,18 +249,19 @@ export default function ConversationView({
     !isGenerating && session?.lastStopReason
       ? STOP_NOTICE[session.lastStopReason]
       : undefined;
-  const rows = Math.min(COMPOSER_MAX_ROWS, Math.max(1, draft.split("\n").length));
 
   return (
     <div className="conversation-view">
       <div className="chat-scroll" ref={scrollRef} onScroll={onScroll}>
         {isEmpty ? (
           <div className="chat-hero">
-            <h2>Structured chat</h2>
+            <h2>{proposalProjectId ? "What should we build?" : "Agent chat"}</h2>
             <p className="muted">
               {session?.lifecycle === "starting"
                 ? "Starting the agent…"
-                : "Send a prompt to start working with the agent."}
+                : proposalProjectId
+                  ? "Describe a feature — the agent pins down scope, writes a PRD, and proposes issues for the board."
+                  : "Send a prompt to start working with the agent."}
             </p>
           </div>
         ) : (
@@ -321,8 +334,12 @@ export default function ConversationView({
         <div className="chat-composer">
           <textarea
             ref={textareaRef}
-            rows={rows}
-            placeholder="Prompt the agent — Enter to send, Shift+Enter for a new line"
+            rows={1}
+            placeholder={
+              proposalProjectId
+                ? "plan something…"
+                : "Prompt the agent — Enter to send, Shift+Enter for a new line"
+            }
             value={draft}
             onChange={(e) =>
               useConversations.getState().setDraft(conversationId, e.target.value)

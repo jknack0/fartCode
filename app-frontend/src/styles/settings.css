@@ -1,0 +1,751 @@
+/* Settings surface (design_handoff_v2 7c/7d): 170px left nav + boxless
+   field-map panes. Groups are mono-uppercase labels over hairline rows —
+   label 13px --text-card left, value mono 11px #9a9aa1 right (⌄ = a menu
+   opens); editors unfold inline under their row. `shared`/`default` tags
+   are the brand green (#45d68a), never UI chrome. Keys pane = shortcut
+   editor as rows; agents list (7d) is shared with onboarding step two. */
+
+/* -- shell: nav | pane --------------------------------------------------- */
+
+.fc-settings {
+  width: 720px;
+  max-width: calc(100vw - 80px);
+  height: min(760px, 85vh);
+  display: flex;
+  background: var(--background);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+}
+
+.fc-set-nav {
+  width: 170px;
+  flex: none;
+  background: var(--flyout-bg);
+  border-right: 1px solid var(--hairline);
+  padding: 28px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.fc-set-nav-row {
+  appearance: none;
+  background: none;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  color: #7c7c83;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc-set-nav-row:hover {
+  color: #a4a4ab;
+}
+
+.fc-set-nav-row.active,
+.fc-set-nav-row.active:hover {
+  color: var(--foreground);
+  border-left: 2px solid var(--accent);
+  margin-left: -16px;
+  padding-left: 14px;
+}
+
+.fc-set-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+  padding: 30px 38px;
+  overflow-y: auto;
+}
+
+.fc-set-pane-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.fc-set-pane-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.fc-set-esc {
+  appearance: none;
+  background: none;
+  border: none;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #55555c;
+  cursor: pointer;
+}
+
+.fc-set-esc:hover {
+  color: #a4a4ab;
+}
+
+.fc-set-pane-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+.fc-set-spacer {
+  flex: 1;
+}
+
+.fc-set-loading {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--meta);
+}
+
+/* -- groups + rows ------------------------------------------------------- */
+
+.fc-set-group {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.fc-set-group-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--meta);
+}
+
+.fc-set-row {
+  appearance: none;
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--hairline);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 20px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fc-set-row.static {
+  cursor: default;
+}
+
+.fc-set-label {
+  font-size: 13px;
+  color: var(--text-card);
+  white-space: nowrap;
+}
+
+.fc-set-value {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #9a9aa1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc-set-row:not(.static):hover .fc-set-value {
+  color: #a4a4ab;
+}
+
+/* shared / default tags — brand green, tags only (DESIGN.md) */
+.fc-tag-green {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: #45d68a;
+  margin-left: 6px;
+}
+
+.fc-tag-green-text {
+  color: #45d68a;
+}
+
+/* -- inline editors: unfold under the row, carry its hairline ------------ */
+
+.fc-set-row-wrap.open .fc-set-row {
+  border-bottom-color: transparent;
+}
+
+.fc-set-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 0 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.fc-set-editor input,
+.fc-set-editor textarea {
+  width: 100%;
+  background: var(--card-inset);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--foreground);
+  resize: vertical;
+}
+
+.fc-set-editor input:focus,
+.fc-set-editor textarea:focus {
+  outline: none;
+  border-color: var(--hairline-strong);
+}
+
+.fc-set-editor-keys {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: #66666d;
+}
+
+/* two-input editors (base · push remote, provision · terminate) */
+.fc-set-editor-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.fc-set-editor-pair .fc-set-editor-keys {
+  grid-column: 1 / -1;
+}
+
+/* lifecycle-scripts editor: three name+textarea stanzas need more air */
+.fc-set-scripts {
+  gap: 10px;
+}
+
+/* default-agent picker — a real menu unfolding under the row (7c ⌄) */
+.fc-set-menu-item {
+  appearance: none;
+  background: none;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 3px 0;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.fc-set-menu-item.current {
+  color: var(--text-card);
+}
+
+/* out-rank styles.css's global button:hover backplate — text-only menu */
+.fc-set-menu button:hover:not(:disabled):not(.primary):not(.danger) {
+  background: none;
+}
+
+.fc-set-script {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fc-set-script-name {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: #66666d;
+}
+
+/* -- messages ------------------------------------------------------------ */
+
+.fc-set-error {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fc-bad-text);
+}
+
+.fc-set-notice {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--meta);
+}
+
+.fc-set-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--meta);
+}
+
+/* -- footer: legend left · key action right ------------------------------ */
+
+.fc-set-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 16px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.fc-set-legend {
+  color: var(--meta);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc-set-footer-key {
+  flex: none;
+  color: #a4a4ab;
+}
+
+.fc-set-footer-action {
+  appearance: none;
+  flex: none;
+  background: none;
+  border: none;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  color: #a4a4ab;
+  cursor: pointer;
+}
+
+.fc-set-footer-action:hover {
+  color: var(--foreground);
+}
+
+/* -- Keys pane: shortcut editor as rows ---------------------------------- */
+
+.fc-key-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.fc-key-label {
+  font-size: 12.5px;
+  color: var(--text-card);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* typographic marker — mono tag, no accent dot (dots are status only) */
+.fc-key-custom {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--meta);
+  margin-left: 6px;
+}
+
+.fc-key-right {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.fc-key-chord {
+  appearance: none;
+  background: none;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #7c7c83;
+  cursor: pointer;
+}
+
+.fc-key-chord:hover {
+  color: var(--foreground);
+}
+
+.fc-key-editing {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  outline: none;
+}
+
+.fc-key-reset {
+  appearance: none;
+  background: none;
+  border: none;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
+  cursor: pointer;
+}
+
+.fc-key-reset:hover {
+  color: #a4a4ab;
+}
+
+/* -- 7d agents list (App settings + onboarding step two) ----------------- */
+
+.fc-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.fc-agent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.fc-agent-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 11px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.fc-agent-name {
+  font-size: 13.5px;
+  color: var(--text-card);
+}
+
+.fc-agent-row.missing .fc-agent-name {
+  color: #a4a4ab;
+}
+
+.fc-agent-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--meta);
+  white-space: nowrap;
+}
+
+.fc-agent-row.missing .fc-agent-meta {
+  color: #a4a4ab;
+}
+
+.fc-agent-installing {
+  color: #66666d;
+}
+
+.fc-agent-install {
+  appearance: none;
+  background: none;
+  border: none;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--info);
+  cursor: pointer;
+}
+
+.fc-agent-install:hover {
+  text-decoration: underline;
+}
+
+.fc-agent-update {
+  appearance: none;
+  background: none;
+  border: none;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.fc-agent-update:hover {
+  color: #a4a4ab;
+}
+
+.fc-agents-loading {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--meta);
+}
+
+.fc-agents-tail {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--meta-dim);
+}
+
+.fc-onboarding-agents {
+  margin: 14px 0 6px;
+}
+
+/* -- provider accounts (App pane, restyled to rows) ---------------------- */
+
+.fc-accounts {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.fc-acct-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.fc-acct-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.fc-acct-name {
+  font-size: 13px;
+  color: var(--text-card);
+  white-space: nowrap;
+}
+
+.fc-acct-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--meta);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc-acct-action {
+  appearance: none;
+  background: none;
+  border: none;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  color: #66666d;
+  cursor: pointer;
+}
+
+.fc-acct-action:hover {
+  color: #a4a4ab;
+}
+
+/* destructive is text-only red, no box — specificity beats the global
+   button:hover backplate in styles.css (settings.css imports first) */
+.fc-accounts .fc-acct-action.remove:hover:not(:disabled) {
+  color: var(--fc-bad-text);
+  background: none;
+}
+
+/* -- add-account editor: the .fc-set-editor grammar, no legacy grid ------ */
+
+.fc-acct-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.fc-acct-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fc-acct-field-name {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-key);
+}
+
+.fc-acct-editor input,
+.fc-acct-editor select {
+  width: 100%;
+  background: var(--card-inset);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--foreground);
+}
+
+.fc-acct-editor input:focus,
+.fc-acct-editor select:focus {
+  outline: none;
+  border-color: var(--hairline-strong);
+}
+
+.fc-acct-status {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--meta);
+}
+
+.fc-acct-status-ok {
+  color: var(--text-secondary);
+}
+
+.fc-acct-editor-keys {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* mono key-labelled actions ("↵ add account", "sign in with Claude Code") */
+.fc-acct-editor-action {
+  appearance: none;
+  background: none;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.fc-acct-editor-action:disabled {
+  color: var(--meta-dim);
+  cursor: default;
+}
+
+.fc-acct-editor-action.signin {
+  color: var(--info);
+}
+
+.fc-acct-editor button:hover:not(:disabled):not(.primary):not(.danger) {
+  background: none;
+}
+
+/* -- onboarding (E1-08): the 7d card, system grammar — no .modal plate --- */
+
+.fc-onboard {
+  width: 460px;
+  max-width: calc(100vw - 80px);
+  max-height: 85vh;
+  overflow-y: auto;
+  background: var(--background);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 12px;
+  padding: 28px 26px 30px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.fc-onboard-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.fc-onboard-copy {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.fc-onboard-path {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fc-onboard-path input {
+  flex: 1;
+  min-width: 0;
+  background: var(--card-inset);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--foreground);
+}
+
+.fc-onboard-path input:focus {
+  outline: none;
+  border-color: var(--hairline-strong);
+}
+
+.fc-onboard-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 18px;
+  margin-top: 8px;
+}
+
+/* mono key-labelled actions ("↵ get started" · "skip") */
+.fc-onboard-action {
+  appearance: none;
+  background: none;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-key);
+  cursor: pointer;
+}
+
+.fc-onboard-action.main {
+  color: var(--text-secondary);
+}
+
+.fc-onboard-action:disabled {
+  color: var(--meta-dim);
+  cursor: default;
+}
+
+.fc-onboard button:hover:not(:disabled):not(.primary):not(.danger) {
+  background: none;
+}

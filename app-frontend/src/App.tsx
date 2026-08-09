@@ -7,11 +7,9 @@ import ChangesSidebar from "./components/ChangesSidebar";
 import CommandPalette from "./components/CommandPalette";
 import Modals from "./components/Modals";
 import Onboarding from "./components/Onboarding";
-import ProjectHeader from "./components/ProjectHeader";
 import ProjectView from "./components/ProjectView";
 import ResourceMonitor from "./components/ResourceMonitor";
-import Sidebar from "./components/Sidebar";
-import TaskHeader from "./components/TaskHeader";
+import Nav from "./components/Nav";
 import TaskView from "./components/TaskView";
 import { useCommands, hint } from "./lib/useCommands";
 import { wireChangesEvents } from "./store/changes";
@@ -56,13 +54,7 @@ function App() {
 
   return (
     <main className="shell">
-      <Sidebar />
-      {selectedProjectId && !selectedTaskId && (
-        <ProjectHeader projectId={selectedProjectId} />
-      )}
-      {selectedTaskId && selectedProjectId && (
-        <TaskHeader taskId={selectedTaskId} projectId={selectedProjectId} />
-      )}
+      <Nav />
       <Onboarding />
       <CommandPalette />
       <Modals />
@@ -75,7 +67,9 @@ function App() {
           <ProjectView projectId={selectedProjectId} />
         ) : (
           <div className="placeholder">
-            <h1>fartCode</h1>
+            <h1 className="brand">
+              fart<span className="brand-accent">Code</span>
+            </h1>
             <p className="muted">
               Add a project to get started — press{" "}
               <span className="kbd-hint">{hint("new-project") || "⌘⇧N"}</span>{" "}

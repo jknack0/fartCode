@@ -2,18 +2,23 @@
 // one persistent project-scoped ACP conversation. This wires the
 // conversation lifecycle (get-or-create → session start → transcript); the
 // PM system prompt and the proposal-block approval card build on top.
+// Restyled to design_handoff_v2 §5c: 46px header ("PM" + mono scope/chord),
+// with the transcript/composer voice scoped under .pm-chat.
 
 import { useEffect, useState } from "react";
 import { acpStart, listProviders } from "../../lib/tauri";
+import { hint } from "../../lib/useCommands";
 import { useConversations } from "../../store/conversations";
 import { useUi } from "../../store/ui";
-import { IconChevron } from "../icons";
 import ConversationView from "../ConversationView";
 
 export default function ProjectChatPanel({ projectId }: { projectId: string }) {
   const ownerKey = `project:${projectId}`;
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Re-render on keymap edits so the header chord stays live (E14).
+  useUi((s) => s.bindingsVersion);
+  const chord = hint("toggle-project-chat") || "⌘⇧2";
 
   useEffect(() => {
     let cancelled = false;
@@ -39,27 +44,20 @@ export default function ProjectChatPanel({ projectId }: { projectId: string }) {
   }, [projectId]);
 
   return (
-    <aside className="project-chat">
+    <aside className="project-chat pm-chat">
       <header className="project-chat-header">
-        <span>Project chat</span>
-        <button
-          className="project-chat-minimize"
-          title="Hide project chat (⌘⇧2)"
-          aria-label="Hide project chat"
-          onClick={() => {
-            const ui = useUi.getState();
-            ui.setProjectChatOpen(false);
-            ui.setChangesOpen(false); // close the sheet, not just switch modes
-          }}
-        >
-          <IconChevron />
-        </button>
+        <span>PM</span>
+        <span className="pm-chat-scope">project root · {chord}</span>
       </header>
       {error && <p className="error">{error}</p>}
       {conversationId ? (
         <ConversationView conversationId={conversationId} ownerKey={ownerKey} active />
       ) : (
-        !error && <p className="muted">Starting the project agent…</p>
+        !error && (
+          <div className="chat-hero">
+            <p className="muted">Starting the project agent…</p>
+          </div>
+        )
       )}
     </aside>
   );

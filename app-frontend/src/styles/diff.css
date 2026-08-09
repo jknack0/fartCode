@@ -1,0 +1,192 @@
+/* Diff surface on the v2 system: token editor theme (in DiffView.tsx), mono
+   header words instead of badge chips, quiet mode toggle, flat notices
+   (audit findings 19/21/25).
+
+   Cascade note: @import places this file BEFORE styles.css's own legacy
+   .diff-* blocks, so every rule here that CHANGES a legacy value carries a
+   .diff-view / .diff-header ancestor to out-rank it; identical-value
+   plumbing (.diff-view frame, .diff-body sizing) is duplicated verbatim so
+   the legacy blocks can be deleted wholesale without a visual change. */
+
+/* -- Frame: full-height column on the window ground ------------------------- */
+.diff-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--background);
+}
+
+/* -- Header: path + state words on a hairline ------------------------------- */
+.diff-view .diff-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 36px;
+  padding: 0 12px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.diff-view .diff-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.diff-view .diff-orig {
+  color: var(--text-mid);
+}
+
+.diff-view .diff-arrow {
+  margin: 0 4px;
+  color: var(--text-mid);
+}
+
+/* Audit 21: state chips → plain mono 11px words in the meta voice. No
+   pills — backgrounds, borders, padding and weight all zeroed. */
+.diff-header .diff-side-badge,
+.diff-header .diff-badge {
+  flex: none;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: #9a9aa1;
+}
+
+.diff-header .diff-side-badge.side-staged,
+.diff-header .diff-side-badge.side-unstaged {
+  background: none;
+  color: #9a9aa1;
+}
+
+.diff-header .diff-badge.added {
+  background: none;
+  color: var(--text-secondary);
+}
+
+/* deleted is the one state word allowed a colour: the bad-text red. */
+.diff-header .diff-badge.deleted {
+  background: none;
+  color: var(--fc-bad-text);
+}
+
+/* Unsaved dot keeps the working amber (same voice as .tab-dirty). */
+.diff-header .diff-badge.dirty {
+  padding: 0;
+  font-size: 10px;
+  color: var(--status-in-progress);
+  cursor: help;
+}
+
+.diff-header .diff-save-error {
+  flex: none;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--fc-bad-text);
+  cursor: help;
+}
+
+/* -- Audit 25: mode toggle = mono text tabs, accent underline on active ----- */
+.diff-view .diff-mode-toggle {
+  flex: none;
+  display: flex;
+  gap: 12px;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+}
+
+.diff-view .diff-mode-toggle button {
+  padding: 2px 0 3px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #55555c; /* same ramp as .tab */
+  cursor: pointer;
+}
+
+.diff-view .diff-mode-toggle button:hover {
+  color: var(--text-secondary);
+}
+
+.diff-view .diff-mode-toggle button.active {
+  background: none;
+  color: var(--foreground);
+  box-shadow: inset 0 -1px 0 var(--accent);
+}
+
+/* -- Audit 25: notices = plain text, no boxes ------------------------------- */
+.diff-view .diff-notice {
+  margin: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.diff-view .diff-notice.error,
+.diff-view .diff-notice .error {
+  border: none;
+  background: none;
+  color: var(--fc-bad-text);
+}
+
+.diff-view .diff-notice p {
+  margin: 0 0 8px;
+}
+
+/* Retry as a quiet key-first action, not a boxed button. */
+.diff-view .diff-notice button {
+  padding: 0;
+  background: none;
+  border: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-key);
+  cursor: pointer;
+}
+
+.diff-view .diff-notice button:hover {
+  color: var(--text-secondary);
+}
+
+/* -- Body: CodeMirror host (theme lives in DiffView.tsx, audit 19) ---------- */
+.diff-view .diff-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.diff-body .cm-editor,
+.diff-body .cm-mergeView,
+.diff-body .cm-mergeViewEditors {
+  height: 100%;
+}
+
+/* terminal typography (DESIGN.md): mono 12px / 1.6 */
+.diff-body .cm-scroller {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}

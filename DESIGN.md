@@ -1,298 +1,353 @@
 ---
 name: fartCode
-description: emdash's working surface — neutral charcoal chassis, emerald primary action, blue selection, status hues for agent state.
+description: Near-black terminal chassis, four meaningful colours, boxless cards, mono for machine text — the design_handoff_left_nav / design_handoff_v2 system.
 colors:
-  background: "#111111"
-  background-1: "#181818"
-  background-2: "#201f20"
-  background-3: "#282728"
-  background-secondary: "#181818"
-  background-secondary-1: "#111111"
-  background-secondary-2: "#282728"
-  background-secondary-3: "#383738"
-  background-tertiary: "#201f20"
-  background-tertiary-1: "#282728"
-  background-tertiary-2: "#302f30"
-  background-tertiary-3: "#383738"
-  surface-elevated: "#252525"
-  surface-elevated-hover: "#2f2f2f"
-  surface-elevated-selected: "#393939"
-  foreground: "#e9e8e8"
-  foreground-body: "#d5d4d5"
-  foreground-muted: "#b8b7b8"
-  foreground-passive: "#929192"
-  border: "#383738"
-  border-1: "#626162"
-  border-2: "#787778"
-  border-primary: "#929192"
-  accent: "#00a67b"
-  accent-hover: "#00b589"
-  accent-border: "#006c50"
-  accent-contrast: "#ffffff"
-  selection: "#173865"
-  selection-foreground: "#d1ebff"
-  info: "#82baff"
-  info-background: "#18202b"
-  info-border: "#173865"
-  destructive: "#f27470"
-  destructive-background: "#2a1b1a"
-  destructive-background-hover: "#36201e"
-  destructive-border: "#964441"
-  status-in-progress: "#dbae50"
-  status-in-review: "#59b358"
-  status-neutral: "#929192"
-  xterm-bg: "#181818"
-  xterm-fg: "#e9e8e8"
-  xterm-cursor: "#e9e8e8"
-  xterm-selection-bg: "rgba(57, 142, 255, 0.475)"
-  xterm-selection-fg: "#82baff"
+  window: "#101012"
+  rail: "#0b0b0d"
+  flyout: "#0e0e10"
+  overlay: "#17171b"
+  card-inset: "#14141a"
+  tile-active: "#1e1e22"
+  drag-lift: "#1a1a1e"
+  bubble: "#1a1a1e"
+  hairline: "rgba(255,255,255,.06)"
+  hairline-strong: "rgba(255,255,255,.12)"
+  hairline-mid: "rgba(255,255,255,.07)"
+  hairline-tile: "rgba(255,255,255,.14)"
+  hover: "rgba(255,255,255,.035)"
+  focus-bg: "rgba(255,255,255,.05)"
+  focus-row: "rgba(255,255,255,.04)"
+  text: "#e8e8ea"
+  text-card: "#dcdce1"
+  text-secondary: "#a4a4ab"
+  text-muted: "#9a9aa1"
+  text-mid: "#7c7c83"
+  text-key: "#66666d"
+  meta: "#5f5f66"
+  disabled: "#4e4e55"
+  dot-idle: "#46464d"
+  accent: "oklch(.78 .15 155)"
+  working: "oklch(.8 .13 80)"
+  bad: "#c96b6b"
+  bad-text: "#c98d8d"
+  link: "#7c8fd0"
+  brand-green: "#45d68a"
+  brand-amber: "#dfa94d"
+  brand-tile: "#0d0d10"
+  brand-mono: "#c2c2c8"
+  diff-add: "#8fd6ae"
+  diff-selection: "rgba(110,231,168,.14)"
+  xterm-bg: "#101012"
+  xterm-fg: "#e8e8ea"
+  xterm-cursor: "#e8e8ea"
 typography:
-  body:
-    fontFamily: "Inter Variable, ui-sans-serif, system-ui, -apple-system, sans-serif"
-    fontSize: "14px"
-    lineHeight: "20px"
-    fontWeight: 400
-  body-semibold:
-    fontFamily: "Inter Variable, ui-sans-serif, system-ui, -apple-system, sans-serif"
+  human:
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif (Inter Variable acceptable)"
     fontSize: "13px"
-    fontWeight: 600
-  h1:
-    fontFamily: "Inter Variable, ui-sans-serif, system-ui, -apple-system, sans-serif"
-    fontSize: "20px"
-    lineHeight: "28px"
-    fontWeight: 600
-  micro-label:
-    fontFamily: "Inter Variable, ui-sans-serif, system-ui, -apple-system, sans-serif"
-    fontSize: "12px"
-    fontWeight: 500
-  machine:
-    fontFamily: "JetBrains Mono Variable, JetBrainsMono Nerd Font Mono, MesloLGS Nerd Font Mono, ui-monospace, SFMono-Regular, Menlo, monospace"
-    fontSize: "12px"
+    lineHeight: 1.45
     fontWeight: 400
+  machine:
+    fontFamily: "JetBrains Mono Variable, JetBrainsMono Nerd Font Mono, ui-monospace, SFMono-Regular, Menlo, monospace"
+    fontSize: "11px"
+    lineHeight: 1.5
+    fontWeight: 400
+  group-label:
+    fontFamily: "JetBrains Mono"
+    fontSize: "10px"
+    letterSpacing: ".14em"
+    textTransform: uppercase
+  meta:
+    fontFamily: "JetBrains Mono"
+    fontSize: "10.5px"
+    lineHeight: 1.4
+  mono-body:
+    fontFamily: "JetBrains Mono"
+    fontSize: "11.5px"
+    lineHeight: 1.65
+  terminal:
+    fontFamily: "JetBrains Mono"
+    fontSize: "12px"
+    lineHeight: 1.6
+  row-title:
+    fontSize: "12.5px"
+    lineHeight: 1.4
+  body-lg:
+    fontSize: "13.5px"
+    lineHeight: 1.65
+  panel-name:
+    fontSize: "14px"
+    fontWeight: 600
+    letterSpacing: "-0.01em"
+  pane-title:
+    fontSize: "15px"
+    fontWeight: 600
+  glyph:
+    fontSize: "18px"
+    fontWeight: 400
+  title:
+    fontSize: "20px"
+    fontWeight: 600
+    lineHeight: 1.3
+    letterSpacing: "-0.02em"
 rounded:
-  sm: "6px"
-  md: "8px"
-  lg: "10px"
-  xl: "14px"
+  bubble-corner: "3px"
+  chip: "4px"
+  mark: "5px"
+  card-hover: "6px"
+  new-task: "7px"
+  row: "8px"
+  tile: "10px"
+  overlay: "10px"
+  window: "12px"
+  active-bar: "2px"
 spacing:
-  row-sidebar: "32px project rows / 30px task rows"
-  tab-bar: "41px"
-  sidebar-width: "264px"
+  scale: "4 / 6 / 9 / 14 / 16 / 18 / 22 / 26 / 28 / 34"
+  rail-width: "56px"
+  flyout-width: "244px"
+  header-row: "46px"
+  right-panel: "400px"
+  settings-nav: "170px"
+  drawer: "210px"
 components:
-  button-primary:
-    backgroundColor: "{colors.accent}"
-    textColor: "{colors.accent-contrast}"
-    rounded: "{rounded.lg}"
-    padding: "6px 12px"
-  button-primary-hover:
-    backgroundColor: "{colors.accent-hover}"
-  button-primary-disabled:
-    backgroundColor: "{colors.background-3}"
-    textColor: "{colors.foreground-passive}"
-  button-danger:
-    backgroundColor: "{colors.destructive-background}"
-    textColor: "{colors.destructive}"
-    rounded: "{rounded.lg}"
-  button-ghost:
-    backgroundColor: "{colors.surface-elevated}"
-    textColor: "{colors.foreground-muted}"
-    rounded: "{rounded.md}"
-  sidebar-row:
+  status-dot-running:
+    backgroundColor: "{colors.working}"
+    size: "7px"
+    animation: "fc-pulse 1.8s ease-in-out infinite"
+  status-dot-needs-you:
+    border: "1.5px {colors.working}"
     backgroundColor: "transparent"
-    hover: "{colors.background-tertiary-1}"
-    selected: "{colors.background-tertiary-2}"
-    rounded: "{rounded.lg}"
-    height: "32px"
-  tab-active:
-    backgroundColor: "{colors.background-secondary-1}"
-    textColor: "{colors.foreground}"
-  modal-plate:
-    backgroundColor: "{colors.background-2}"
-    rounded: "{rounded.xl}"
-    border: "1px {colors.border}"
-  input-field:
-    backgroundColor: "{colors.background-1}"
-    textColor: "{colors.foreground}"
-    rounded: "{rounded.md}"
-    border: "1px {colors.border}"
-  status-dot-working:
-    backgroundColor: "{colors.status-in-progress}"
     size: "8px"
-  status-dot-review:
-    backgroundColor: "{colors.status-in-review}"
-    size: "8px"
-  status-dot-neutral:
-    backgroundColor: "{colors.status-neutral}"
-    size: "8px"
+  status-dot-failed:
+    backgroundColor: "{colors.bad}"
+    size: "7px"
+  status-dot-passed:
+    backgroundColor: "{colors.accent}"
+    size: "7px"
+  status-dot-queued:
+    border: "1px dashed #6e6e75"
+    backgroundColor: "transparent"
+    size: "7px"
+  status-dot-idle:
+    backgroundColor: "{colors.dot-idle}"
+    size: "7px"
+  card-rest:
+    backgroundColor: "transparent"
+    border: "none"
+    borderLeft: "2px transparent"
+    padding: "8px 12px"
+  card-hover:
+    backgroundColor: "{colors.hover}"
+    rounded: "0 6px 6px 0"
+  card-focused:
+    backgroundColor: "{colors.focus-bg}"
+    borderLeft: "2px {colors.accent}"
+    rounded: "0 6px 6px 0"
+  card-dragging:
+    backgroundColor: "{colors.drag-lift}"
+    rounded: "6px"
+    boxShadow: "0 12px 28px rgba(0,0,0,.55)"
+    opacity: 0.92
+  overlay-card:
+    backgroundColor: "{colors.overlay}"
+    border: "1px {colors.hairline-strong}"
+    rounded: "10px"
+    boxShadow: "0 24px 60px rgba(0,0,0,.65)"
+  inset-card:
+    backgroundColor: "{colors.card-inset}"
+    border: "1px {colors.hairline-strong}"
+    rounded: "10px"
+  commit-card:
+    backgroundColor: "{colors.card-inset}"
+    border: "1px rgba(255,255,255,.1)"
+    rounded: "8px"
+    padding: "12px 14px"
+  popover:
+    backgroundColor: "{colors.overlay}"
+    border: "1px {colors.hairline-strong}"
+    rounded: "8px"
+    boxShadow: "0 16px 40px rgba(0,0,0,.5)"
+  user-bubble:
+    backgroundColor: "{colors.bubble}"
+    rounded: "10px 10px 3px 10px"
+    padding: "10px 13px"
+    maxWidth: "85%"
+  key-footer:
+    fontFamily: "JetBrains Mono"
+    fontSize: "11px"
+    textColor: "{colors.text-key}"
+    borderTop: "1px {colors.hairline}"
 ---
 
 # Design System: fartCode
 
+Supersedes the 2026-08-05 "emdash world" decision (charcoal `#111111`, blue
+selection, Inter-first). Binding sources: `design_handoff_left_nav/README.md`
+(rail, flyout, board, tokens) and `design_handoff_v2/README.md` + `FLOWS.md`
+(task view, PM chat, ship loop, drawer, settings, logo). CSS variables in
+`app-frontend/src/styles.css` `:root` are the single token home.
+
 ## Overview
 
-**Creative North Star: "emdash's working surface"**
+**Creative North Star: "The Quiet Terminal"**
 
-fartCode wears the visual world of its reference implementation, emdash: a neutral
-charcoal chassis where surfaces step through background (main), secondary (tab
-bars, wells), and tertiary (the sidebar column); hairline borders do the
-separating; and color is strictly functional. Emerald is the one action color —
-the primary key that adds, saves, and commits. Blue is the interaction color —
-text selection, the keyboard-focus lamp on the active pane's tab, customized
-marks, and informational notices. Amber and green are agent-state data on the
-sidebar's status dots; red is destructive only. Everything else is a neutral
-ramp from #111111 to #e9e8e8.
-
-The system is dense and single-operator: 14px Inter body on a 20px line, 32px
-sidebar rows, a 41px tab bar, 264px sidebar. Two type voices: Inter Variable
-for every UI word, JetBrains Mono Variable for everything the machine produced
-— task names, paths, chords, tab titles, terminal text. Nerd Font stacks
-precede JetBrains Mono inside terminals so Powerline glyphs render.
+Near-black chassis (`#101012` window, `#0b0b0d` rail, `#0e0e10`
+flyout/panels), hairlines instead of borders, no boxes at rest, and colour
+reserved for meaning. The app's voice is typographic: system sans for human
+text, JetBrains Mono for everything the machine produced — paths, chords,
+ids, counts, elapsed, logs. Icons are glyphs (`+`, `⌘`, `‹`, `›`, `>_`,
+`⌄`); there is no icon set.
 
 **Key Characteristics:**
-- Neutral charcoal chassis: background #111111, sidebar tertiary #201f20, tab bar secondary #181818
-- Hairline 1px borders (#383738) separate regions; no glow, no gradient, no backdrop blur
-- One emerald action color (#00a67b) on primary keys
-- Blue (#82baff) for selection, focus lamp, customized marks, and info notices
-- Status dots are data: amber = in progress, green = review, neutral gray = todo/done/cancelled
-- Two voices: Inter Variable (UI) and JetBrains Mono Variable (machine)
-- Radius scale 6/8/10/14; rows rounded-lg (10px), plates rounded-xl (14px)
-- Flat surfaces; only dialog plates and the command palette cast drop shadows
+- Near-black surface ramp `#0b0b0d` → `#101012` → `#17171b`, separated by white-alpha hairlines
+- Exactly four meaningful colours: accent, working-amber, bad-red, link-blue
+- Boxless cards and rows — hover/focus washes and a 2px accent rail, never borders at rest
+- Two type voices: system sans (human), JetBrains Mono (machine)
+- Glyph icons only; status dots carry the whole state vocabulary
+- Two animations total: the running-dot pulse and the input caret
 
 ## Colors
 
-### Primary
-- **Emerald** (#00a67b): the primary button face (Add project, Save, Get started), hover #00b589, border #006c50, white text. Never a background tint, never decoration.
-- **Info Blue** (#82baff): selection foreground, the focus lamp on the keyboard-active pane's tab, customized-shortcut marks and chords, info notice text. Selection wash is #173865 (and rgba(57,142,255,0.475) inside terminals).
-- **Destructive Red** (#f27470): delete hovers, danger buttons on a #2a1b1a face with #964441 border, error strips.
+A near-black neutral ramp with four saturated jobs; everything informative
+sits at `#5f5f66` or brighter.
 
-### Status (data only)
-- **Amber** (#dbae50): a task is in progress.
-- **Green** (#59b358): a task awaits review.
-- **Neutral gray** (#929192): todo, done, cancelled (dimmed), and every passive dot.
+### Primary
+- **Accent Emerald** (`oklch(.78 .15 155)`): selection, staged/added lines, focused-card rail, active-tab underline, the app mark. Never decorative.
+
+### Secondary
+- **Working Amber** (`oklch(.8 .13 80)`): an agent is working (filled dot, pulsing) or needs you (hollow 1.5px ring). Unstaged `M` status letters.
+
+### Tertiary
+- **Ended-Badly Red** (`#c96b6b`): failed runs, conflicts, failing checks — dots and underlines; **Readable Red** (`#c98d8d`) is its text form. The only red *action label* in the app is `⌘⌫ delete` inside the delete confirm.
+- **Link-Out Blue** (`#7c8fd0`): a link out (GitHub, files, logs, `install`) and NOTHING else.
 
 ### Neutral
-- **Background** (#111111): the main work area and the active tab / terminal well (via secondary-1).
-- **Secondary** (#181818): the tab bar strip; terminals sit on it (--xterm-bg).
-- **Tertiary** (#201f20): the sidebar column and modal plates' ground (background-2).
-- **Row fills**: hover #282728, selected #302f30 (tertiary-1/2).
-- **Elevated** (#252525): ghost buttons and modal action keys; hover #2f2f2f.
-- **Borders**: #383738 (hairlines), #626162 / #787778 (stronger), #929192 (focus outline).
-- **Foreground**: #e9e8e8 (primary), #d5d4d5 (body), #b8b7b8 (muted), #929192 (passive).
+- **Window** (`#101012`), **Rail** (`#0b0b0d`), **Flyout/Panel** (`#0e0e10`), **Overlay** (`#17171b`), **Inset card** (`#14141a`), **Active tile / drag lift** (`#1e1e22` / `#1a1a1e`).
+- **Text**: primary `#e8e8ea` · card `#dcdce1` · secondary `#a4a4ab` · muted `#9a9aa1` · mid `#7c7c83` · key `#66666d` · meta `#5f5f66` · disabled `#4e4e55` · idle dot `#46464d`.
+- **Hairlines**: `rgba(255,255,255,.06)` default, `.07` inside cards, `.12` overlay borders, `.14` active tiles.
+- **Washes**: hover `rgba(255,255,255,.035)`, focus `rgba(255,255,255,.05)`.
+- **Brand** (`#45d68a` green tile, `#dfa94d` amber, `#0d0d10` tile, `#c2c2c8` menu-bar mono): the fC mark, wordmark, and `shared`/`default` settings tags only — never UI chrome.
 
 ### Named Rules
-**The One Emerald Rule.** Emerald appears on exactly one class of thing: the
-key that creates, saves, or commits. If a screen shows emerald on anything
-that isn't an action, it's wrong.
+**The Four Colours Rule.** Meaningful colour is exactly accent, working,
+bad, and link — each with one fixed job. A fifth saturated colour, or one of
+these four doing a different job, is wrong.
 
-**The Dots Are Data Rule.** Amber, green, and red render only as status dots
-and destructive affordances. The mapping is fixed: in_progress = amber,
-review = green, todo/done/cancelled = neutral gray. Never use status
-hues for accents, links, or badges.
+**The Meta Floor Rule.** `#5f5f66` is the legibility floor — nothing
+informative goes dimmer. `#4e4e55` is reserved for disabled/empty text.
 
 ## Typography
 
-**UI Font:** Inter Variable — every UI word, from the wordmark to button text.
-**Machine Font:** JetBrains Mono Variable — task names, paths, chords, tab
-titles, palette hints, terminal text. Nerd Font stacks first inside terminals.
+**UI Font:** system sans (-apple-system stack; Inter Variable acceptable) — every human word.
+**Machine Font:** JetBrains Mono Variable (Nerd Font stacks first inside terminals) — paths, chords, ids, counts, elapsed, logs, meta lines.
 
 ### Hierarchy
-- **H1** (600, 20px/28px, -0.01em): the empty-state heading and modal titles use 16px/24px 600.
-- **Body** (400, 14px/20px): default UI text; modal copy steps to 13px.
-- **Semibold** (600, 13px): section headers inside settings, resource monitor header.
-- **Micro label** (500, 12px, passive): sidebar section labels ("Pinned", "Projects").
-- **Machine** (12px): task names, tab titles, inputs; 11px for chords and the ⌘K chip; 10px for palette hints and meter labels.
+Sizes are the ramp: **10 / 10.5 / 11 / 11.5 / 12 / 12.5 / 13 / 13.5 / 14 /
+15 / 20**. Mono sits 10–13; human text 12.5–20.
+- **Title** (600, 20px/1.3): the task title, `max-width: 30ch`.
+- **Panel titles** (600, 13–15px): header rows, settings pane names.
+- **Body** (400, 13–13.5px/1.45–1.65): card titles, dialog copy.
+- **Row title** (400, 12.5px/1.4, `#dcdce1`): flyout and list rows.
+- **Meta** (mono, 10.5–11px, `#5f5f66`): the machine line under every title.
+- **Group label** (mono, 10px, `.14em`, uppercase, `#5f5f66`): section labels.
+- **Key hints** (mono, 11px, `#66666d`; the key itself `#a4a4ab`): footers and trailing hints.
 
 ### Named Rules
-**The Two Voices Rule.** Inter speaks for the operator; JetBrains Mono speaks
-for the machine. Never set a path or chord in Inter, never set body copy in
+**The Two Voices Rule.** The machine speaks mono; the operator reads sans.
+Never a path, chord, id, count, or elapsed time in sans; never body copy in
 mono.
 
 ## Layout
 
-The shell is a two-column grid: a fixed 264px tertiary sidebar and a fluid
-main area on the background color.
-
-- **Sidebar:** 48px header with the wordmark and 26px ghost keys plus the mono ⌘K chip; micro-label sections over 32px project rows and 30px task rows, all rounded-lg with 8px side padding; hover-only affordances (add-task, delete) fade in.
-- **Header row:** the grid's top row ALWAYS renders — project name + sheet/GitHub keys at project scope, a `project / task` breadcrumb + script keys + the Changes key at task scope (ADR-0033). Same height, same hairline below, both scopes; tab bars are pure tab switching.
-- **Main:** a 41px tab bar on secondary with a hairline below; panes split side by side with a 1px border between; terminal wells on secondary-1.
-- **Fixed furniture:** the resource monitor is an elevated plate seated at the bottom-right (12px inset, rounded-lg, drop shadow). Dialog plates center over a 55% black backdrop.
+56px icon rail → 244px project flyout (⌘\ / ⌘B, pinned not hover) → main
+surface → optional 400px right panel (Changes / PM chat / card detail — one
+slot). Header rows are 46px with a hairline below. Drawer (⌘J) is a 210px
+bottom sheet. Settings nav is 170px. Under ~900px the board collapses to one
+column and the rail narrows to 48px.
 
 ## Elevation & Depth
 
-Surfaces are flat tints separated by hairlines. Depth exists in exactly two
-places: dialog plates and the command palette cast a soft drop shadow
-(0 12px 40px rgba(0,0,0,0.55)) because they leave the chassis; the resource
-monitor casts a smaller one (0 8px 24px). Nothing else floats — no glow, no
-gradient, no backdrop blur.
+Surfaces are flat tints separated by hairlines. Only things that leave the
+chassis cast shadows, and motion is exactly two keyframes: `fc-pulse`
+(opacity 1→.35→1, 1.8s ease-in-out, infinite) on running dots, and
+`fc-caret` (1.1s step-end, infinite) on input carets. No entrance
+animations, no card/column transitions, no glow, gradient, or blur.
+
+### Shadow Vocabulary
+- **Overlay** (`0 24px 60px rgba(0,0,0,.65)`): composer, confirms, palette.
+- **Popover** (`0 16px 40px rgba(0,0,0,.5)`): line-comment popover, inline confirms.
+- **Dragged card** (`0 12px 28px rgba(0,0,0,.55)`): the lifted board card.
+- **Scrim** (`rgba(0,0,0,.55)`, token `--backdrop`): the dim behind modal
+  overlays. These four alpha-blacks are the only shadow/scrim values.
+
+### Named Rules
+**The Two Keyframes Rule.** `fc-pulse` and `fc-caret` are the app's entire
+motion vocabulary. Any other animation is wrong.
 
 ## Shapes
 
-Four radii cover every surface: 6px (small keys, chips), 8px (inputs, ghost
-buttons, tab close), 10px (sidebar rows, primary/danger keys, resource
-monitor), 14px (dialog plates, palette). Circles belong to dots only: 8px
-status dots and the 6px focus lamp. All borders are 1px hairlines.
+Radii: 2px (active bar) · 3px (bubble tail corner) · 4px (chips) · 5px (app
+mark) · 6px (hover/drag card) · 7px (dashed new-task) · 8px (rows, commit
+card, popovers) · 10px (tiles, overlays, proposal cards) · 12px (window).
+Circles belong to dots only (7px filled, 8px hollow). Borders are 1px
+white-alpha hairlines; the only dashed strokes are the queued dot ring and
+the add-project tile.
 
 ## Components
 
-### Buttons
-- **Primary:** emerald face, emerald-border, white text, rounded-lg, 6px 12px. Disabled becomes background-3 with passive text.
-- **Ghost:** elevated face with a hairline border, muted text; hover brightens the face.
-- **Danger:** destructive-background face, destructive text and border; hover deepens the face.
+- **Cards/rows are boxless at rest**: meta line (mono 10.5px `--meta`) over
+  title (13px/1.45 `--text-card`), 2px transparent left rail. Hover paints
+  `--hover-bg`; keyboard focus is `--focus-bg` + 2px accent left rail; drag
+  lifts to `#1a1a1e` radius 6 with the drag shadow, no rotation or scale.
+  Drop target is a 1px accent line, never a ghost box.
+- **Status dots** are the whole state vocabulary: filled amber pulsing =
+  running; hollow amber = needs you; red = failed; accent = passed/additions;
+  dashed ring = queued; `#46464d` = idle/stopped. 7px in rows, 8px hollow.
+- **Overlay cards** (confirms, composer): `#17171b`, `.12` hairline, radius
+  10, mono key footers (`esc cancel` left, primary key right, keys in
+  `#a4a4ab`).
+- **Inset cards** (proposal, commit): `#14141a` on panel background.
+- **Key-first**: every action has a key, every button is labelled with its
+  key, mono 11px `#66666d`.
+- **User bubbles** (PM chat): right-aligned `#1a1a1e`, radius 10/10/3/10;
+  agent turns are plain left text, no bubble.
+- **Terminals** sit on the window colour with 12px mono.
 
-### Sidebar tree
-- **Project rows:** 32px, rounded-lg, chevron + 13px 500 name + hover-only add-task key.
-- **Task rows:** 30px, indented 30px, status dot first, mono 12px name, hover-only delete.
-- **Selection:** tertiary-2 fill; hover tertiary-1.
+## Pipeline board (handoff v3, E18/E19)
 
-### Tabs & panes
-- **Tab bar:** 41px on secondary, hairline below; tabs are flat cells with a hairline right border.
-- **Active tab:** secondary-1 fill with foreground text; the kind glyph (9px mono) brightens.
-- **Focus lamp:** the keyboard-active pane marks its active tab with a 6px info-blue dot.
-- **Titles:** 12px mono, capped at 180px; close is a 16px × that turns destructive on hover.
-
-### Command palette
-- **Plate:** 560px rounded-xl elevated plate, 15vh from the top; mono 13px input over a hairline; results as rounded-md rows; selected row fills tertiary-2; empty query shows the key legend in 10px mono under a hairline.
-
-### Modals
-- **Plates:** background-2, hairline border, rounded-xl, 16px 20px padding; 16px/24px 600 titles; recessed mono inputs; action row right-aligned with ghost/primary/danger keys.
-
-### Terminals
-- **Surface:** secondary-1 (#181818) with #e9e8e8 text, #e9e8e8 cursor, and the blue selection wash; 8px padding; 12px JetBrains Mono with Nerd Font stacks first.
-
-### Resource monitor
-- **Plate:** elevated, rounded-lg, hairline border, seated 12px from the bottom-right; 12px 600 header over a hairline; mono meters with 4px neutral tracks and passive fills.
-
-### Issue board (project view)
-- **Surface:** ONE rounded-lg plate on secondary (#181818) with a hairline
-  frame; five lanes divided by 1px border rules, shared 32px head row
-  (12px 500 label + mono 11px count). Below a 750px floor the frame scrolls
-  sideways — heads and lanes share the floor and stay registered.
-- **Cards:** rows on background-2 with hairline border and radius-sm; the
-  linked task's canonical status dot leads, 13px Inter title, mono 10px
-  passive chips (provider), amber "blocked" chip with hover popover, and a
-  mono acceptance tally. Selected card = tertiary-2 fill + border-1.
-- **Inspector (right sheet):** card click swaps the sheet to the card
-  detail — 41px header with lane label + status dot, agent row holding the
-  one emerald key (Dispatch / Open task), meta grid (Source/PRD/Task/
-  Created), empty-state rows, hover-only destructive remove keys, sticky
-  footer delete confirm. The sheet widens to 420px while open.
-- **Toolbar:** "Board" micro-label + mono total + ghost Add-issue key; the
-  inline add row creates in Backlog and opens its inspector.
+- **Step-done dot**: accent-filled 7px dot on a card = the step settled and
+  the column holds (`on_settle: hold`), awaiting a human drag. Same dot as a
+  passed check; distinct from hollow needs-you. Card hint: `↵ read
+  <artifact> · drag on` where the step declares an artifact.
+- **Header kind subline**: every column header carries a mono 10.5px subline
+  — `shelf` / `human gate` / `counts as done` in `--disabled`; agent steps
+  show `<provider> · <model> · <effort> — <trigger>[ → <advance_to>]`.
+- **Confirm-free spend is brighter**: an `on_enter: run` subline renders
+  `--text-muted` `#9a9aa1` (queue-mode stays `--meta`). Presence + brightness
+  is the visibility; no new colour.
+- **`counts_as_done` = dimmed**: the flag drives the dimmed header +
+  50%-opacity cards; multiple terminal columns dim identically. Never key
+  dimming on a column's name.
+- **Landing tag**: the `is_landing` column shows a mono 10px `landing` tag
+  in `--meta` after its name — information, not consent, so never green.
+- **Delete-with-issues is a disabled label, not a dialog**: `delete column`
+  sits in `--disabled` with the reason beside it in `--meta`; it activates
+  the moment the column empties.
+- Run-state derives from the live session, never from column identity. The
+  flyout's in-flight contract: card in an `agent_step` column with a live
+  session, or needs-you.
 
 ## Do's and Don'ts
 
 ### Do:
-- **Do** take every color from the token set; the neutral ramp covers every surface.
-- **Do** spend emerald on one action class per view; blue on selection/focus/info; status hues on dots only.
-- **Do** voice text by speaker: Inter for the operator, JetBrains Mono for the machine.
-- **Do** keep surfaces flat and separated by hairlines; only plates and the palette lift.
-- **Do** keep the four radii (6/8/10/14) and 32px/30px row rhythm.
-- **Do** honor `prefers-reduced-motion` — the only transitions are 120ms color fades.
+- **Do** put every token in `styles.css :root`; never a second styling system.
+- **Do** derive elapsed times from timestamps on a tick; never store them.
+- **Do** keep the flyout to in-flight work — the board owns everything else.
+- **Do** give every action a key first, and label its button with the key (mono 11px).
 
 ### Don't:
-- **Don't** add glow, gradients, or backdrop blur.
-- **Don't** introduce new accent hues; emerald, blue, amber, green, and red have fixed jobs.
-- **Don't** set machine strings in Inter or body copy in mono.
-- **Don't** cast drop shadows under work surfaces — only plates lift.
-- **Don't** round rows below 10px or plates below 14px; the scale is the system.
-- **Don't** decorate: no badges, no tinted washes, no icon tiles. Dots and hairlines carry all the meaning.
+- **Don't** go dimmer than the meta floor `#5f5f66` for informative text.
+- **Don't** add icons, badges, tinted washes, chips — glyphs, dots and
+  hairlines carry all meaning. GitHub links live inside the mono meta line.
+- **Don't** use blue for anything but links out; green beyond
+  selection/additions; red beyond ended-badly.
+- **Don't** animate anything beyond the two keyframes.

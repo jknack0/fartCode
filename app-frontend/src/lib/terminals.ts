@@ -24,6 +24,22 @@ export interface TermSession {
 
 const sessions = new Map<string, TermSession>();
 
+/** Reads the xterm theme from the design tokens in styles.css :root.
+ * xterm's own color parser only takes hex/rgb(a) strings, so the tokens
+ * keep those forms; fallbacks mirror the token values. */
+function xtermTheme() {
+  const root = getComputedStyle(document.documentElement);
+  const v = (name: string, fallback: string) =>
+    root.getPropertyValue(name).trim() || fallback;
+  return {
+    background: v("--xterm-bg", "#101012"),
+    foreground: v("--xterm-fg", "#e8e8ea"),
+    cursor: v("--xterm-cursor", "#e8e8ea"),
+    selectionBackground: v("--xterm-selection-bg", "rgba(110, 231, 168, 0.28)"),
+    selectionForeground: v("--xterm-selection-fg", "#e8e8ea"),
+  };
+}
+
 export function base64ToBytes(b64: string): Uint8Array {
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
@@ -43,15 +59,11 @@ export function getTerminalSession(terminalId: string): TermSession {
     fontFamily:
       '"JetBrainsMono Nerd Font Mono", "MesloLGS Nerd Font Mono", "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace',
     fontSize: 12,
-    // Matches the emdash world in styles.css — keep in sync with
-    // --xterm-bg / --xterm-fg / --xterm-selection-*.
-    theme: {
-      background: "#181818",
-      foreground: "#e9e8e8",
-      cursor: "#e9e8e8",
-      selectionBackground: "rgba(57, 142, 255, 0.475)",
-      selectionForeground: "#82baff",
-    },
+    // DESIGN.md terminal token: 12px/1.6 (xterm defaults to 1.0 otherwise).
+    lineHeight: 1.6,
+    // Theme values come from styles.css :root (--xterm-*) so the design
+    // tokens stay the single source; fallbacks match the current tokens.
+    theme: xtermTheme(),
   });
   const fit = new FitAddon();
   term.loadAddon(fit);

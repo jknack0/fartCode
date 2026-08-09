@@ -4,6 +4,267 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## E18-04/05 STEP ENGINE LANDED (2026-08-09, 5e8c017) — E18 backend COMPLETE
+
+Squash of three worktree commits (build aa30918 + fix bf9a4a1 + final
+8757ab4) cherry-picked onto main; 7-file stash dance, one conflict (app.rs:
+engine's steps/Step events + WIP's host_dependencies/SettingChanged — both
+kept). Combined tree: core 201 lib + suites green, app lib 42 green, tsc
+clean. Migration 0007 pins In Progress advance_to → In Review (0006
+untouched — LANDED MIGRATIONS ARE HASH-FROZEN, never edit). Restart
+contract: parks/registry in-memory; settle re-parks queue columns after
+restart (never advances through an unconfirmed gate). Ticket bookkeeping:
+filing error had duplicated E18-03 (#63 dupe of #77) and never created
+E18-04 — refiled as #78 (closed); corrected map on epic #60. Closed: #61
+#62 #77 #78 #64. Next: #65 (E18-06 landing), then UI wave #66-#68, then E19.
+
+## E18-01/02 LANDED on main (2026-08-09, b1ddde2)
+
+Spike cherry-picked onto main (linear history; worktree branch commit
+be04415). Landing dance: main had 102 dirty WIP files, 4 overlapped — stash
+push on those 4 → cherry-pick → stash pop; one conflict (app.rs: spike's
+`columns` store vs WIP's `host_dependencies` store, both kept), stash
+dropped after resolve. Combined tree verified: cargo check fartcode-app +
+tsc clean. E18-03 LANDED too (ade8d63, clean pop, #77 closed): BLOCKED_SQL +
+dispatch blocker filter key on counts_as_done via seed_lane resolution;
+BlockerRef.countsAsDone exposed to the frontend DTO. E18-04/05 step engine
+building now in the same worktree — architecture: issue_enter_column
+primitive (column_id always, lane synced via reverse seed_lane, unchanged
+for non-seeded), on_enter queue = park + step_confirm command, settle reads
+current column config (advance→enter(advance_to ?? next), hold→step-settled
+event, step-done is DERIVED), reattach-never-respawn preserved, two golden
+parity tests (In Progress drag + auto-flip). Adversarial review gate before
+landing. REVIEW RESULT (20 agents): 14 CONFIRMED defects in aa30918, 2
+refuted (acyclicity concern refuted — do not add validation). Root cause of
+~half: settle is task-scoped with NO session identity — stale sessions
+bypass the confirm gate (verifier repro: two settles from one session
+marched a parked card into Done), walk advance chains, double-launch. Also:
+seeded In Progress advance_to must be PINNED to In Review (NULL next-column
+reroutes to Done if In Review deleted/reordered); parks leak on issue
+delete; confirm_step check-then-act race; reattach discriminator ignores
+the seed_lane fallback. Fix round dispatched: in-memory launch registry
+(session-scoped settle + tombstones + restart fallback), pinned gate +
+temp seeded-agent-step delete guard, park lifecycle, discriminator
+alignment. Fix round bf9a4a1 mapped all 14 → tests; 3-agent
+verify then found: park atomicity SOUND; two NEW blockers — (1) bf9a4a1
+edited landed migration 0006 in place (sha256 startup failure on applied
+DBs; pin must ship as 0007) — NEVER edit a landed migration, they are
+hash-frozen; (2) restart-state confirm-gate bypass via the no-entry
+heuristic on queue+advance columns (fix: heuristic refuses/re-parks on
+on_enter=Queue); plus consumed-set lifetime regression breaking the E17
+rework loop (fix: clear consumed per column entry). Final fix round
+dispatched. Landing BLOCKED until green + my 0006-diff-empty check.
+
+## Handoff v3 accepted — ADR-0037/0038 now BINDING (2026-08-09)
+
+`~/Downloads/design_handoff_v3/` (README + FLOWS §5 + turn-8 frames 8a–8h)
+accepted BOTH ADRs at design review; statuses flipped to accepted. Design
+gate lifted from #66/#67/#68/#74/#75/#76 (label removed). DESIGN.md gained a
+"Pipeline board (handoff v3)" section (step-done dot, header kind sublines,
+run-mode sublines at --text-muted #9a9aa1 — existing token, sidecar
+unchanged, landing tag never green, counts_as_done drives dimming,
+delete-with-issues = disabled label not dialog). ERRATUM resolved by user:
+v3's seed line says In Progress on_enter=queue — seed stays RUN
+(behavior-identical migration wins); queue is a settings flip. Adopted from
+v3: Quick seeds claude·haiku (spike updated). Dashboard placement: settings
+→ project → Memory. Frames 2d/2e/4d remain archived non-spec (FLOWS §3.5).
+
+## E18/E19 filed + design brief + schema spike (2026-08-09)
+
+ADR-0037 → epic #60 (E18 configurable pipeline columns): #61 schema/seed,
+#62 CRUD, #77 counts_as_done, #63 step engine, #64 settle, #65 landing/PM
+prompt; design-gated #66/#67/#68. ADR-0038 → epic #69 (E19 feature
+dossiers): #70 dossier birth, #71 skill seed, #72 FTS, #73 telemetry;
+design-gated #74/#75/#76. `design-gate` label = held for frames.
+`DESIGN_BRIEF_E18_E19.md` (repo root) is the designer punch list. User
+explicitly overrode the design gate to start an E18-01/02 schema spike
+(worktree `.claude/worktrees/agent-aae7632299c6f64d3`, UNCOMMITTED) — lane
+stays authoritative, column_id mirrors. Spike passed an adversarial review
+round: 6 confirmed defects fixed in place (0006 edited pre-commit, not
+0007). Model change that fell out: `advance_to` target column on on_settle
+(ADR-0037 items 1/4 amended — without it Quick advanced into In Progress
+and double-dispatched) + `seed_lane` mapping so the delete guard derives
+occupancy from the authoritative lane. Tri-state null-clear contract on
+column_update (omit=keep, null=clear); step_tools fails CLOSED (corrupt →
+empty allowlist, Some([]) ≠ None=unrestricted). Latent twin of the
+null-clear bug exists in issues.rs UpdateIssueRequest (chip filed). All
+suites green: fartcode-core 192, fartcode-app lib 20, tsc clean.
+
+## ADR-0038 drafted: feature dossiers (2026-08-09)
+
+`decisions/0038-feature-dossiers.md` (status: proposed, companion to 0037) —
+per-feature `docs/features/<slug>.md` born with the worktree at first step
+entry; app appends event-driven Timeline breadcrumbs, step prompts instruct
+agents to append decision sections; convention seeded into managed repos as
+`.claude/skills/feature-log/` + AGENTS.md pointer (OPT-IN, provenance-tagged
+— never silently write a user's repo); sections indexed into the existing
+FTS5 `search_index` as item_type "feature" for ⌘K. Moat decision settled:
+repo owns the memory, app owns the intelligence (index/links/dashboard) —
+app-owned storage REJECTED as it blinds outside-app agents; value telemetry
+(citations, re-ask rate, tokens saved, time-to-land) computed locally in
+fartcode-telemetry. Leftover questions settled 2026-08-09: consent asked at
+FIRST DISPATCH (reversible via settings switch); dossier born with header
+backfilled from issue/PRD/proposal; ⌘K feature hits open the CARD DETAIL
+(gains a dossier section); transcript indexing deferred until citation
+metrics justify it. In 0037: seeded order Backlog·Ready·Quick·In Progress·
+In Review·Done; narrow mode SCROLLS, never caps. Held for DESIGN REVIEW
+with 0037.
+
+## ADR-0037 drafted: configurable pipeline columns (2026-08-09)
+
+`decisions/0037-configurable-pipeline-columns.md` (status: proposed) —
+columns become per-project data (`kind` shelf/agent_step/human_gate, per-step
+prompt/model/tools, `on_enter` run/queue, `on_settle` hold/advance,
+`counts_as_done`, `is_landing`); one task+worktree per card with steps as
+successive sessions; classic five + a gateless "Quick" express column seeded
+(express is a place, not a per-card flag; ⌘N ad-hoc stays the board-free
+path; drag-skip stays legal).
+Held for DESIGN REVIEW — do not start building against it until the user or
+a handoff accepts it. Supersedes ADR-0032 items 2/4 if accepted.
+
+## Rail tile click reopens flyout (2026-08-09)
+
+User-settled interaction addition (not in the left-nav handoff, which only
+specifies ⌘\\ to toggle): clicking a project rail tile now also
+`setSidebarVisible(true)`, so a collapsed flyout has a mouse path back.
+Auditors: not a deviation — do not revert to spec.
+
+## v2 audit + fix round (2026-08-09, same day)
+
+A 9-auditor fidelity audit + build gate ran after the implementation; 76
+findings, all closed except the held-open design-review list below. Notable
+behavioural fixes: agent-launch now waits for a green auto-run setup
+(create_task defers via TerminalManager::wait_for_exit; ⌘T refuses during
+setup and opens the drawer after a failed one); lifecycle scripts echo
+`$`-prefixed dim command lines and append a red/dim `<type> exited <code> ·
+<elapsed>` tail line; the task-header dot reads the LIVE agent terminal
+(task.status never changes today — do not derive agent state from it);
+`set_default_agent` command + `setting:changed` event landed (settings
+Default-agent row is a real picker); the diff view dropped
+@codemirror/theme-one-dark (removed from package.json) for a token theme;
+board Enter routes to the task on failed cards; lane labels are sentence
+case. Legacy CSS is fully dead-checked (scripted top-level-block checker vs
+className usage — 0 dead blocks).
+
+## design_handoff_v2 implemented — all 12 surfaces (2026-08-09)
+
+`~/Downloads/design_handoff_v2/` (README + FLOWS + frames) is implemented on
+top of the v1 nav. DESIGN.md is REWRITTEN to this system ("The Quiet
+Terminal") and formally supersedes the 2026-08-05 emdash-world decision;
+`.impeccable/design.json` regenerated to match. What landed:
+
+- **Backend commands added** (thin over existing core): `task_archive`/
+  `task_restore` (+ `task:archived`/`task:restored` events), terminal DTO
+  `running`/`exitCode`, `project_settings_share`/`project_settings_provenance`
+  (keys: preservePatterns|shellSetup|scripts), `host_dependency_list/install/
+  update/registry_summary` (HostDependencyStore now in App state). TS
+  wrappers in `lib/tauri.ts`.
+- **Task view** (5a/5b/7b): `TaskHeader` (46px breadcrumb + script
+  launchers + changes toggle), `tv-empty` stopped state, `Drawer.tsx` ⌘J
+  bottom sheet hosting lifecycle-script terminals via `store/scripts.ts` —
+  the `lifecycle-script` tab kind is GONE from the tab registry.
+- **Keymap (FLOWS §3.5 settled)**: ⌘T resume-agent · ⌘⇧T new terminal ·
+  ⌘J toggle-drawer · ⌘. stop-agent (SIGINT to the live agent PTY) ·
+  toggle-right-panel moved to ⌘⇧. · git fetch/pull/push/publish are
+  palette-only commands · archived tasks restore via ⌘K search. No ⌘1–5
+  project switching. `chordFromEvent` normalizes shifted punctuation.
+- **Surfaces restyled** per frames: PM chat (bubbles/proposal card, panel
+  400px), Changes+commit card (single-key s/u/d/a, inline discard confirm —
+  ui.discardTarget deleted), PR/checks (failed-first, accent tab underline),
+  line comments (lc-* classes; .diff-sel-* kept for CardDetail), board
+  (blocked-by meta, dispatch/done confirm overlays, 4a/4b card states,
+  j/k/h/l + ⇧ moves), composer ⌥ options unfold, delete confirm itemizes +
+  `a` archives, settings 170px nav + provenance `shared` tags + ⇧⌘S share,
+  AgentsList (7d) in App settings + onboarding step two.
+- **Logo**: fC mark inline SVG in the rail; full Tauri icon set generated
+  from `assets/logo/fartcode-icon.svg` via `scripts/gen-icons.sh` (headless
+  Chrome + embedded JetBrains Mono; rerun after mark changes).
+- **CSS**: per-surface files under `src/styles/` (`taskview/changes/pr/
+  comments/modals/settings` + board/project-chat), all `@import`ed from
+  styles.css; ~700 lines of dead emdash-era rules deleted; xterm theme now
+  reads `--xterm-*` tokens (bg #101012, emerald selection wash).
+- **Known gaps (data, not design)**: no numeric task ids (frames' `#392` →
+  name/uuid8), no install progress events (installing rows show no %),
+  `HostDependencyDto.latest` always null (update ⌄ hidden), no branch-prefix
+  command (composer shows `auto · fartCode…`), create_task takes no
+  issue-link/provider params (composer issue row omitted, agent row static),
+  tmux session name not itemized in the delete confirm, no merge-conflict /
+  queue-ordinal / stop-attribution state on tasks (frame 4a's "conflict with
+  main", "queued · 2nd of 3", "stopped by you" degrade to what the model
+  holds), no would-be branch preview on a first dispatch (confirm footer
+  omits the branch until the task exists).
+- **Deviations held OPEN for design review (2026-08-09 — do not "fix"
+  silently)**: the flyout's Recent group (v1 spec deletes it; kept so ad-hoc
+  tasks stay reachable outside ⌘K — user is taking it to design); rail `+`
+  = Add project not New task (same review); rail/flyout top padding 28/32px
+  clears the macOS traffic lights (platform, not spec); settings renders as
+  a floating card over a scrim, not the frame's full-window rail takeover;
+  PM file mentions are styled spans, not links (no file surface until E5).
+
+## Styling rules (left-nav redesign, binding for new UI work, 2026-08-08)
+
+Superseded reference: `DESIGN.md` now carries the binding system (v2). The
+v1 rules below still hold where they don't conflict.
+
+The app follows `design_handoff_left_nav/` (README.md is the spec; frames
+in `fartCode App.dc.html`). When adding/restyling UI:
+
+- Tokens live ONLY as CSS vars in `styles.css` `:root` (`--rail-bg`,
+  `--flyout-bg`, `--overlay`, `--hairline`, `--hover-bg`, `--focus-bg`,
+  `--text-card`, `--meta`, `--fc-bad`, …). Never hardcode hex in components;
+  never introduce a second styling system (no inline-style objects, no CSS-in-JS,
+  no utility framework).
+- Meaningful colour, and only these: `oklch(.78 .15 155)` = selection/additions
+  (the accent); `oklch(.8 .13 80)` = an agent is working (filled) or needs you
+  (hollow 1.5px ring); `--fc-bad #c96b6b` = a run ended badly; `--info #7c8fd0`
+  = a link out and NOTHING else. `--meta #5f5f66` is the legibility floor —
+  nothing informative goes dimmer.
+- Cards/rows have no box at rest: hover paints `--hover-bg`, selection/focus is
+  `--focus-bg` + a 2px accent left rail. No borders/backgrounds on idle rows.
+- System sans for human text, `var(--font-mono)` for machine text (paths,
+  chords, IDs, elapsed, counts). Uppercase group labels carry `letter-spacing: .14em`.
+- Icons are typographic glyphs (`+`, `⌘`, `‹`, `>_`, `›`) — do NOT add an icon set.
+- Motion: only the running-dot pulse (`fc-pulse` 1.8s) and the transcript caret.
+  No entrance animations, no transitions on cards/columns.
+- The flyout shows IN-FLIGHT work only; the board owns the rest. Do not re-add
+  task trees/recents/archive lists to the nav — ⌘K is the jump surface.
+- Every action needs a key first, and its button labelled with the key.
+
+## Left-nav redesign: rail + flyout (design_handoff_left_nav, 2026-08-08)
+
+- `components/Sidebar.tsx` is gone; `components/Nav.tsx` renders a 56px
+  `LeftRail` (project letter tiles, worst-of agent dot, + new task, ⌘
+  settings) plus a 244px `ProjectFlyout` fed IN-FLIGHT tasks only
+  (in_progress = Running, review = Needs you). Every other task is
+  reachable via ⌘K FTS — pinned/recent/archive tree sections were deleted
+  per the design; pin data still drives `visibleTaskOrder` (E2-10).
+- `ui.sidebarVisible` now means "flyout open"; ⌘B and ⌘\\ both toggle it
+  (command `toggle-sidebar`, relabeled "Toggle project flyout").
+- Design tokens live as CSS vars in styles.css `:root` (`--rail-bg`,
+  `--flyout-bg`, `--hairline`, `--meta`, `--fc-bad`, …); accent is now
+  oklch(.78 .15 155) with DARK `--accent-contrast`, links are `--info`
+  #7c8fd0, agent-working amber oklch(.8 .13 80). Board cards are boxless
+  (hover bg, selected = accent left-rail); chip row renders as mono meta.
+- Skipped from the handoff (no backend surface yet): sessions view/history,
+  composer overlay with `>` session switch, ⌘1–5 project switching, 1s
+  elapsed tick (flyout uses a 30s tick — display is minute-coarse).
+
+## Create-task dialog: workspace + branch pickers (#59, 2026-08-08)
+- Sidebar "+" and ⌘N now open `CreateTaskDialog` (Modals.tsx, driven by
+  `ui.createTaskTarget`) instead of instant-creating: workspace select
+  (`new-worktree` default / `project-root`) + existing-branch picker fed by
+  the new `list_project_branches` command (`BranchRef` now derives Serialize).
+- `create_task` gained optional `workspace`/`branch` params; the mapping
+  lives in `create_task_params` (now `pub` for tests — same pattern as
+  `create_task_from_comment_core`). `project-root` ⇒ `GitSetup::None` +
+  `WorkspaceTarget::ProjectRoot` (never touches the live checkout — the
+  dogfood mode: agent edits hit `make dev` hot reload immediately).
+  Existing branch ⇒ `GitSetup::UseBranch` in a new worktree (fetch + track).
+  Comment/dispatch callers pass `None`/`None` — behavior unchanged.
+- Core provision paths for both were already tested
+  (tasks_operations_integration.rs); the new mapping is covered by
+  fartcode-app/tests/create_task_params.rs.
+
 ## E4 PR section, PR sync, agent comment tool (#47/#49/#51, 2026-08-07)
 
 - **GitHub client** lives in `fartcode-core/src/github` (token.rs keyring +

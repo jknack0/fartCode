@@ -34,6 +34,8 @@ export type FartcodeEvent =
   | { type: "task:created"; id: string; projectId: string; name: string }
   | { type: "task:deleted"; taskId: string }
   | { type: "task:status_changed"; taskId: string; status: string }
+  | { type: "task:archived"; taskId: string }
+  | { type: "task:restored"; taskId: string }
   | { type: "git:changed"; projectId: string; workspaceId: string }
   | { type: "files:changed"; workspaceId: string; paths: string[] }
   | { type: "comment:created"; id: string; taskId: string; filePath: string; lineNumber: number }
@@ -41,7 +43,8 @@ export type FartcodeEvent =
   | { type: "pr:updated"; workspaceId: string; prUrl: string }
   | { type: "issue:created"; id: string; projectId: string; title: string }
   | { type: "issue:updated"; id: string; projectId: string }
-  | { type: "issue:deleted"; id: string; projectId: string };
+  | { type: "issue:deleted"; id: string; projectId: string }
+  | { type: "setting:changed"; key: string };
 
 export function listProjects(): Promise<ProjectDto[]> {
   return invoke("list_projects");
@@ -52,8 +55,32 @@ export function createProject(path: string): Promise<ProjectDto> {
 export function deleteProject(id: string): Promise<void> {
   return invoke("delete_project", { id });
 }
-export function createTask(projectId: string, name: string): Promise<TaskDto> {
-  return invoke("create_task", { projectId, name });
+export type WorkspaceKind = "new-worktree" | "project-root";
+export interface CreateTaskOptions {
+  workspace?: WorkspaceKind;
+  /** Existing branch to check out in the worktree (default: new branch off the base ref). */
+  branch?: string;
+}
+export function createTask(
+  projectId: string,
+  name: string,
+  opts: CreateTaskOptions = {},
+): Promise<TaskDto> {
+  return invoke("create_task", {
+    projectId,
+    name,
+    workspace: opts.workspace ?? null,
+    branch: opts.branch ?? null,
+  });
+}
+export interface BranchRef {
+  name: string;
+  upstream: string | null;
+  is_remote: boolean;
+  object: string;
+}
+export function listProjectBranches(projectId: string): Promise<BranchRef[]> {
+  return invoke("list_project_branches", { projectId });
 }
 
 export function listTasks(projectId: string): Promise<TaskDto[]> {
@@ -84,6 +111,17 @@ export function deleteTask(
     deleteWorktree: options.deleteWorktree ?? null,
     deleteBranch: options.deleteBranch ?? null,
   });
+}
+
+/** 7a "a archive instead": the card leaves the board; worktree + branch
+ * survive. Emits `task:archived`. */
+export function archiveTask(id: string): Promise<void> {
+  return invoke("task_archive", { taskId: id });
+}
+
+/** ⌘K restore: clears `archivedAt`, the task returns. Emits `task:restored`. */
+export function restoreTask(id: string): Promise<void> {
+  return invoke("task_restore", { taskId: id });
 }
 
 /** Subscribe to backend events; returns an unsubscribe fn. */
@@ -135,6 +173,22 @@ export function updateProjectSettings(
 }
 export function shareWithTeam(projectId: string): Promise<boolean> {
   return invoke("share_with_team", { projectId });
+}
+
+/** 7c `⇧⌘s share local values` (E1-02): moves local shareable values into
+ * the repo `.fartCode.json` and clears them from the DB. */
+export function projectSettingsShare(projectId: string): Promise<void> {
+  return invoke("project_settings_share", { projectId });
+}
+
+/** Which source won each SHAREABLE setting key (`preservePatterns` /
+ * `shellSetup` / `scripts`): "shared" = the `.fartCode.json` value wins
+ * (7c green tag), "local" = a DB override beats it, "default" = neither
+ * defines it. */
+export function projectSettingsProvenance(
+  projectId: string,
+): Promise<Record<string, "default" | "shared" | "local">> {
+  return invoke("project_settings_provenance", { projectId });
 }
 
 // -- View state (E1-08) -------------------------------------------------------
@@ -263,6 +317,58 @@ export function listProviders(): Promise<ProviderDto[]> {
   return invoke("list_providers");
 }
 
+/** ProjectSettings "Default agent · model" row: writes the app-wide
+ * `defaultAgent` setting (validated against the provider registry).
+ * Emits `setting:changed` with key `defaultAgent` — refetch on it. */
+export function setDefaultAgent(providerId: string): Promise<void> {
+  return invoke("set_default_agent", { providerId });
+}
+
+// -- 7d Agents on this machine (E3-02 host dependencies) ----------------------
+
+/** One agent CLI row. `latest` is set only when cheaply known (the network
+ * update check is a Phase-0 stub — currently always null, so hide "update
+ * available" affordances until it lands). `acp` mirrors the provider
+ * registry capability; `isDefault` = the `defaultAgent` app setting. */
+export interface HostDependencyDto {
+  providerId: string;
+  name: string;
+  version: string | null;
+  path: string | null;
+  installed: boolean;
+  latest: string | null;
+  acp: boolean;
+  isDefault: boolean;
+}
+
+/** Registry tail counts (7d `+ 31 more in the registry · 22 acp`). */
+export interface DependencyRegistrySummaryDto {
+  total: number;
+  acp: number;
+}
+
+/** Every registered agent CLI with detection state. `refresh` forces a
+ * re-detect (PATH scan + version probes); default serves the 300s cache. */
+export function hostDependencyList(refresh = false): Promise<HostDependencyDto[]> {
+  return invoke("host_dependency_list", { refresh });
+}
+
+/** Installs the provider's CLI via its registry plan; resolves with the
+ * re-detected row when the installer finishes. No progress events — the
+ * install runner reports no percentage (see backend module docs). */
+export function hostDependencyInstall(id: string): Promise<HostDependencyDto> {
+  return invoke("host_dependency_install", { providerId: id });
+}
+
+/** Updates the provider's CLI; resolves with the re-detected row. */
+export function hostDependencyUpdate(id: string): Promise<HostDependencyDto> {
+  return invoke("host_dependency_update", { providerId: id });
+}
+
+export function hostDependencyRegistrySummary(): Promise<DependencyRegistrySummaryDto> {
+  return invoke("host_dependency_registry_summary");
+}
+
 // -- E2-12 interactive terminals ---------------------------------------------
 
 export function terminalOpen(
@@ -297,12 +403,16 @@ export function terminalSurviving(taskId: string): Promise<number> {
 
 /** A task terminal: `kind` is `shell` | `agent` | `lifecycle` (script
  * terminals stay listed after the script exits so their tab can reattach
- * the output tail — E1-06). */
+ * the output tail — E1-06). `running` is false only for retained finished
+ * lifecycle entries; `exitCode` is set for those (7b `setup ✗ exit 1`),
+ * null while running or when the OS reported none. */
 export interface TaskTerminalDto {
   id: string;
   agent: string | null;
   kind: string;
   scriptType: string | null;
+  running: boolean;
+  exitCode: number | null;
 }
 
 /** Lists the task's terminals (diff selection routing + restore). */
