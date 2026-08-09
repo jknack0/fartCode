@@ -1,6 +1,18 @@
 //! Issue commands (E17-01, #55; ARCHITECTURE.md §13, ADR-0032) — thin CRUD
 //! over [`IssueStore`] for the project board: lanes, blocked-by edges, and
 //! the dispatch link the board dispatch engine (E17-03) drives.
+//!
+//! UI-thread rule (#80): a NON-async `#[tauri::command]` compiles to
+//! `ExecutionContext::Blocking` — its body is inlined into the invoke
+//! handler and runs on the IPC thread, which on macOS is the main thread.
+//! Blocking there stalls the NSRunLoop and the window stops repainting
+//! (beachball, not spinner). The two commands here that can reach the
+//! network or a git/gh subprocess — [`issue_dispatch`] and
+//! [`project_github_issues`] — are therefore `async` AND push their whole
+//! body onto the blocking pool via `spawn_blocking`; `async` alone would
+//! only move the stall onto a tokio worker. The remaining commands are
+//! single indexed SQLite statements against the in-process connection and
+//! stay synchronous on purpose.
 
 use std::sync::Arc;
 
@@ -164,33 +176,66 @@ pub fn issue_unlink(
 /// Drag-into-In-Progress (E17-03, #57): creates the linked task (worktree
 /// + issue-derived name + prompt packet) or reattaches to the live linked
 /// one. The frontend launches the agent terminal with the returned prompt.
+///
+/// Off the UI thread (#80): the first dispatch of a card provisions a
+/// worktree (`create_with_provision` → `ensure_worktree`: git fetch, branch
+/// create, `worktree add`, best-effort push) — unbounded network + git
+/// subprocess time. The reattach branch is two DB reads, but the command
+/// cannot know which branch it will take before it runs, so the whole body
+/// goes to the blocking pool.
 #[tauri::command]
-pub fn issue_dispatch(
+pub async fn issue_dispatch(
     app: State<'_, Arc<App>>,
     issue_id: String,
 ) -> Result<crate::dispatch::DispatchOutcome, String> {
+    let app = app.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || issue_dispatch_blocking(&app, &issue_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// [`issue_dispatch`]'s body, verbatim — a plain function so the blocking
+/// pool runs it and the tests exercise the same code the command does.
+fn issue_dispatch_blocking(
+    app: &App,
+    issue_id: &str,
+) -> Result<crate::dispatch::DispatchOutcome, String> {
     // E18-04 item 5: a dispatch entry supersedes any parked step (the
     // dispatch launches an agent now; the pending confirm is moot).
-    crate::step_engine::drop_parked_step(&app, &issue_id);
-    let outcome = crate::dispatch::issue_dispatch_core(&app, &issue_id)?;
+    crate::step_engine::drop_parked_step(app, issue_id);
+    let outcome = crate::dispatch::issue_dispatch_core(app, issue_id)?;
     // Final round item 3: a real dispatch entry (not a reattach-focus)
     // is a user gesture — new settle epoch.
     if !outcome.reattached {
-        crate::step_engine::begin_entry_epoch(&app, &issue_id);
+        crate::step_engine::begin_entry_epoch(app, issue_id);
     }
     Ok(outcome)
 }
 
 /// Open GitHub issues of the project's checkout (E17 dogfood), fetched via
 /// the gh CLI. Errors name the remedy (gh missing, not authed).
+///
+/// Off the UI thread (#80): `find_on_path("gh")` plus an un-timed
+/// `gh issue list` — a process spawn and a network round trip.
 #[tauri::command]
-pub fn project_github_issues(
+pub async fn project_github_issues(
     app: State<'_, Arc<App>>,
     project_id: String,
 ) -> Result<Vec<fartcode_git::issues::GitHubIssue>, String> {
+    let app = app.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || project_github_issues_blocking(&app, &project_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// [`project_github_issues`]'s body, verbatim (see [`issue_dispatch_blocking`]).
+fn project_github_issues_blocking(
+    app: &App,
+    project_id: &str,
+) -> Result<Vec<fartcode_git::issues::GitHubIssue>, String> {
     let project = app
         .projects
-        .get(&project_id)
+        .get(project_id)
         .map_err(String::from)?
         .ok_or_else(|| format!("project not found: {project_id}"))?;
     fartcode_git::issues::list_github_issues(&project.path).map_err(String::from)
@@ -249,4 +294,218 @@ pub fn issue_import_github(
             external_ref: Some(request.url), // dedupe key only — never surfaced
         })
         .map_err(String::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    use fartcode_core::events::{EventBus, InternalEvent};
+    use tauri::Manager as _;
+
+    /// In-memory App with one project and the seeded default board — the
+    /// same shape `step_engine`'s tests use. No git, no filesystem.
+    fn fixture() -> Arc<App> {
+        let app = App::init(Some(":memory:")).unwrap();
+        {
+            let conn = app.db.conn().lock().unwrap();
+            conn.execute_batch(
+                "INSERT INTO projects (id, name, path) VALUES ('p1', 'proj', '/tmp/proj');",
+            )
+            .unwrap();
+            fartcode_core::issues::columns::seed_default_columns(&conn, "p1").unwrap();
+        }
+        app
+    }
+
+    /// A Tauri app managing the `Arc<App>` so the commands can be called
+    /// with a real `State` — the caller keeps it alive while borrowing.
+    fn managed(app: &Arc<App>) -> tauri::App<tauri::test::MockRuntime> {
+        let tapp = tauri::test::mock_app();
+        tapp.handle().manage(app.clone());
+        tapp
+    }
+
+    fn new_issue(app: &App, title: &str) -> Issue {
+        app.issues
+            .create(NewIssue {
+                project_id: "p1".into(),
+                title: title.into(),
+                body: None,
+                acceptance: Vec::new(),
+                lane: None,
+                provider: None,
+                model: None,
+                prd_path: None,
+                prd_section: None,
+                external_ref: None,
+            })
+            .unwrap()
+    }
+
+    fn with_task(app: &App, task_id: &str) {
+        app.db
+            .conn()
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO tasks (id, project_id, name, status)
+                 VALUES (?1, 'p1', 't', 'in_progress')",
+                [task_id],
+            )
+            .unwrap();
+    }
+
+    fn task_count(app: &App) -> i64 {
+        app.db
+            .conn()
+            .lock()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM tasks", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    fn drain(rx: &mut tokio::sync::broadcast::Receiver<InternalEvent>) -> Vec<InternalEvent> {
+        let mut out = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            out.push(event);
+        }
+        out
+    }
+
+    /// Error text is part of the wire contract (the board surfaces it) —
+    /// the async command must produce it byte-for-byte, and the join-error
+    /// mapping must not swallow it.
+    #[tokio::test]
+    async fn dispatch_keeps_the_missing_issue_error_verbatim() {
+        let app = fixture();
+        let tapp = managed(&app);
+        let err = issue_dispatch(tapp.state::<Arc<App>>(), "nope".into())
+            .await
+            .unwrap_err();
+        assert_eq!(err, "issue not found: nope");
+    }
+
+    /// The reattach branch: same outcome fields as before the conversion
+    /// (empty prompt + provider, `reattached: true`), no lane change, no
+    /// second task, and — crucially — not one event on the bus.
+    #[tokio::test]
+    async fn dispatch_reattaches_to_the_live_linked_task_with_no_side_effects() {
+        let app = fixture();
+        let issue = new_issue(&app, "reattach me");
+        with_task(&app, "t1");
+        app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
+        let lane_before = app.issues.get(&issue.id).unwrap().unwrap().lane;
+
+        let mut rx = app.event_bus.subscribe();
+        let tapp = managed(&app);
+        let outcome = issue_dispatch(tapp.state::<Arc<App>>(), issue.id.clone())
+            .await
+            .unwrap();
+
+        assert!(outcome.reattached);
+        assert_eq!(outcome.task.id, "t1");
+        assert_eq!(outcome.prompt, "");
+        assert_eq!(outcome.provider, "");
+        assert_eq!(outcome.issue.lane, lane_before);
+        // No provisioning: no worktree, no second task row.
+        assert_eq!(task_count(&app), 1);
+        assert!(drain(&mut rx).is_empty(), "reattach must emit nothing");
+    }
+
+    /// The serialized shape the frontend reads is unchanged by the
+    /// conversion (camelCase keys, same fields).
+    #[tokio::test]
+    async fn dispatch_outcome_serializes_with_the_same_wire_shape() {
+        let app = fixture();
+        let issue = new_issue(&app, "wire shape");
+        with_task(&app, "t1");
+        app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
+        let tapp = managed(&app);
+        let outcome = issue_dispatch(tapp.state::<Arc<App>>(), issue.id.clone())
+            .await
+            .unwrap();
+        let value = serde_json::to_value(&outcome).unwrap();
+        assert!(value.get("task").is_some());
+        assert!(value.get("issue").is_some());
+        assert_eq!(value["prompt"], "");
+        assert_eq!(value["provider"], "");
+        assert_eq!(value["reattached"], true);
+    }
+
+    #[tokio::test]
+    async fn github_issues_keeps_the_missing_project_error_verbatim() {
+        let app = fixture();
+        let tapp = managed(&app);
+        let err = project_github_issues(tapp.state::<Arc<App>>(), "nope".into())
+            .await
+            .unwrap_err();
+        assert_eq!(err, "project not found: nope");
+    }
+
+    /// The point of #80: the body must LEAVE the calling thread. Proven
+    /// without a sleep — the DB connection mutex is the barrier. While a
+    /// helper thread holds it, the command's first statement cannot run; if
+    /// the body were inlined (the old non-async command) the caller would
+    /// be stuck inside it. Instead the future is merely pending, so a
+    /// bounded `timeout` elapses; releasing the guard lets it finish with
+    /// the exact same error. Every wait here is bounded.
+    ///
+    /// `project_github_issues` is the safe probe: its only work before the
+    /// error return is one DB read — no `gh`, no network.
+    #[tokio::test]
+    async fn github_issues_leaves_the_calling_thread_before_touching_the_db() {
+        let app = fixture();
+        let tapp = managed(&app);
+        let hold = DbHold::take(&app);
+
+        let fut = project_github_issues(tapp.state::<Arc<App>>(), "nope".into());
+        tokio::pin!(fut);
+        // Bounded: 200ms is plenty for the blocking pool to pick the
+        // closure up and park on the mutex.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), &mut fut)
+                .await
+                .is_err(),
+            "command completed inline — its body never left the caller's thread"
+        );
+
+        hold.release();
+        let err = tokio::time::timeout(Duration::from_secs(5), &mut fut)
+            .await
+            .expect("command did not finish after the DB was released")
+            .unwrap_err();
+        assert_eq!(err, "project not found: nope");
+    }
+
+    /// Holds the DB connection mutex on a helper thread until told to let
+    /// go — so no guard is ever held across an await on the async side.
+    /// Self-releasing after 10s so a panicking test can never wedge the run.
+    struct DbHold {
+        release: std::sync::mpsc::Sender<()>,
+        thread: std::thread::JoinHandle<()>,
+    }
+
+    impl DbHold {
+        fn take(app: &Arc<App>) -> Self {
+            let (release, wait) = std::sync::mpsc::channel::<()>();
+            let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
+            let db = app.db.clone();
+            let thread = std::thread::spawn(move || {
+                let _guard = db.conn().lock().unwrap();
+                let _ = ready_tx.send(());
+                let _ = wait.recv_timeout(Duration::from_secs(10));
+            });
+            ready_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("holder thread never took the DB lock");
+            Self { release, thread }
+        }
+
+        fn release(self) {
+            let _ = self.release.send(());
+            self.thread.join().unwrap();
+        }
+    }
 }
