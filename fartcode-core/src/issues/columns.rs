@@ -825,8 +825,7 @@ impl ColumnStore {
     ) -> Result<Vec<BoardColumn>, Error> {
         {
             let conn = self.conn()?;
-            let mut stmt =
-                conn.prepare("SELECT id FROM board_columns WHERE project_id = ?1")?;
+            let mut stmt = conn.prepare("SELECT id FROM board_columns WHERE project_id = ?1")?;
             let mut existing = stmt
                 .query_map([project_id], |row| row.get::<_, String>(0))?
                 .collect::<Result<Vec<_>, _>>()?;
@@ -970,12 +969,54 @@ mod tests {
         assert_eq!(
             summary,
             vec![
-                ("Backlog", ColumnKind::Shelf, false, true, OnEnter::Queue, OnSettle::Hold),
-                ("Ready", ColumnKind::Shelf, false, false, OnEnter::Queue, OnSettle::Hold),
-                ("Quick", ColumnKind::AgentStep, false, false, OnEnter::Run, OnSettle::Advance),
-                ("In Progress", ColumnKind::AgentStep, false, false, OnEnter::Run, OnSettle::Advance),
-                ("In Review", ColumnKind::HumanGate, false, false, OnEnter::Queue, OnSettle::Hold),
-                ("Done", ColumnKind::Shelf, true, false, OnEnter::Queue, OnSettle::Hold),
+                (
+                    "Backlog",
+                    ColumnKind::Shelf,
+                    false,
+                    true,
+                    OnEnter::Queue,
+                    OnSettle::Hold
+                ),
+                (
+                    "Ready",
+                    ColumnKind::Shelf,
+                    false,
+                    false,
+                    OnEnter::Queue,
+                    OnSettle::Hold
+                ),
+                (
+                    "Quick",
+                    ColumnKind::AgentStep,
+                    false,
+                    false,
+                    OnEnter::Run,
+                    OnSettle::Advance
+                ),
+                (
+                    "In Progress",
+                    ColumnKind::AgentStep,
+                    false,
+                    false,
+                    OnEnter::Run,
+                    OnSettle::Advance
+                ),
+                (
+                    "In Review",
+                    ColumnKind::HumanGate,
+                    false,
+                    false,
+                    OnEnter::Queue,
+                    OnSettle::Hold
+                ),
+                (
+                    "Done",
+                    ColumnKind::Shelf,
+                    true,
+                    false,
+                    OnEnter::Queue,
+                    OnSettle::Hold
+                ),
             ]
         );
         // Quick advances straight to Done (ADR-0037 item 4); In Progress
@@ -984,7 +1025,10 @@ mod tests {
         let done = &columns[5];
         let in_review = &columns[4];
         assert_eq!(columns[2].advance_to.as_deref(), Some(done.id.as_str()));
-        assert_eq!(columns[3].advance_to.as_deref(), Some(in_review.id.as_str()));
+        assert_eq!(
+            columns[3].advance_to.as_deref(),
+            Some(in_review.id.as_str())
+        );
         // Quick is pinned to the cheap agent (design handoff v3:
         // claude · haiku); In Progress stays NULL = project default.
         assert_eq!(columns[2].step_provider.as_deref(), Some("claude"));
@@ -1073,19 +1117,23 @@ mod tests {
                       WHERE project_id = ?1 ORDER BY position",
                 )
                 .unwrap()
-                .query_map([project], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                })
+                .query_map([project], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
                 .unwrap()
                 .collect::<Result<_, _>>()
                 .unwrap();
             let names: Vec<&str> = rows.iter().map(|(n, _, _)| n.as_str()).collect();
             assert_eq!(
                 names,
-                vec!["Backlog", "Ready", "Quick", "In Progress", "In Review", "Done"]
+                vec![
+                    "Backlog",
+                    "Ready",
+                    "Quick",
+                    "In Progress",
+                    "In Review",
+                    "Done"
+                ]
             );
-            let seed_lanes: Vec<Option<&str>> =
-                rows.iter().map(|(_, l, _)| l.as_deref()).collect();
+            let seed_lanes: Vec<Option<&str>> = rows.iter().map(|(_, l, _)| l.as_deref()).collect();
             assert_eq!(
                 seed_lanes,
                 vec![
@@ -1128,9 +1176,7 @@ mod tests {
                       ORDER BY position",
                 )
                 .unwrap()
-                .query_map([project], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                })
+                .query_map([project], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
                 .unwrap()
                 .collect::<Result<_, _>>()
                 .unwrap();
@@ -1154,10 +1200,22 @@ mod tests {
             )
             .unwrap()
         };
-        assert_eq!(issue_column("i1"), ("backlog".into(), "Backlog".into(), "p1".into()));
-        assert_eq!(issue_column("i2"), ("in_progress".into(), "In Progress".into(), "p1".into()));
-        assert_eq!(issue_column("i3"), ("done".into(), "Done".into(), "p1".into()));
-        assert_eq!(issue_column("i4"), ("in_progress".into(), "In Progress".into(), "p2".into()));
+        assert_eq!(
+            issue_column("i1"),
+            ("backlog".into(), "Backlog".into(), "p1".into())
+        );
+        assert_eq!(
+            issue_column("i2"),
+            ("in_progress".into(), "In Progress".into(), "p1".into())
+        );
+        assert_eq!(
+            issue_column("i3"),
+            ("done".into(), "Done".into(), "p1".into())
+        );
+        assert_eq!(
+            issue_column("i4"),
+            ("in_progress".into(), "In Progress".into(), "p2".into())
+        );
     }
 
     #[test]
@@ -1183,7 +1241,10 @@ mod tests {
         assert_eq!(created.on_enter, OnEnter::Run);
         assert_eq!(created.on_settle, OnSettle::Advance);
         assert_eq!(created.advance_to.as_deref(), Some(done_id.as_str()));
-        assert_eq!(created.step_prompt.as_deref(), Some("Grill me on the plan."));
+        assert_eq!(
+            created.step_prompt.as_deref(),
+            Some("Grill me on the plan.")
+        );
         assert_eq!(created.step_provider.as_deref(), Some("claude"));
         assert_eq!(created.step_model.as_deref(), Some("fable"));
         assert_eq!(created.step_effort.as_deref(), Some("high"));
@@ -1252,7 +1313,10 @@ mod tests {
                 },
             )
             .unwrap();
-        assert_eq!(retargeted.advance_to.as_deref(), Some(in_review.id.as_str()));
+        assert_eq!(
+            retargeted.advance_to.as_deref(),
+            Some(in_review.id.as_str())
+        );
         assert!(matches!(
             store.update(
                 &quick.id,
@@ -1294,7 +1358,12 @@ mod tests {
             })
             .unwrap();
         store.delete(&target.id).unwrap();
-        assert!(store.get(&pointer.id).unwrap().unwrap().advance_to.is_none());
+        assert!(store
+            .get(&pointer.id)
+            .unwrap()
+            .unwrap()
+            .advance_to
+            .is_none());
     }
 
     #[test]
@@ -1544,7 +1613,10 @@ mod tests {
         store.delete(&ready.id).unwrap();
         let after = store.list_for_project("p1").unwrap();
         let names: Vec<&str> = after.iter().map(|c| c.name.as_str()).collect();
-        assert_eq!(names, vec!["Backlog", "Quick", "In Progress", "In Review", "Done"]);
+        assert_eq!(
+            names,
+            vec!["Backlog", "Quick", "In Progress", "In Review", "Done"]
+        );
         let positions: Vec<i64> = after.iter().map(|c| c.position).collect();
         assert_eq!(positions, vec![0, 1, 2, 3, 4]);
 
@@ -1623,7 +1695,9 @@ mod tests {
             })
             .unwrap_err();
         assert!(matches!(err, Error::InvalidBoardColumnInput(_)));
-        assert!(err.to_string().contains("landing column cannot be an agent step"));
+        assert!(err
+            .to_string()
+            .contains("landing column cannot be an agent step"));
         // The rejected create is atomic: Backlog still holds the flag.
         let landing: Vec<String> = store
             .list_for_project("p1")
@@ -1773,7 +1847,14 @@ mod tests {
         let names: Vec<&str> = after.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(
             names,
-            vec!["Done", "In Review", "In Progress", "Quick", "Ready", "Backlog"]
+            vec![
+                "Done",
+                "In Review",
+                "In Progress",
+                "Quick",
+                "Ready",
+                "Backlog"
+            ]
         );
         let positions: Vec<i64> = after.iter().map(|c| c.position).collect();
         assert_eq!(positions, vec![0, 1, 2, 3, 4, 5]);

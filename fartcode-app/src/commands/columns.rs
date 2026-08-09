@@ -189,12 +189,10 @@ pub fn column_update(
             },
         )
         .map_err(String::from)?;
-    let still_queue_step = updated.kind
-        == fartcode_core::issues::columns::ColumnKind::AgentStep
+    let still_queue_step = updated.kind == fartcode_core::issues::columns::ColumnKind::AgentStep
         && updated.on_enter == fartcode_core::issues::columns::OnEnter::Queue;
     if was_queue_step && !still_queue_step {
-        let still_runnable = updated.kind
-            == fartcode_core::issues::columns::ColumnKind::AgentStep;
+        let still_runnable = updated.kind == fartcode_core::issues::columns::ColumnKind::AgentStep;
         crate::step_engine::on_column_lost_queue(&app, &column_id, still_runnable);
     }
     Ok(updated)
@@ -251,10 +249,9 @@ mod tests {
         assert_eq!(cleared.step_tools, Some(None));
 
         // Value → set (Some(Some(v))).
-        let set: UpdateColumnRequest = serde_json::from_str(
-            r#"{"stepPrompt":"p","advanceTo":"col_1","stepTools":["read"]}"#,
-        )
-        .unwrap();
+        let set: UpdateColumnRequest =
+            serde_json::from_str(r#"{"stepPrompt":"p","advanceTo":"col_1","stepTools":["read"]}"#)
+                .unwrap();
         assert_eq!(set.step_prompt, Some(Some("p".into())));
         assert_eq!(set.advance_to, Some(Some("col_1".into())));
         assert_eq!(set.step_tools, Some(Some(vec!["read".to_string()])));

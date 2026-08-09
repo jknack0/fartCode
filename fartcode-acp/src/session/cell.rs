@@ -904,7 +904,9 @@ mod hidden_context_tests {
     fn suppresses_only_sentinel_user_chunks() {
         let hidden = format!("{HIDDEN_CONTEXT_SENTINEL}\nYou are the PM.");
         assert!(is_hidden_context_echo(&user_chunk(&hidden)));
-        assert!(!is_hidden_context_echo(&user_chunk("implement the feature")));
+        assert!(!is_hidden_context_echo(&user_chunk(
+            "implement the feature"
+        )));
         // Agent chunks are never suppressed, even with the sentinel.
         let agent: SessionUpdate = serde_json::from_value(serde_json::json!({
             "sessionUpdate": "agent_message_chunk",

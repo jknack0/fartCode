@@ -75,7 +75,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 use fartcode_core::events::{EventBus, InternalEvent};
-use fartcode_core::issues::columns::{compose_step_prompt, BoardColumn, ColumnKind, OnEnter, OnSettle};
+use fartcode_core::issues::columns::{
+    compose_step_prompt, BoardColumn, ColumnKind, OnEnter, OnSettle,
+};
 use fartcode_core::issues::{build_dispatch_prompt, Issue, Lane};
 use fartcode_core::settings::DEFAULT_AGENT;
 use fartcode_core::tasks::{TaskDto, TaskStore};
@@ -213,18 +215,11 @@ impl StepEngine {
         }
         // A consumed session's triggers are stale, whatever the column.
         if let Some(s) = session {
-            if st
-                .consumed
-                .get(issue_id)
-                .is_some_and(|set| set.contains(s))
-            {
+            if st.consumed.get(issue_id).is_some_and(|set| set.contains(s)) {
                 return SettleDecision::Skip;
             }
         }
-        let matches_current = st
-            .launches
-            .get(issue_id)
-            .map(|e| e.column_id == column.id);
+        let matches_current = st.launches.get(issue_id).map(|e| e.column_id == column.id);
         match matches_current {
             Some(true) => {
                 let entry = st.launches.get_mut(issue_id).expect("checked above");
@@ -1045,9 +1040,7 @@ mod tests {
     }
 
     /// Drains the bus into only the step-engine events.
-    fn step_events(
-        rx: &mut tokio::sync::broadcast::Receiver<InternalEvent>,
-    ) -> Vec<InternalEvent> {
+    fn step_events(rx: &mut tokio::sync::broadcast::Receiver<InternalEvent>) -> Vec<InternalEvent> {
         let mut out = Vec::new();
         while let Ok(event) = rx.try_recv() {
             if matches!(
@@ -1073,12 +1066,7 @@ mod tests {
     }
 
     fn issue_column_id(app: &App, issue_id: &str) -> Option<String> {
-        app.issues
-            .get(issue_id)
-            .unwrap()
-            .unwrap()
-            .column_id
-            .clone()
+        app.issues.get(issue_id).unwrap().unwrap().column_id.clone()
     }
 
     #[test]
@@ -1145,7 +1133,10 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert!(matches!(
             &events[1],
-            InternalEvent::StepLaunch { reattached: true, .. }
+            InternalEvent::StepLaunch {
+                reattached: true,
+                ..
+            }
         ));
     }
 
@@ -1161,8 +1152,7 @@ mod tests {
         app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
 
         let in_progress = column(&app, "In Progress");
-        let outcome =
-            enter_column_from_command(&app, &issue.id, &in_progress.id, None).unwrap();
+        let outcome = enter_column_from_command(&app, &issue.id, &in_progress.id, None).unwrap();
         assert_eq!(outcome.step, "reattached");
         let launch = outcome.launch.unwrap();
         assert!(launch.reattached);
@@ -1222,7 +1212,10 @@ mod tests {
             .contains("You are implementing an issue from the project board."));
         assert!(matches!(
             &step_events(&mut rx)[..],
-            [InternalEvent::StepLaunch { reattached: false, .. }]
+            [InternalEvent::StepLaunch {
+                reattached: false,
+                ..
+            }]
         ));
 
         // Single-shot: a second confirm is the typed error.
@@ -1434,14 +1427,29 @@ mod tests {
         with_task(&app, "t1");
         app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
         let c = make_step(&app, "C", OnEnter::Run, OnSettle::Hold, None);
-        let b = make_step(&app, "B", OnEnter::Run, OnSettle::Advance, Some(c.id.clone()));
-        let a = make_step(&app, "A", OnEnter::Run, OnSettle::Advance, Some(b.id.clone()));
+        let b = make_step(
+            &app,
+            "B",
+            OnEnter::Run,
+            OnSettle::Advance,
+            Some(c.id.clone()),
+        );
+        let a = make_step(
+            &app,
+            "A",
+            OnEnter::Run,
+            OnSettle::Advance,
+            Some(b.id.clone()),
+        );
         enter_column_from_command(&app, &issue.id, &a.id, None).unwrap();
         let mut rx = app.event_bus.subscribe();
 
         // A's session settles → advance into B (chained launch).
         assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:cA")), 1);
-        assert_eq!(issue_column_id(&app, &issue.id).as_deref(), Some(b.id.as_str()));
+        assert_eq!(
+            issue_column_id(&app, &issue.id).as_deref(),
+            Some(b.id.as_str())
+        );
         assert!(matches!(
             &step_events(&mut rx)[..],
             [InternalEvent::StepLaunch { column_id, .. }] if column_id == &b.id
@@ -1450,12 +1458,18 @@ mod tests {
         // A's session again (late exit / follow-up turn): consumed →
         // no-op. The card does NOT march into C.
         assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:cA")), 0);
-        assert_eq!(issue_column_id(&app, &issue.id).as_deref(), Some(b.id.as_str()));
+        assert_eq!(
+            issue_column_id(&app, &issue.id).as_deref(),
+            Some(b.id.as_str())
+        );
         assert!(step_events(&mut rx).is_empty());
 
         // B's OWN session settles → advance into C.
         assert_eq!(settle_issues_for_task(&app, "t1", Some("pty:termB")), 1);
-        assert_eq!(issue_column_id(&app, &issue.id).as_deref(), Some(c.id.as_str()));
+        assert_eq!(
+            issue_column_id(&app, &issue.id).as_deref(),
+            Some(c.id.as_str())
+        );
         assert_eq!(task_count(&app), 1, "whole chain lived in one task");
     }
 
@@ -1519,7 +1533,7 @@ mod tests {
         let done = column(&app, "Done");
         assert_eq!(issue.column_id.as_deref(), Some(done.id.as_str()));
         assert_eq!(issue.lane, Lane::Done); // Done is seeded → lane syncs
-        // One launch (the Quick entry); Done is a shelf → inert on enter.
+                                            // One launch (the Quick entry); Done is a shelf → inert on enter.
         let events = step_events(&mut rx);
         assert_eq!(events.len(), 1);
         assert!(matches!(&events[0], InternalEvent::StepLaunch { .. }));
@@ -1553,8 +1567,12 @@ mod tests {
         assert_eq!(issue_now.column_id.as_deref(), Some(hold_col.id.as_str()));
         let events = step_events(&mut rx);
         assert_eq!(events.len(), 2);
-        assert!(matches!(&events[0], InternalEvent::StepLaunch { column_id, .. } if column_id == &run_col.id));
-        assert!(matches!(&events[1], InternalEvent::StepLaunch { column_id, .. } if column_id == &hold_col.id));
+        assert!(
+            matches!(&events[0], InternalEvent::StepLaunch { column_id, .. } if column_id == &run_col.id)
+        );
+        assert!(
+            matches!(&events[1], InternalEvent::StepLaunch { column_id, .. } if column_id == &hold_col.id)
+        );
 
         // Verify's OWN session settles: hold → StepSettled, card stays.
         // (The stale acp:impl session would no-op — see the chain test.)
@@ -1583,11 +1601,20 @@ mod tests {
         with_task(&app, "t1");
         app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
         let b = make_step(&app, "B", OnEnter::Run, OnSettle::Hold, None);
-        let a = make_step(&app, "A", OnEnter::Run, OnSettle::Advance, Some(b.id.clone()));
+        let a = make_step(
+            &app,
+            "A",
+            OnEnter::Run,
+            OnSettle::Advance,
+            Some(b.id.clone()),
+        );
         enter_column_from_command(&app, &issue.id, &a.id, None).unwrap();
         // Chain into B: the launch directive has no listener yet.
         assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:cA")), 1);
-        assert_eq!(issue_column_id(&app, &issue.id).as_deref(), Some(b.id.as_str()));
+        assert_eq!(
+            issue_column_id(&app, &issue.id).as_deref(),
+            Some(b.id.as_str())
+        );
         let mut rx = app.event_bus.subscribe();
 
         // Re-entry into B re-emits the launch instead of "reattaching"
@@ -1730,11 +1757,16 @@ mod tests {
         with_task(&app, "t1");
         app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
         // Dispatch-style entry (lane move, no engine launch).
-        app.issues.move_to(&issue.id, Lane::InProgress, None).unwrap();
+        app.issues
+            .move_to(&issue.id, Lane::InProgress, None)
+            .unwrap();
 
         // First settle from the task's conversation: auto-flip.
         assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:conv")), 1);
-        assert_eq!(app.issues.get(&issue.id).unwrap().unwrap().lane, Lane::InReview);
+        assert_eq!(
+            app.issues.get(&issue.id).unwrap().unwrap().lane,
+            Lane::InReview
+        );
         // Duplicate trigger inside the same epoch: consumed → no-op.
         assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:conv")), 0);
 
@@ -1742,11 +1774,16 @@ mod tests {
         // command does (epoch reset + lane move). The dispatch reattaches
         // the SAME conversation — no new session identity exists.
         on_lane_move(&app, &issue.id, Lane::InProgress);
-        app.issues.move_to(&issue.id, Lane::InProgress, None).unwrap();
+        app.issues
+            .move_to(&issue.id, Lane::InProgress, None)
+            .unwrap();
 
         // The same session settles again → flips again.
         assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:conv")), 1);
-        assert_eq!(app.issues.get(&issue.id).unwrap().unwrap().lane, Lane::InReview);
+        assert_eq!(
+            app.issues.get(&issue.id).unwrap().unwrap().lane,
+            Lane::InReview
+        );
     }
 
     /// Final round item 4b: an errored enter (unknown column) must leave
@@ -1819,7 +1856,10 @@ mod tests {
             .unwrap();
         on_project_deleted(&app, "p1");
         assert!(!app.steps.has_state(&parked_card.id));
-        assert!(!app.steps.has_state(&launched_card.id), "launched-unparked swept");
+        assert!(
+            !app.steps.has_state(&launched_card.id),
+            "launched-unparked swept"
+        );
         assert!(matches!(
             &step_events(&mut rx)[..],
             [InternalEvent::StepQueueCleared { issue_id, .. }] if issue_id == &parked_card.id

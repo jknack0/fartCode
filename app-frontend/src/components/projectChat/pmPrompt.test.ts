@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PM_PROMPT, PM_PROMPT_VERSION, buildPmPrompt } from "./pmPrompt";
+import { PM_PROMPT_VERSION, buildPmPrompt } from "./pmPrompt";
 import type { BoardColumnDto } from "../../lib/tauri";
 
 /** A column with seed-ish defaults; every test overrides only what it means. */
@@ -47,8 +47,8 @@ function seededColumns(): BoardColumnDto[] {
 }
 
 describe("PM_PROMPT_VERSION", () => {
-  it("is 2 — bump only alongside the Rust parser (ADR-0032)", () => {
-    expect(PM_PROMPT_VERSION).toBe(2);
+  it("is 3 — bump only alongside the Rust parser (ADR-0032)", () => {
+    expect(PM_PROMPT_VERSION).toBe(3);
   });
 });
 
@@ -125,8 +125,12 @@ describe("board prose", () => {
     );
   });
 
-  it("PM_PROMPT is the board-agnostic build", () => {
-    expect(PM_PROMPT).toBe(buildPmPrompt([]));
+  it("names no column when the project's columns cannot be read", () => {
+    // pmPromptForProject degrades to this build on a failed load; it must
+    // stay valid prose, never the string "undefined".
+    const fallback = buildPmPrompt([]);
+    expect(fallback).not.toContain("undefined");
+    expect(fallback).toContain("Work proceeds when they drag cards to an agent column.");
   });
 
   it("emits the board line as the last rules bullet", () => {
@@ -169,16 +173,20 @@ describe("fartCode-proposal fence contract", () => {
     );
   });
 
-  it("carries the ticket-edit schema byte-for-byte", () => {
+  it("carries a ticket-edit example the parser accepts", () => {
     expect(prompt).toContain("exactly ONE fenced code block tagged fartCode-ticket-edit");
+    // The example must be a VALID edit: parseTicketEdit rejects a block
+    // whose title/body/acceptance are all null, so an agent copying the
+    // schema verbatim would produce something that silently never applies.
     expect(prompt).toContain(
       `{
   "issueId": "<the issueId from the request>",
   "title": null,
-  "body": null,
-  "acceptance": null
+  "body": "<the FULL replacement body in markdown>",
+  "acceptance": ["<observable criterion>", "..."]
 }`,
     );
+    expect(prompt).toContain("AT LEAST ONE of title/body/acceptance MUST be non-null");
   });
 
   it("keeps the rules the parser and board rely on", () => {
