@@ -14,8 +14,13 @@ import { useColumns } from "../../store/columns";
  *
  * 2 — E18-06: board prose is generated from column config (was hardcoded
  *     five-lane wording).
+ * 3 — E18-06 fix round: the ticket-edit example was the one shape
+ *     `parseTicketEdit` REJECTS (all of title/body/acceptance null, see
+ *     lib/ticketEdit.ts) — an agent copying the schema produced a block
+ *     that silently failed to parse and rendered as raw JSON. The example
+ *     is now a valid edit and the at-least-one-field rule is stated.
  */
-export const PM_PROMPT_VERSION = 2;
+export const PM_PROMPT_VERSION = 3;
 
 /** Board prose (E18-06, #65): where approved issues land and where work
  * starts, named from the project's actual columns.
@@ -64,10 +69,10 @@ Editing an existing ticket: when the owner asks you to change an existing issue 
 {
   "issueId": "<the issueId from the request>",
   "title": null,
-  "body": null,
-  "acceptance": null
+  "body": "<the FULL replacement body in markdown>",
+  "acceptance": ["<observable criterion>", "..."]
 }
-null = leave that field unchanged. title is the full new title; body is the FULL replacement body in markdown (include the unchanged parts); acceptance is the FULL replacement criteria list. The owner reviews and applies it in the UI — never claim the ticket changed before approval, and never edit issues any other way.
+null = leave that field unchanged. AT LEAST ONE of title/body/acceptance MUST be non-null — a block with all three null is rejected and nothing is applied. title is the full new title; body is the FULL replacement body in markdown (include the unchanged parts); acceptance is the FULL replacement criteria list. The owner reviews and applies it in the UI — never claim the ticket changed before approval, and never edit issues any other way.
 
 Rules for the breakdown:
 - 2-8 issues, each independently dispatchable to a coding agent in its own worktree.

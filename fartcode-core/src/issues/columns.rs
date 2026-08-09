@@ -477,6 +477,30 @@ fn step_tools_cell(tools: Option<&[String]>) -> Result<Option<String>, Error> {
     }
 }
 
+/// The landing column is never an `agent_step` (ADR-0037 item 7, amended).
+///
+/// Entry paths (GitHub import, PM proposal apply, manual add) write issue
+/// rows directly and never run `on_enter`, so a run-mode landing column
+/// would silently deposit inert cards — no launch, no park, no gate, and
+/// no settle path to rescue them. Routing creation through the step
+/// engine is explicitly rejected instead: a 50-issue import would launch
+/// 50 agents. Work is dispatched by MOVING a card onto a step, never by
+/// its arrival. Enforced on both create and update, in both directions
+/// (flagging an agent step as landing, and turning the landing column
+/// into an agent step).
+fn reject_landing_agent_step(is_landing: bool, kind: ColumnKind) -> Result<(), Error> {
+    if is_landing && kind == ColumnKind::AgentStep {
+        return Err(Error::InvalidBoardColumnInput(
+            "the landing column cannot be an agent step: entry paths create \
+             cards directly and never fire on_enter, so arriving cards would \
+             sit inert (ADR-0037 item 7) — move is_landing to a shelf or \
+             human gate, or change this column's kind first"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 /// `advance_to` must point at an existing column of the same project.
 fn validate_advance_target(
     conn: &rusqlite::Connection,
@@ -543,6 +567,7 @@ impl ColumnStore {
         if name.is_empty() {
             return Err(Error::InvalidBoardColumnInput("name is empty".into()));
         }
+        reject_landing_agent_step(new.is_landing, new.kind)?;
         let id = format!("col_{}", uuid::Uuid::new_v4());
         let step_tools = step_tools_cell(new.step_tools.as_deref())?;
         {
@@ -636,6 +661,10 @@ impl ColumnStore {
         if patch.is_landing == Some(true) {
             column.is_landing = true;
         }
+        // Both directions of the landing-kind rule: the merged column is
+        // what gets stored, so flagging an agent step as landing AND
+        // turning the landing column into an agent step both land here.
+        reject_landing_agent_step(column.is_landing, column.kind)?;
         if let Some(on_enter) = patch.on_enter {
             column.on_enter = on_enter;
         }
@@ -728,14 +757,12 @@ impl ColumnStore {
     /// always has exactly one).
     ///
     /// Occupancy derives from the AUTHORITATIVE signal per column:
-    /// - seeded column (`seed_lane` set): any project issue whose `lane`
-    ///   equals `seed_lane`. The `column_id` mirror is deliberately ignored
-    ///   here — nothing maintains it after the 0006 backfill, so a stale
-    ///   pointer must not block a truly empty column (the FK's
-    ///   `ON DELETE SET NULL` clears it harmlessly), and a fresh
-    ///   NULL-pointer issue cannot escape the lane check;
-    /// - non-seeded column (`seed_lane` NULL — Quick, user-created): no
-    ///   lane can express membership, so any `column_id` pointer counts.
+    /// Occupancy is UNAMBIGUOUS — exactly one column owns each card:
+    /// - a card with a mirror (`column_id`, maintained on every entry
+    ///   path since E18-04/06) belongs to THAT column and to no other,
+    ///   whatever its interim lane says;
+    /// - a mirrorless card (pre-E18 row) belongs to the seeded column
+    ///   mirroring its `lane`, if one exists.
     pub fn delete(&self, id: &str) -> Result<(), Error> {
         let column = self
             .get(id)?
@@ -759,10 +786,19 @@ impl ColumnStore {
             )));
         }
         let conn = self.conn()?;
+        // EXACTLY ONE column owns each card (fix round): the mirror wins
+        // when set — `column_id`'s FK is `ON DELETE SET NULL`, so a
+        // non-NULL value always names a live column — and the lane
+        // mapping covers only mirrorless (pre-E18) rows. Counting both
+        // unconditionally double-booked cards resident in a NON-SEEDED
+        // column (e.g. a landing Triage), whose interim lane fallback is
+        // Backlog: the seeded Backlog column then looked occupied by
+        // cards the board draws elsewhere and could never be deleted.
         let issue_count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM issues
-              WHERE (?2 IS NOT NULL AND project_id = ?3 AND lane = ?2)
-                 OR (?2 IS NULL AND column_id = ?1)",
+              WHERE project_id = ?3
+                AND (column_id = ?1
+                     OR (column_id IS NULL AND ?2 IS NOT NULL AND lane = ?2))",
             rusqlite::params![id, column.seed_lane, column.project_id],
             |row| row.get(0),
         )?;
@@ -1494,34 +1530,18 @@ mod tests {
             Err(Error::BoardColumnHasIssues { ref id, count: 1 }) if *id == ready.id
         ));
 
-        // Reproduced scenario (b): a STALE pointer at Ready (the pre-E18-04
-        // backfill-then-lane-move state; now only constructible raw, since
-        // routed moves maintain the mirror) must not block deleting the
-        // truly empty Ready column.
+        // Scenario (b): a card whose MIRROR names another column never
+        // counts for a lane's column — here a card resident in Quick
+        // (non-seeded, so its interim lane stays backlog) plus the drained
+        // (a) card. Ready is genuinely empty and deletes.
         issues.move_to(&fresh.id, Lane::Done, None).unwrap(); // drain (a)
-        let backfilled = issues.create(new_issue("backfilled")).unwrap();
-        issues.move_to(&backfilled.id, Lane::Done, None).unwrap();
-        store
-            .conn()
-            .unwrap()
-            .execute(
-                "UPDATE issues SET column_id = ?1 WHERE id = ?2",
-                rusqlite::params![ready.id, backfilled.id],
-            )
-            .unwrap(); // construct the stale mirror
+        let in_quick = issues.create(new_issue("in quick")).unwrap();
+        let quick_id = store.list_for_project("p1").unwrap()[2].id.clone();
+        issues.enter_column(&in_quick.id, &quick_id, None).unwrap();
+        let parked = issues.get(&in_quick.id).unwrap().unwrap();
+        assert_eq!(parked.column_id.as_deref(), Some(quick_id.as_str()));
+        assert_eq!(parked.lane, Lane::Backlog); // interim stale lane
         store.delete(&ready.id).unwrap();
-        // The stale pointer was cleared by the FK (SET NULL), not orphaned,
-        // and the remaining positions compacted to 0..n-1.
-        let mirror: Option<String> = store
-            .conn()
-            .unwrap()
-            .query_row(
-                "SELECT column_id FROM issues WHERE id = ?1",
-                [&backfilled.id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(mirror.is_none());
         let after = store.list_for_project("p1").unwrap();
         let names: Vec<&str> = after.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, vec!["Backlog", "Quick", "In Progress", "In Review", "Done"]);
@@ -1537,6 +1557,175 @@ mod tests {
             store.delete("nope"),
             Err(Error::BoardColumnNotFound(_))
         ));
+    }
+
+    /// Fix round (finding 2): with the landing flag on a NON-seeded
+    /// column, a created card's interim lane fallback is Backlog — but
+    /// only the landing column may own it. The seeded Backlog column must
+    /// stay deletable (the board draws it empty); the owner must not.
+    #[test]
+    fn non_seeded_landing_column_owns_its_cards_alone() {
+        let store = seeded_fixture();
+        let issues = issue_store(&store);
+        let triage = store
+            .create(NewColumn {
+                is_landing: true, // moves the flag off Backlog
+                ..new_column("Triage")
+            })
+            .unwrap();
+        assert!(triage.seed_lane.is_none());
+
+        let card = issues.create(new_issue("landed")).unwrap();
+        assert_eq!(card.column_id.as_deref(), Some(triage.id.as_str()));
+        assert_eq!(card.lane, Lane::Backlog); // interim fallback
+
+        // Backlog is empty as far as the board is concerned → deletable
+        // (it is no longer the landing column, so no landing guard).
+        let backlog = store
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .find(|c| c.seed_lane.as_deref() == Some("backlog"))
+            .unwrap();
+        store.delete(&backlog.id).unwrap();
+
+        // Triage owns the card: it cannot be deleted while occupied.
+        // (Landing guard first — move the flag, then the occupancy guard
+        // is what refuses.)
+        store
+            .update(
+                &store.list_for_project("p1").unwrap()[0].id,
+                ColumnPatch {
+                    is_landing: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            store.delete(&triage.id),
+            Err(Error::BoardColumnHasIssues { ref id, count: 1 }) if *id == triage.id
+        ));
+    }
+
+    /// Fix round (finding 1, ADR-0037 item 7 amended): the landing column
+    /// is never an agent_step — entry paths write rows directly and never
+    /// fire `on_enter`, so arriving cards would sit inert.
+    #[test]
+    fn landing_column_cannot_be_an_agent_step() {
+        let store = seeded_fixture();
+
+        // Direction 1 — create an agent step WITH the landing flag.
+        let err = store
+            .create(NewColumn {
+                kind: ColumnKind::AgentStep,
+                is_landing: true,
+                ..new_column("Auto Intake")
+            })
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidBoardColumnInput(_)));
+        assert!(err.to_string().contains("landing column cannot be an agent step"));
+        // The rejected create is atomic: Backlog still holds the flag.
+        let landing: Vec<String> = store
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .filter(|c| c.is_landing)
+            .map(|c| c.name)
+            .collect();
+        assert_eq!(landing, vec!["Backlog"]);
+
+        // Direction 2 — flag an EXISTING agent step as landing.
+        let quick = store.list_for_project("p1").unwrap()[2].clone();
+        assert_eq!(quick.kind, ColumnKind::AgentStep);
+        assert!(matches!(
+            store.update(
+                &quick.id,
+                ColumnPatch {
+                    is_landing: Some(true),
+                    ..Default::default()
+                }
+            ),
+            Err(Error::InvalidBoardColumnInput(_))
+        ));
+
+        // Direction 3 — turn the EXISTING landing column into an agent
+        // step.
+        let backlog = store.list_for_project("p1").unwrap()[0].clone();
+        assert!(backlog.is_landing);
+        assert!(matches!(
+            store.update(
+                &backlog.id,
+                ColumnPatch {
+                    kind: Some(ColumnKind::AgentStep),
+                    ..Default::default()
+                }
+            ),
+            Err(Error::InvalidBoardColumnInput(_))
+        ));
+
+        // Legal transitions still work: a shelf/human gate may hold the
+        // flag, a non-landing column may become an agent step, and an
+        // agent step may become a shelf and THEN take the flag.
+        let triage = store
+            .create(NewColumn {
+                is_landing: true,
+                ..new_column("Triage")
+            })
+            .unwrap();
+        assert!(triage.is_landing);
+        store
+            .update(
+                &backlog.id,
+                ColumnPatch {
+                    kind: Some(ColumnKind::AgentStep), // no longer landing
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let gate = store
+            .create(NewColumn {
+                kind: ColumnKind::HumanGate,
+                is_landing: true,
+                ..new_column("Intake gate")
+            })
+            .unwrap();
+        assert!(gate.is_landing);
+        let demoted = store
+            .update(
+                &quick.id,
+                ColumnPatch {
+                    kind: Some(ColumnKind::Shelf),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(demoted.kind, ColumnKind::Shelf);
+        let promoted = store
+            .update(
+                &quick.id,
+                ColumnPatch {
+                    is_landing: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(promoted.is_landing);
+    }
+
+    /// The seeded board satisfies the landing-kind invariant, so no
+    /// existing data violates it (no migration needed).
+    #[test]
+    fn seeded_board_satisfies_the_landing_kind_invariant() {
+        let store = seeded_fixture();
+        let landing: Vec<BoardColumn> = store
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .filter(|c| c.is_landing)
+            .collect();
+        assert_eq!(landing.len(), 1);
+        assert_eq!(landing[0].name, "Backlog");
+        assert_ne!(landing[0].kind, ColumnKind::AgentStep);
     }
 
     #[test]
