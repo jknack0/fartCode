@@ -4,6 +4,28 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## E2E scenario catalogue + board fix round (2026-08-09)
+
+`docs/e2e-scenarios.md` (e535a1a): 449 scenarios over 8 journeys, 153
+deduped gaps (44 high), authored by reading the implementation not the
+specs. Status vocabulary marks unreachable/not-built honestly. USE IT as
+the gap backlog and the E2E test spec. Highest-severity findings not yet
+ticketed: worktree pool keyed on project NAME (two same-named projects
+share a pool; deleting one destroys the other's worktrees), `curl|bash`
+agent install with no confirm, delete_project does no process teardown,
+task.status never changes so needs-you can never render, unbounded chained
+spend (no depth cap/budget on run-mode column chains). No E2E driver
+exists for the Tauri app; the doc separates backend-command-drivable
+scenarios from ones needing tauri-driver.
+
+E18-07 fix round landed (69262eb) closing all 16 review findings. Notable:
+step events now live in an app-lifetime store subscription (store/steps.ts)
+because BoardView unmounting on dispatch was eating settle-chained
+launches; re-entry PROBES FOR A LIVE AGENT before writing — the fix agent
+correctly argued down my backend-guard lean, since `reattached` answers
+"did the card re-enter its own column", not "is an agent running", and
+TerminalManager is unreachable from &App. Frontend suite: 108 tests.
+
 ## E18-06 + E18-07 landed; board renders from config (2026-08-09)
 
 Commits: 5628ab0 (E18-06 entry paths → is_landing + PM prompt from column
