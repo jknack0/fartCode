@@ -76,6 +76,35 @@ make check       # full merge gate: fmt + clippy + test
   reference) get an ADR in `decisions/` (0001–0004 backfill the first tickets);
   record before merge, not after.
 
+## Tauri commands and the main thread
+
+A non-`async` `#[tauri::command]` compiles to `ExecutionContext::Blocking`: the
+body is inlined into the invoke handler and resolved synchronously. The invoke
+handler runs on the IPC thread, and on macOS that thread is the **main thread** —
+blocking there stalls the NSRunLoop and the window stops repainting. A beachball,
+not a spinner (#80).
+
+- **Subprocess, network, sleep, process spawn, or unbounded filesystem work →
+  `async` + `tauri::async_runtime::spawn_blocking`.** All of `fartcode-git`
+  shells out to the `git` CLI, so every git-backed command qualifies. `async`
+  alone is not the fix — it only relocates the stall onto an async-runtime
+  worker; the blocking body has to leave the thread.
+- **Only cheap, bounded work stays synchronous**: a pure function, an in-memory
+  lookup, a short SQLite statement, one small file read/write.
+- **Never hold the DB connection guard across an `.await`.** `db.conn().lock()`
+  is a non-reentrant mutex — a re-entrant lock deadlocks the app. Take the guard
+  inside the `spawn_blocking` closure and drop it there.
+- Git network ops need a timeout: `Command::output()` has none, so an
+  unreachable remote hangs the app indefinitely.
+
+`fartcode-app/tests/no_blocking_tauri_commands.rs` enforces this. It parses the
+`generate_handler!` list and the command bodies as text — no GUI, no app
+instance — and runs under `cargo test --workspace`, so it gates CI and
+`make check`. A new non-`async` command fails the build until you either make it
+`async` + `spawn_blocking` or add it to the test's `SYNC_OK` list with a
+one-line justification. Adding a `SYNC_OK` entry is a claim that you walked the
+whole call path, not just the command body.
+
 ## Git strategy (decided)
 
 `git2` (libgit2 bindings, v0.21) for worktree lifecycle (`worktree()`, `worktrees()`,
