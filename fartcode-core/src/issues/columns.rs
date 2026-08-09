@@ -1460,15 +1460,24 @@ mod tests {
         assert_eq!(ready.seed_lane.as_deref(), Some("ready"));
 
         // Reproduced scenario (a): an issue whose mirror is NULL sits in
-        // Ready — deleting Ready must BLOCK. (Since E18-04 routes moves
-        // through the enter primitive, the NULL-mirror state comes from
-        // CREATING the card directly in the lane — create never writes
-        // the mirror.) The old column_id-count guard false-allowed this.
+        // Ready — deleting Ready must BLOCK, because occupancy derives
+        // from the authoritative LANE, not the mirror. (Since E18-06
+        // create writes the mirror from birth, the NULL-mirror state is
+        // constructed here — it is the pre-E18 legacy row shape.) The old
+        // column_id-count guard false-allowed this.
         let fresh = issues
             .create(NewIssue {
                 lane: Some(Lane::Ready),
                 ..new_issue("fresh")
             })
+            .unwrap();
+        store
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE issues SET column_id = NULL WHERE id = ?1",
+                [&fresh.id],
+            )
             .unwrap();
         let mirror: Option<String> = store
             .conn()

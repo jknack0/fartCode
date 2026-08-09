@@ -992,6 +992,23 @@ mod tests {
             .unwrap()
     }
 
+    /// A pre-E18 legacy row: sits in a lane with a NULL mirror. (E18-06
+    /// create writes the mirror from birth, so the legacy shape is
+    /// constructed by clearing it.)
+    fn legacy_mirrorless_issue(app: &App, title: &str, lane: Lane) -> Issue {
+        let issue = new_issue_in(app, title, Some(lane));
+        app.db
+            .conn()
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE issues SET column_id = NULL WHERE id = ?1",
+                [&issue.id],
+            )
+            .unwrap();
+        app.issues.get(&issue.id).unwrap().unwrap()
+    }
+
     fn column(app: &App, name: &str) -> BoardColumn {
         ColumnStore::new(app.db.clone())
             .list_for_project("p1")
@@ -1138,7 +1155,7 @@ mod tests {
     #[test]
     fn mirrorless_reentry_reattaches_via_lane_fallback() {
         let app = fixture();
-        let issue = new_issue_in(&app, "legacy", Some(Lane::InProgress));
+        let issue = legacy_mirrorless_issue(&app, "legacy", Lane::InProgress);
         assert!(issue.column_id.is_none());
         with_task(&app, "t1");
         app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
@@ -1476,7 +1493,7 @@ mod tests {
 
         // Legacy mirrorless card (created in the lane, never moved):
         // the seed_lane fallback still settles it.
-        let c = new_issue_in(&app, "legacy", Some(Lane::InProgress));
+        let c = legacy_mirrorless_issue(&app, "legacy", Lane::InProgress);
         assert!(c.column_id.is_none());
         with_task(&app, "t2");
         app.issues.set_linked_task(&c.id, Some("t2")).unwrap();

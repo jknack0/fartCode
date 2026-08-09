@@ -139,7 +139,9 @@ pub struct NewIssue {
     pub title: String,
     pub body: Option<String>,
     pub acceptance: Vec<String>,
-    /// Defaults to [`Lane::Backlog`].
+    /// Overrides the landing target. `None` (every user-facing entry
+    /// path — import, proposal apply, manual add) lands the card on the
+    /// project's `is_landing` column (E18-06).
     pub lane: Option<Lane>,
     pub provider: Option<String>,
     pub model: Option<String>,
@@ -284,6 +286,62 @@ fn issue_from_row(row: &rusqlite::Row) -> rusqlite::Result<Issue> {
     })
 }
 
+/// The seeded column mirroring `lane` in this project, if one exists
+/// (a user may have deleted it). Shared by the lane-addressed move
+/// routing and new-card entry resolution.
+fn seeded_column_for_lane(
+    conn: &rusqlite::Connection,
+    project_id: &str,
+    lane: Lane,
+) -> Result<Option<String>, Error> {
+    Ok(conn
+        .query_row(
+            "SELECT id FROM board_columns WHERE project_id = ?1 AND seed_lane = ?2",
+            rusqlite::params![project_id, lane.as_str()],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+/// Board target for a NEW card (E18-06, #65): every entry path lands on
+/// the project's `is_landing` column instead of hardcoding Backlog.
+///
+/// An explicit lane override maps to that lane's seeded column; with no
+/// override the landing column decides — its `seed_lane` gives the lane,
+/// and a NON-seeded landing column falls back to [`Lane::Backlog`]
+/// because lane cannot represent it (interim until the E18-07 authority
+/// flip; the mirror still points at the real landing column). A project
+/// with no board at all (no columns) keeps the legacy Backlog default
+/// with a NULL mirror.
+fn resolve_entry_target(
+    conn: &rusqlite::Connection,
+    project_id: &str,
+    lane: Option<Lane>,
+) -> Result<(Lane, Option<String>), Error> {
+    if let Some(lane) = lane {
+        return Ok((lane, seeded_column_for_lane(conn, project_id, lane)?));
+    }
+    let landing: Option<(String, Option<String>)> = conn
+        .query_row(
+            "SELECT id, seed_lane FROM board_columns
+              WHERE project_id = ?1 AND is_landing = 1",
+            [project_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    match landing {
+        Some((column_id, seed_lane)) => {
+            let lane = seed_lane
+                .as_deref()
+                .map(Lane::parse)
+                .transpose()?
+                .unwrap_or(Lane::Backlog);
+            Ok((lane, Some(column_id)))
+        }
+        None => Ok((Lane::Backlog, None)),
+    }
+}
+
 /// Would adding `from` blocked-by `to` close a cycle? `edges` maps each
 /// issue to its direct blockers. Cycle iff `from` is reachable from `to`
 /// following existing edges (self-edge is the trivial case).
@@ -318,6 +376,12 @@ impl IssueStore {
             .map_err(|e| Error::Internal(format!("db mutex poisoned: {e}")))
     }
 
+    /// The shared handle, for siblings that need a companion store on the
+    /// same database (e.g. resolving board columns).
+    pub fn db(&self) -> Arc<dyn Db> {
+        self.db.clone()
+    }
+
     /// Issues whose dispatch link points at this task (E17-03 auto-flip).
     pub fn list_by_linked_task(&self, task_id: &str) -> Result<Vec<Issue>, Error> {
         let conn = self.conn()?;
@@ -331,18 +395,23 @@ impl IssueStore {
         Ok(issues)
     }
 
-    /// Creates an issue appended to the end of its lane. Emits `IssueCreated`.
+    /// Creates an issue on the project's LANDING column (E18-06, #65) —
+    /// GitHub import, PM proposal apply, and manual add all arrive here,
+    /// so moving the `is_landing` flag moves every entry path with it.
+    /// `new.lane` overrides the landing target (internal/legacy callers).
+    /// The card carries its column mirror from birth. Appended to the end
+    /// of the resolved lane. Emits `IssueCreated`.
     pub fn create(&self, new: NewIssue) -> Result<Issue, Error> {
         let title = new.title.trim().to_string();
         if title.is_empty() {
             return Err(Error::InvalidIssueInput("title is empty".into()));
         }
-        let lane = new.lane.unwrap_or(Lane::Backlog);
         let acceptance = serialize_versioned(&AcceptanceCriteria {
             items: new.acceptance,
         })?;
         let id = format!("iss_{}", uuid::Uuid::new_v4());
         let mut deduped_id: Option<String> = None;
+        let lane;
         {
             let conn = self.conn()?;
             let project_exists: bool = conn.query_row(
@@ -353,6 +422,8 @@ impl IssueStore {
             if !project_exists {
                 return Err(Error::ProjectNotFound(new.project_id));
             }
+            let column_id;
+            (lane, column_id) = resolve_entry_target(&conn, &new.project_id, new.lane)?;
             // One board card per external issue: importing the same GitHub
             // issue twice returns the existing card instead of a duplicate.
             // (Resolved inside the guard block; returned after it drops so
@@ -370,12 +441,13 @@ impl IssueStore {
                 conn.execute(
                     "INSERT INTO issues
                          (id, project_id, title, body, acceptance, lane, position,
-                          provider, model, prd_path, prd_section, external_ref)
+                          provider, model, prd_path, prd_section, external_ref,
+                          column_id)
                      VALUES (
                          ?1, ?2, ?3, ?4, ?5, ?6,
                          (SELECT COALESCE(MAX(position) + 1, 0) FROM issues
                            WHERE project_id = ?2 AND lane = ?6),
-                         ?7, ?8, ?9, ?10, ?11
+                         ?7, ?8, ?9, ?10, ?11, ?12
                      )",
                     rusqlite::params![
                         id,
@@ -389,6 +461,7 @@ impl IssueStore {
                         new.prd_path,
                         new.prd_section,
                         new.external_ref,
+                        column_id,
                     ],
                 )?;
             }
@@ -550,12 +623,7 @@ impl IssueStore {
         }
         let seeded_column: Option<String> = {
             let conn = self.conn()?;
-            conn.query_row(
-                "SELECT id FROM board_columns WHERE project_id = ?1 AND seed_lane = ?2",
-                rusqlite::params![issue.project_id, lane.as_str()],
-                |row| row.get(0),
-            )
-            .optional()?
+            seeded_column_for_lane(&conn, &issue.project_id, lane)?
         };
         if let Some(column_id) = seeded_column {
             return self.enter_column(id, &column_id, position);
@@ -931,8 +999,15 @@ mod tests {
         assert!(!fetched.blocked);
         assert!(fetched.blockers.is_empty());
         assert!(fetched.linked_task_id.is_none());
-        // Creation never writes the mirror — the first enter/move does.
-        assert!(fetched.column_id.is_none());
+        // E18-06: the card carries its column mirror from birth — here
+        // via the explicit lane override's seeded column.
+        let ready = columns::ColumnStore::new(store.db())
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .find(|c| c.seed_lane.as_deref() == Some("ready"))
+            .unwrap();
+        assert_eq!(fetched.column_id.as_deref(), Some(ready.id.as_str()));
         assert!(fetched.created_at.is_some());
     }
 
@@ -1075,6 +1150,146 @@ mod tests {
     /// exactly like the old `lane != 'done'` string test this ticket
     /// removed. Flag-specific behavior lives in
     /// `counts_as_done_flag_drives_blocked_derivation`.
+    /// E18-06: a new card lands on the project's is_landing column and
+    /// carries the mirror from birth — including when the flag has been
+    /// MOVED to a user column (whose lane fallback is Backlog, since a
+    /// non-seeded column has no lane representation).
+    #[test]
+    fn create_lands_on_the_landing_column() {
+        let store = fixture();
+        let col_store = columns::ColumnStore::new(store.db());
+        let backlog = col_store
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .find(|c| c.is_landing)
+            .unwrap();
+        assert_eq!(backlog.name, "Backlog"); // seeded default
+
+        let card = store.create(new_issue("a")).unwrap();
+        assert_eq!(card.column_id.as_deref(), Some(backlog.id.as_str()));
+        assert_eq!(card.lane, Lane::Backlog);
+
+        // Move the landing flag to a NON-seeded column: new cards follow
+        // it, with the lane falling back to Backlog.
+        let triage = col_store
+            .create(columns::NewColumn {
+                project_id: "p1".into(),
+                name: "Triage".into(),
+                kind: columns::ColumnKind::Shelf,
+                counts_as_done: false,
+                is_landing: true,
+                on_enter: None,
+                on_settle: None,
+                advance_to: None,
+                step_prompt: None,
+                step_provider: None,
+                step_model: None,
+                step_effort: None,
+                step_tools: None,
+            })
+            .unwrap();
+        let card = store.create(new_issue("b")).unwrap();
+        assert_eq!(card.column_id.as_deref(), Some(triage.id.as_str()));
+        assert_eq!(card.lane, Lane::Backlog); // interim, until E18-07
+
+        // Move it to a SEEDED column: the lane follows the seed_lane.
+        let ready = col_store
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .find(|c| c.seed_lane.as_deref() == Some("ready"))
+            .unwrap();
+        col_store
+            .update(
+                &ready.id,
+                columns::ColumnPatch {
+                    is_landing: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let card = store.create(new_issue("c")).unwrap();
+        assert_eq!(card.column_id.as_deref(), Some(ready.id.as_str()));
+        assert_eq!(card.lane, Lane::Ready);
+
+        // An explicit lane override still wins (internal callers), and
+        // still carries that lane's seeded mirror.
+        let card = store
+            .create(NewIssue {
+                lane: Some(Lane::Done),
+                ..new_issue("d")
+            })
+            .unwrap();
+        assert_eq!(card.lane, Lane::Done);
+        let done = col_store
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .find(|c| c.seed_lane.as_deref() == Some("done"))
+            .unwrap();
+        assert_eq!(card.column_id.as_deref(), Some(done.id.as_str()));
+    }
+
+    /// E18-06, GitHub-import path: the import command builds exactly this
+    /// `NewIssue` (external_ref set, no lane hardcode), so imports land
+    /// wherever the flag sits — and dedupe still returns the first card.
+    #[test]
+    fn github_import_shape_lands_on_a_moved_landing_column() {
+        let store = fixture();
+        let col_store = columns::ColumnStore::new(store.db());
+        let triage = col_store
+            .create(columns::NewColumn {
+                project_id: "p1".into(),
+                name: "Triage".into(),
+                kind: columns::ColumnKind::Shelf,
+                counts_as_done: false,
+                is_landing: true,
+                on_enter: None,
+                on_settle: None,
+                advance_to: None,
+                step_prompt: None,
+                step_provider: None,
+                step_model: None,
+                step_effort: None,
+                step_tools: None,
+            })
+            .unwrap();
+
+        let imported = store
+            .create(NewIssue {
+                external_ref: Some("https://github.com/o/r/issues/42".into()),
+                ..new_issue("#42 Fix the flaky test")
+            })
+            .unwrap();
+        assert_eq!(imported.column_id.as_deref(), Some(triage.id.as_str()));
+
+        // Re-import returns the existing card, still on Triage.
+        let again = store
+            .create(NewIssue {
+                external_ref: Some("https://github.com/o/r/issues/42".into()),
+                ..new_issue("#42 Fix the flaky test (again)")
+            })
+            .unwrap();
+        assert_eq!(again.id, imported.id);
+        assert_eq!(again.column_id.as_deref(), Some(triage.id.as_str()));
+    }
+
+    /// A project with no board at all (columns never seeded) keeps the
+    /// legacy Backlog default and a NULL mirror — no entry path breaks.
+    #[test]
+    fn create_without_a_board_falls_back_to_backlog() {
+        let store = fixture();
+        {
+            let conn = store.conn().unwrap();
+            conn.execute("DELETE FROM board_columns WHERE project_id = 'p1'", [])
+                .unwrap();
+        }
+        let card = store.create(new_issue("a")).unwrap();
+        assert_eq!(card.lane, Lane::Backlog);
+        assert!(card.column_id.is_none());
+    }
+
     /// E18-04: the enter primitive writes the mirror always and syncs the
     /// lane only through the reverse seed_lane mapping.
     #[test]

@@ -116,7 +116,9 @@ fn apply_inner(
             title: issue.title.clone(),
             body: issue.body.clone(),
             acceptance: issue.acceptance.clone(),
-            lane: None, // backlog
+            // E18-06: approved issues land on the project's is_landing
+            // column (Backlog by default, wherever the flag has moved).
+            lane: None,
             provider: issue.provider.clone(),
             model: issue.model.clone(),
             prd_path: proposal.prd.as_ref().map(|p| p.path.clone()),
@@ -169,15 +171,28 @@ mod tests {
     fn fixture() -> Arc<IssueStore> {
         let db: Arc<dyn Db> = SqliteDb::init(Some(":memory:")).unwrap();
         let bus = Arc::new(BroadcastEventBus::new(16));
-        db.conn()
-            .lock()
-            .unwrap()
-            .execute(
+        {
+            let conn = db.conn().lock().unwrap();
+            conn.execute(
                 "INSERT INTO projects (id, name, path) VALUES ('p1', 'proj', '/tmp/proj')",
                 [],
             )
             .unwrap();
+            // Real projects carry the seeded board; apply lands cards on
+            // its is_landing column (E18-06).
+            crate::issues::columns::seed_default_columns(&conn, "p1").unwrap();
+        }
         Arc::new(IssueStore::new(db, bus))
+    }
+
+    /// The project's landing column (Backlog on the seeded board).
+    fn landing_column(store: &IssueStore) -> crate::issues::columns::BoardColumn {
+        crate::issues::columns::ColumnStore::new(store.db())
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .find(|c| c.is_landing)
+            .unwrap()
     }
 
     const GOLDEN: &str = r#"{
@@ -236,12 +251,53 @@ mod tests {
         let p = parse_proposal(GOLDEN).unwrap();
         let created = apply_proposal(&store, "p1", &p).unwrap();
         assert_eq!(created.len(), 2);
+        // E18-06: approved issues land on the LANDING column (Backlog on
+        // the seeded board), not on a hardcoded lane.
+        let landing = landing_column(&store);
+        assert!(created
+            .iter()
+            .all(|i| i.column_id.as_deref() == Some(landing.id.as_str())));
         assert!(created.iter().all(|i| i.lane == Lane::Backlog));
         assert_eq!(created[0].prd_path.as_deref(), Some("docs/prds/oauth.md"));
         // Edge wired: Middleware blocked by Token storage (derived).
         let mw = store.get(&created[1].id).unwrap().unwrap();
         assert!(mw.blocked);
         assert_eq!(mw.blockers[0].title, "Token storage");
+    }
+
+    /// E18-06: moving the `is_landing` flag moves the proposal-apply
+    /// entry path with it — no Backlog hardcode survives.
+    #[test]
+    fn apply_lands_on_a_moved_landing_column() {
+        let store = fixture();
+        let columns = crate::issues::columns::ColumnStore::new(store.db());
+        let triage = columns
+            .create(crate::issues::columns::NewColumn {
+                project_id: "p1".into(),
+                name: "Triage".into(),
+                kind: crate::issues::columns::ColumnKind::Shelf,
+                counts_as_done: false,
+                is_landing: true, // moves the flag off Backlog
+                on_enter: None,
+                on_settle: None,
+                advance_to: None,
+                step_prompt: None,
+                step_provider: None,
+                step_model: None,
+                step_effort: None,
+                step_tools: None,
+            })
+            .unwrap();
+        assert_eq!(landing_column(&store).id, triage.id);
+
+        let p = parse_proposal(GOLDEN).unwrap();
+        let created = apply_proposal(&store, "p1", &p).unwrap();
+        assert!(created
+            .iter()
+            .all(|i| i.column_id.as_deref() == Some(triage.id.as_str())));
+        // Triage is non-seeded, so the lane cannot represent it: the
+        // legacy lane falls back to Backlog (interim until E18-07).
+        assert!(created.iter().all(|i| i.lane == Lane::Backlog));
     }
 
     #[test]

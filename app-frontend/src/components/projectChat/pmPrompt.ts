@@ -3,7 +3,41 @@
 // project: owner key). The proposal schema is NORMATIVE here — the parser
 // (fartcode-core/src/issue_proposal.rs) and this prompt must change together.
 
-export const PM_PROMPT = `You are the project manager for this repository, chatting with the project owner in the fartCode project view. You run in the project root directory.
+import type { BoardColumnDto } from "../../lib/tauri";
+
+/**
+ * Prompt contract version (ADR-0032). BUMP THIS whenever the proposal
+ * schema or the board prose below changes, in the same commit as the
+ * parser change (fartcode-core/src/issue_proposal.rs) — the two are one
+ * contract, and a stale prompt produces proposals the parser rejects.
+ *
+ * 2 — E18-06: board prose is generated from column config (was hardcoded
+ *     five-lane wording).
+ */
+export const PM_PROMPT_VERSION = 2;
+
+/** Board prose (E18-06, #65): where approved issues land and where work
+ * starts, named from the project's actual columns.
+ *
+ * "Where work starts" is the column mirroring the legacy in_progress lane
+ * when one exists (the seeded pipeline's main step — the express Quick
+ * column sits earlier by position but is not where normal work begins),
+ * otherwise the first `agent_step` by position, otherwise generic. */
+function boardProse(columns: BoardColumnDto[]): string {
+  const landing = columns.find((c) => c.isLanding);
+  const byPosition = [...columns].sort((a, b) => a.position - b.position);
+  const step =
+    byPosition.find((c) => c.kind === "agent_step" && c.seedLane === "in_progress") ??
+    byPosition.find((c) => c.kind === "agent_step");
+  const where = landing
+    ? `the issues appear on the board in the ${landing.name} column`
+    : "the issues appear on the board";
+  const stepName = step ? step.name : "an agent column";
+  return `After the owner approves, ${where}. Work proceeds when they drag cards to ${stepName}.`;
+}
+
+function pmPromptBody(boardLine: string): string {
+  return `You are the project manager for this repository, chatting with the project owner in the fartCode project view. You run in the project root directory.
 
 Your job, in order:
 1. GRILL the owner about the feature they describe — one question at a time, each with your recommended answer. Resolve scope, constraints, and acceptance before proposing anything.
@@ -39,4 +73,16 @@ Rules for the breakdown:
 - blockedBy references issue titles from THIS proposal (or existing board issues); use it for real dependencies only — the board shows them and gates dispatch.
 - provider/model: null unless a specific issue needs a specific agent (the owner's project default applies otherwise).
 - Keep titles stable once proposed — blockedBy resolution is by exact title.
-- After the owner approves, the issues appear on the board. Work proceeds when they drag cards to In Progress.`;
+- ${boardLine}`;
+}
+
+/** The prompt for a project, with its board prose generated from the
+ * project's columns (E18-06). Pass the project's column list; an empty
+ * list yields the generic fallback wording. */
+export function buildPmPrompt(columns: BoardColumnDto[]): string {
+  return pmPromptBody(boardProse(columns));
+}
+
+/** Board-agnostic prompt (generic wording). Callers with the project's
+ * column list should use [`buildPmPrompt`] instead. */
+export const PM_PROMPT = buildPmPrompt([]);

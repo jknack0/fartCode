@@ -42,12 +42,19 @@ pub struct UpdateIssueRequest {
     pub prd_section: Option<Option<String>>,
 }
 
+/// Manual add (E18-06): the card lands on the project's `is_landing`
+/// column, wherever the flag sits — no lane hardcode anywhere on this
+/// path. `request.lane` is still accepted for wire compatibility (the
+/// lane board sends `"backlog"`) but is validated-and-ignored; the UI
+/// wave drops the field.
 #[tauri::command]
 pub fn issue_create(
     app: State<'_, Arc<App>>,
     request: CreateIssueRequest,
 ) -> Result<Issue, String> {
-    let lane = request
+    // Validate-only: a malformed lane string still errors, so the wire
+    // contract is unchanged for callers that send one.
+    request
         .lane
         .as_deref()
         .map(Lane::parse)
@@ -59,7 +66,7 @@ pub fn issue_create(
             title: request.title,
             body: request.body,
             acceptance: request.acceptance.unwrap_or_default(),
-            lane,
+            lane: None,
             provider: request.provider,
             model: request.model,
             prd_path: request.prd_path,
@@ -232,7 +239,9 @@ pub fn issue_import_github(
             title: mapped.title,
             body: mapped.body,
             acceptance: mapped.acceptance,
-            lane: Some(Lane::Backlog),
+            // E18-06: no lane hardcode — the store lands the card on the
+            // project's is_landing column.
+            lane: None,
             provider: None,
             model: None,
             prd_path: None,
