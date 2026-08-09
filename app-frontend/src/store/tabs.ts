@@ -21,7 +21,7 @@ import {
   terminalSurviving,
 } from "../lib/tauri";
 import { killTerminal } from "../lib/terminals";
-import { isTabKind, scriptTabTitle, type Tab } from "../lib/tab-registry";
+import { isTabKind, type Tab } from "../lib/tab-registry";
 
 export type PaneId = "left" | "right";
 
@@ -112,18 +112,14 @@ export const useTabs = create<TabsState>((set, get) => ({
 
       // Reconcile persisted tabs. Conversation tabs restore as-is — their
       // id IS the conversation id (a DB row), and the view rehydrates the
-      // transcript from acp_history (#33). Lifecycle script tabs whose
-      // backend entry is gone are DROPPED — the run is over (re-running
-      // setup scripts on restart would be surprising) and there is no
-      // shell to respawn; a live lifecycle terminal reattaches as-is.
+      // transcript from acp_history (#33). Persisted lifecycle-script tabs
+      // no longer exist as a kind (7b: the ⌘J drawer owns script
+      // terminals) — sanitizePane drops them via isTabKind.
       const reconcile = async (pane: Pane | undefined): Promise<Pane> => {
         const clean = sanitizePane(pane);
         if (!clean) return { tabs: [], activeId: null };
         const kept: Tab[] = [];
         for (const t of clean.tabs) {
-          if (t.kind === "lifecycle-script" && !liveIds.has(t.id)) {
-            continue;
-          }
           if (t.kind !== "terminal" || liveIds.has(t.id)) {
             kept.push(t);
             continue;
@@ -162,12 +158,12 @@ export const useTabs = create<TabsState>((set, get) => ({
       } catch (e) {
         console.warn("survivor restore failed:", e);
       }
-      // E1-06: surface lifecycle script terminals the backend is running
-      // (or ran — auto-run at task creation) that no tab covers yet. The
-      // retained entry replays the output tail, so the finished run's
-      // output is visible in the tab. Agent terminals (ADR-0033) are
-      // surfaced the same way — dispatch spawns one before navigation, so
-      // the task view must show the live session it just handed off to.
+      // Surface agent terminals the backend is running that no tab covers
+      // yet (ADR-0033) — dispatch spawns one before navigation, so the
+      // task view must show the live session it just handed off to.
+      // Lifecycle terminals are NOT tabs (7b): they route to the scripts
+      // store (store/scripts.ts, hydrated by the task view) and render in
+      // the ⌘J drawer.
       try {
         const terms = await terminalListForTask(taskId);
         const covered = new Set(
@@ -183,13 +179,6 @@ export const useTabs = create<TabsState>((set, get) => ({
                 title: t.agent ?? "Agent",
               };
             }
-            if (t.kind === "lifecycle") {
-              return {
-                id: t.id,
-                kind: "lifecycle-script" as const,
-                title: scriptTabTitle(t.scriptType ?? ""),
-              };
-            }
             return null;
           })
           .filter((t): t is NonNullable<typeof t> => t !== null);
@@ -203,7 +192,7 @@ export const useTabs = create<TabsState>((set, get) => ({
         console.warn("terminal discovery failed:", e);
       }
       // No auto-spawn: a task with nothing running opens on an empty pane
-      // (the task view's empty state offers ⌘T / ⌘D). Agent and lifecycle
+      // (the task view's empty state offers ⌘T / ⌘D / ⌘⇧T). Agent
       // terminals arrive through the discovery above — an unsummoned plain
       // shell is never created on its own. (E2-12 summon-only terminals.)
       if (left.tabs.length === 0) {

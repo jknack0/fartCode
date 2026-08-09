@@ -2,19 +2,28 @@
 // app can actually run, with its default keymap entry and scope. Commands
 // added by later epics register here too (one entry each).
 //
-// Terminal-first: ⌘T opens a shell in the task's worktree; ⌘⇧O opens OMP;
-// ⌘⇧A opens the task's structured-chat conversation (E2-11-6).
+// Terminal-first (design_handoff_v2 5a/5b): ⌘T resumes/reattaches the
+// agent terminal, ⌘⇧T opens a shell in the task's worktree, ⌘J toggles the
+// script drawer, ⌘. interrupts the live agent; ⌘⇧O opens OMP; ⌘⇧A opens
+// the task's structured-chat conversation (E2-11-6).
 import { CommandId, createRegistry, registerCommand } from "./registry";
 import { useSidebar, visibleTaskOrder } from "../store/sidebar";
-import { terminalOpen, terminalOpenAgent, terminalOpenLifecycle } from "./tauri";
-import { scriptTabTitle } from "./tab-registry";
+import {
+  hostDependencyList,
+  terminalListForTask,
+  terminalOpen,
+  terminalOpenAgent,
+  terminalWrite,
+} from "./tauri";
+import { useCommitState } from "../store/commit-state";
 import { useConversations } from "../store/conversations";
+import { useScripts, type ScriptType } from "../store/scripts";
 import { useTabs, type PaneId } from "../store/tabs";
 import { useUi } from "../store/ui";
 
 export const registry = createRegistry();
 
-/** Opens a new terminal tab (⌘T / ⌘⇧T — the only "new tab"). */
+/** Opens a new terminal tab (⌘⇧T / ⌘D — the only "new tab"). */
 async function openTerminalTab(taskId: string, pane: PaneId): Promise<void> {
   const terminalId = await terminalOpen(taskId, 24, 80);
   useTabs.getState().addTab(taskId, pane, {
@@ -24,36 +33,56 @@ async function openTerminalTab(taskId: string, pane: PaneId): Promise<void> {
   });
 }
 
-/** Opens (or focuses) the task's lifecycle script tab (`setup`/`run`/
- * `teardown`, E1-06): a terminal running the script with the FARTCODE_* env
- * contract. An in-flight run reattaches (backend dedupe); a finished run's
- * tab stays with its output tail. */
-export async function openLifecycleScriptTab(
-  taskId: string,
-  pane: PaneId,
-  scriptType: string,
-): Promise<void> {
-  const title = scriptTabTitle(scriptType);
-  const tabs = useTabs.getState();
-  const paneState = tabs.panesByTask[taskId]?.[pane];
-  const existing = paneState?.tabs.find(
-    (t) => t.kind === "lifecycle-script" && t.title === title,
-  );
-  if (existing) {
-    tabs.setActiveTab(taskId, pane, existing.id);
+/** Opens the ⌘J drawer on a script's tab (7b — lifecycle scripts live in
+ * the drawer, never in the tab bar), starting the script only when it has
+ * never run. Reruns are explicit (`r` in the drawer / rerun label). */
+export function openLifecycleScript(taskId: string, scriptType: ScriptType): void {
+  const ui = useUi.getState();
+  ui.setDrawerScript(scriptType);
+  ui.setDrawerOpen(true);
+  const run = useScripts.getState().byTask[taskId]?.[scriptType];
+  if (!run?.terminalId) {
+    void useScripts
+      .getState()
+      .rerun(taskId, scriptType)
+      .catch((e) => console.error("script start failed", e));
+  }
+}
+
+/** Resumes the task's agent terminal (⌘T, ADR-0033: one agent terminal per
+ * task). Setup gates it (7b): while setup runs the resume refuses (the
+ * empty state shows "Waiting on setup before starting…"), and after a
+ * failed setup it opens the drawer on setup instead of spawning. A live
+ * agent terminal reattaches under its own agent; otherwise the
+ * default-agent app setting (7d `isDefault`) picks who to start, falling
+ * back to claude. The tabs store dedupes by terminal id, so a second
+ * resume focuses the existing tab. */
+async function resumeAgentTab(taskId: string, pane: PaneId): Promise<void> {
+  const setup = useScripts.getState().byTask[taskId]?.setup;
+  if (setup?.running) return; // deferred — the backend launches on green
+  if (setup && !setup.running && setup.exitCode !== null && setup.exitCode !== 0) {
+    openLifecycleScript(taskId, "setup");
     return;
   }
-  const terminalId = await terminalOpenLifecycle(taskId, scriptType, 24, 80);
+  const terms = await terminalListForTask(taskId).catch(() => []);
+  let agent = terms.find((t) => t.kind === "agent" && t.running)?.agent ?? null;
+  if (!agent) {
+    const deps = await hostDependencyList().catch(() => []);
+    agent = deps.find((d) => d.isDefault)?.providerId ?? "claude";
+  }
+  const terminalId = await terminalOpenAgent(taskId, agent, 24, 80);
+  useScripts.getState().noteAgentSpawn(taskId, terminalId);
   useTabs.getState().addTab(taskId, pane, {
     id: terminalId,
-    kind: "lifecycle-script",
-    title,
+    kind: "terminal",
+    title: agent,
   });
 }
 
 /** Opens an OMP agent terminal in the task's worktree (⌘⇧O). */
 async function openOmpTab(taskId: string, pane: PaneId): Promise<void> {
   const terminalId = await terminalOpenAgent(taskId, "omp", 24, 80);
+  useScripts.getState().noteAgentSpawn(taskId, terminalId);
   useTabs.getState().addTab(taskId, pane, {
     id: terminalId,
     kind: "terminal",
@@ -115,15 +144,16 @@ export function registerAllCommands(): void {
   });
   registerCommand(registry, {
     id: "toggle-sidebar",
-    label: "Toggle sidebar",
-    defaultKeys: ["⌘B"],
+    label: "Toggle project flyout",
+    defaultKeys: ["⌘B", "⌘\\"],
     scope: "global",
     run: () => useUi.getState().toggleSidebarVisible(),
   });
   registerCommand(registry, {
     id: "toggle-right-panel",
     label: "Toggle resource monitor panel",
-    defaultKeys: ["⌘."],
+    // ⌘. is stop-agent (FLOWS.md §3.5 settled keymap).
+    defaultKeys: ["⌘⇧."],
     scope: "global",
     run: () => {
       const ui = useUi.getState();
@@ -155,6 +185,40 @@ export function registerAllCommands(): void {
     },
   });
 
+  // -- git plumbing (5d: palette-only — the Changes footer carries no
+  // buttons, `fetch / pull / push in ⌘K` is the contract) -------------------
+  const activeWorkspaceId = (): string | null => {
+    const sb = useSidebar.getState();
+    const task = sb.selectedTaskId
+      ? Object.values(sb.tasksByProject)
+          .flat()
+          .find((t) => t.id === sb.selectedTaskId)
+      : null;
+    const project = sb.projects.find((p) => p.id === sb.selectedProjectId);
+    return task?.workspaceId ?? project?.repositoryWorkspaceId ?? null;
+  };
+  const gitVerb = (
+    id: Extract<CommandId, "git-fetch" | "git-pull" | "git-push" | "git-publish">,
+    label: string,
+    run: (workspaceId: string) => Promise<unknown>,
+  ) => {
+    registerCommand(registry, {
+      id,
+      label,
+      defaultKeys: [],
+      scope: "global",
+      run: () => {
+        const workspaceId = activeWorkspaceId();
+        if (!workspaceId) return;
+        void run(workspaceId).catch((e) => console.error(`${label} failed`, e));
+      },
+    });
+  };
+  gitVerb("git-fetch", "Git: fetch", (w) => useCommitState.getState().fetch(w));
+  gitVerb("git-pull", "Git: pull", (w) => useCommitState.getState().pull(w));
+  gitVerb("git-push", "Git: push", (w) => useCommitState.getState().push(w));
+  gitVerb("git-publish", "Git: publish branch", (w) => useCommitState.getState().publish(w));
+
   // -- project view -----------------------------------------------------------
   registerCommand(registry, {
     id: "toggle-project-chat",
@@ -177,10 +241,12 @@ export function registerAllCommands(): void {
     id: "add-task",
     label: "Add task",
     defaultKeys: ["⌘N"],
-    scope: "project-view",
+    // Global, not project-view: the flyout advertises ⌘N from the task view
+    // too. run() already guards on a selected project.
+    scope: "global",
     run: () => {
       const sb = useSidebar.getState();
-      if (sb.selectedProjectId) void sb.createTask(sb.selectedProjectId);
+      if (sb.selectedProjectId) useUi.getState().setCreateTaskTarget(sb.selectedProjectId);
     },
   });
 
@@ -201,9 +267,24 @@ export function registerAllCommands(): void {
     },
   });
   registerCommand(registry, {
+    id: "resume-agent",
+    label: "Resume the agent",
+    defaultKeys: ["⌘T"],
+    scope: "task-view",
+    run: () => {
+      const sb = useSidebar.getState();
+      if (!sb.selectedTaskId) return;
+      const taskId = sb.selectedTaskId;
+      const pane = useTabs.getState().activePaneByTask[taskId] ?? "left";
+      void resumeAgentTab(taskId, pane).catch((e) =>
+        console.error("agent resume failed", e),
+      );
+    },
+  });
+  registerCommand(registry, {
     id: "new-terminal",
     label: "New terminal",
-    defaultKeys: ["⌘T", "⌘⇧T"],
+    defaultKeys: ["⌘⇧T"],
     scope: "task-view",
     run: () => {
       const sb = useSidebar.getState();
@@ -213,6 +294,34 @@ export function registerAllCommands(): void {
       void openTerminalTab(taskId, pane).catch((e) =>
         console.error("terminal open failed", e),
       );
+    },
+  });
+  registerCommand(registry, {
+    id: "toggle-drawer",
+    label: "Toggle script drawer",
+    defaultKeys: ["⌘J"],
+    scope: "task-view",
+    run: () => {
+      const ui = useUi.getState();
+      ui.setDrawerOpen(!ui.drawerOpen);
+    },
+  });
+  registerCommand(registry, {
+    id: "stop-agent",
+    label: "Stop agent",
+    defaultKeys: ["⌘."],
+    scope: "task-view",
+    // SIGINT to the live agent terminal — the terminal shows the agent's
+    // own interrupt handling; the task view never fakes a stopped state.
+    run: () => {
+      const sb = useSidebar.getState();
+      if (!sb.selectedTaskId) return;
+      void terminalListForTask(sb.selectedTaskId)
+        .then((terms) => {
+          const live = terms.find((t) => t.kind === "agent" && t.running);
+          if (live) return terminalWrite(live.id, "\x03");
+        })
+        .catch((e) => console.error("stop agent failed", e));
     },
   });
   registerCommand(registry, {
@@ -339,7 +448,7 @@ export function registerAllCommands(): void {
   registerCommand(registry, {
     id: "previous-tab",
     label: "Previous tab (wrap)",
-    defaultKeys: ["Ctrl+⇧+Tab"],
+    defaultKeys: ["Ctrl+Shift+Tab"],
     scope: "task-view",
     run: () => {
       const sb = useSidebar.getState();

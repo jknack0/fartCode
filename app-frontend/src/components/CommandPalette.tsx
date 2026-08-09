@@ -1,31 +1,62 @@
-// Command palette (E1-09): ⌘K finds anything — commands + FTS search results
-// over projects/tasks. Selecting a result runs its action.
+// Command palette (E1-09): ⌘K finds anything — every registered command
+// (live from the keybinding registry, E14-01, so remaps show up here) plus
+// FTS results over projects/tasks. Empty query = the full command list in
+// registration order (global → project → task); typing fuzzy-filters it.
 import { useEffect, useRef, useState } from "react";
-import { hint } from "../lib/useCommands";
+import { bindings } from "../lib/useCommands";
 import {
   SearchResultDto,
   getResourceMonitorEnabled,
+  restoreTask,
   search as apiSearch,
   setResourceMonitorEnabled,
 } from "../lib/tauri";
+import { CommandId } from "../lib/registry";
 import { useSidebar } from "../store/sidebar";
 import { useUi } from "../store/ui";
 
-interface PaletteCommand {
-  id: string;
+/** Subsequence match with ranking: prefix > substring > scattered letters.
+ * Returns null when the query doesn't match at all. */
+function fuzzyScore(query: string, text: string): number | null {
+  const q = query.toLowerCase();
+  const t = text.toLowerCase();
+  if (t.startsWith(q)) return 100;
+  const idx = t.indexOf(q);
+  if (idx >= 0) return 80 - idx;
+  let qi = 0;
+  let streaks = 0;
+  let prev = -2;
+  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (t[ti] === q[qi]) {
+      if (prev === ti - 1) streaks++;
+      prev = ti;
+      qi++;
+    }
+  }
+  return qi === q.length ? 40 + streaks : null;
+}
+
+interface PaletteEntry {
+  key: string;
   title: string;
-  hint?: string;
+  /** Chord shown as a key cap; plain text (item type) renders unbordered. */
+  hint: string;
+  hintIsChord: boolean;
   run: () => void;
 }
+
+/** Commands the palette never lists: itself, and modal-scope keys (Esc). */
+const HIDDEN: ReadonlySet<CommandId> = new Set(["open-command-palette", "close-modal"]);
 
 export default function CommandPalette() {
   const open = useUi((s) => s.paletteOpen);
   useUi((s) => s.bindingsVersion);
   const setOpen = useUi((s) => s.setPaletteOpen);
-  const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
   const setResourceOpen = useUi((s) => s.setResourceOpen);
   const selectProject = useSidebar((s) => s.selectProject);
   const selectTask = useSidebar((s) => s.selectTask);
+  const selectedProjectId = useSidebar((s) => s.selectedProjectId);
+  const selectedTaskId = useSidebar((s) => s.selectedTaskId);
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResultDto[]>([]);
@@ -55,62 +86,88 @@ export default function CommandPalette() {
     return () => clearTimeout(t);
   }, [query, open]);
 
-  const commands: PaletteCommand[] = [
-    {
-      id: "new-project",
-      title: "New project…",
-      hint: hint("new-project") || "⌘⇧N",
-      run: () => {
-        setOpen(false);
-        setCreateProjectOpen(true);
-      },
-    },
-    {
-      id: "toggle-resource",
-      title: "Toggle resource monitor",
-      hint: "CPU / memory panel",
-      run: () => {
-        // Enable -> open the panel; disable -> close it. Opening on disable
-        // would pop a panel that immediately renders nothing.
-        getResourceMonitorEnabled()
-          .then((enabled) => {
-            const next = !enabled;
-            return setResourceMonitorEnabled(next).then(() => setResourceOpen(next));
-          })
-          .catch(() => {});
-        setOpen(false);
-      },
-    },
-  ];
+  if (!open) return null;
 
-  const combined = [
-    ...commands.map((c, i) => ({ kind: "command" as const, index: i, title: c.title, hint: c.hint })),
-    ...results.map((r) => ({
-      kind: "result" as const,
-      title: r.title,
-      hint: r.itemType,
-      item: r,
-    })),
-  ];
+  // Every registry command valid in the current view context (the palette
+  // itself is the open modal, so modal state is ignored here).
+  const available = bindings().filter((b) => {
+    if (HIDDEN.has(b.id)) return false;
+    if (b.scope === "modal") return false;
+    if (b.scope === "project-view") return selectedProjectId !== null;
+    if (b.scope === "task-view") return selectedTaskId !== null;
+    return true; // global / app-view / editor
+  });
 
-  const run = (i: number) => {
-    const entry = combined[i];
-    if (!entry) return;
-    if (entry.kind === "command") {
-      commands[entry.index].run();
-      return;
-    }
-    const item = entry.item!;
+  const runCommand = (run: () => void) => {
     setOpen(false);
-    if (item.itemType === "project" && item.itemId) {
-      selectProject(item.itemId);
-    } else if (item.itemType === "task" && item.itemId) {
-      if (item.projectId) selectProject(item.projectId);
-      selectTask(item.itemId);
-    }
+    run();
   };
 
-  if (!open) return null;
+  let commandEntries: PaletteEntry[] = available.map((b) => ({
+    key: b.id,
+    title: b.label,
+    hint: b.hint,
+    hintIsChord: b.hint !== "",
+    run: () => runCommand(b.run),
+  }));
+
+  // Settings-backed special case the registry can't express: enabling the
+  // resource monitor flips a persisted setting, not just a panel.
+  commandEntries.push({
+    key: "toggle-resource-monitor",
+    title: "Toggle resource monitor (enable/disable)",
+    hint: "",
+    hintIsChord: false,
+    run: () => {
+      getResourceMonitorEnabled()
+        .then((enabled) => {
+          const next = !enabled;
+          return setResourceMonitorEnabled(next).then(() => setResourceOpen(next));
+        })
+        .catch(() => {});
+      setOpen(false);
+    },
+  });
+
+  const q = query.trim();
+  if (q) {
+    commandEntries = commandEntries
+      .map((e) => ({ e, score: fuzzyScore(q, e.title) }))
+      .filter((x): x is { e: PaletteEntry; score: number } => x.score !== null)
+      .sort((a, b) => b.score - a.score)
+      .map((x) => x.e);
+  }
+
+  const entries: PaletteEntry[] = [
+    ...commandEntries,
+    ...results.map((r) => {
+      // 7a: archived tasks stay findable here — opening one restores it
+      // ("restore via ⌘K"); the task:restored event refreshes the stores.
+      const archived =
+        r.itemType === "task" &&
+        Object.values(useSidebar.getState().tasksByProject)
+          .flat()
+          .some((t) => t.id === r.itemId && t.archivedAt);
+      return {
+        key: `res-${r.itemId}`,
+        title: r.title,
+        hint: archived ? `${r.itemType} · archived — ↵ restores` : r.itemType,
+        hintIsChord: false,
+        run: () => {
+          setOpen(false);
+          if (r.itemType === "project" && r.itemId) {
+            selectProject(r.itemId);
+          } else if (r.itemType === "task" && r.itemId) {
+            if (archived && r.itemId) void restoreTask(r.itemId).catch(() => {});
+            if (r.projectId) selectProject(r.projectId);
+            selectTask(r.itemId);
+          }
+        },
+      };
+    }),
+  ];
+
+  const run = (i: number) => entries[i]?.run();
 
   return (
     <div className="modal-backdrop" onClick={() => setOpen(false)}>
@@ -118,7 +175,8 @@ export default function CommandPalette() {
         <input
           ref={inputRef}
           value={query}
-          placeholder="Search projects, tasks, commands…"
+          placeholder="Type a command or search projects and tasks…"
+          aria-label="Command palette"
           onChange={(e) => {
             setQuery(e.target.value);
             setSelected(0);
@@ -126,7 +184,7 @@ export default function CommandPalette() {
           onKeyDown={(e) => {
             if (e.key === "ArrowDown") {
               e.preventDefault();
-              setSelected((s) => Math.min(s + 1, combined.length - 1));
+              setSelected((s) => Math.min(s + 1, entries.length - 1));
             } else if (e.key === "ArrowUp") {
               e.preventDefault();
               setSelected((s) => Math.max(s - 1, 0));
@@ -135,24 +193,28 @@ export default function CommandPalette() {
             }
           }}
         />
-        {query.trim() === "" ? (
-          <p className="palette-hint">↑↓ move · ↵ run · esc close — type to search the index</p>
-        ) : (
-          <ul className="palette-results">
-            {combined.map((c, i) => (
-              <li
-                key={c.kind === "command" ? `cmd-${c.index}` : `res-${c.item!.itemId}`}
-                className={i === selected ? "selected" : ""}
-                onMouseEnter={() => setSelected(i)}
-                onClick={() => run(i)}
-              >
-                <span className="palette-title">{c.title}</span>
-                <span className="palette-hint">{c.hint}</span>
-              </li>
-            ))}
-            {combined.length === 0 && <li className="empty">No matches</li>}
-          </ul>
-        )}
+        <ul className="palette-results">
+          {entries.map((entry, i) => (
+            <li
+              key={entry.key}
+              className={i === selected ? "selected" : ""}
+              onMouseEnter={() => setSelected(i)}
+              onClick={() => run(i)}
+            >
+              <span className="palette-title">{entry.title}</span>
+              {entry.hint &&
+                (entry.hintIsChord ? (
+                  <span className="kbd-hint">{entry.hint}</span>
+                ) : (
+                  <span className="palette-hint">{entry.hint}</span>
+                ))}
+            </li>
+          ))}
+          {entries.length === 0 && <li className="empty">No matches</li>}
+        </ul>
+        <p className="palette-hint">
+          ↑↓ move · ↵ run · esc close — every shortcut, live from your keymap
+        </p>
       </div>
     </div>
   );

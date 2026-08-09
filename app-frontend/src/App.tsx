@@ -7,11 +7,9 @@ import ChangesSidebar from "./components/ChangesSidebar";
 import CommandPalette from "./components/CommandPalette";
 import Modals from "./components/Modals";
 import Onboarding from "./components/Onboarding";
-import ProjectHeader from "./components/ProjectHeader";
 import ProjectView from "./components/ProjectView";
 import ResourceMonitor from "./components/ResourceMonitor";
-import Sidebar from "./components/Sidebar";
-import TaskHeader from "./components/TaskHeader";
+import Nav from "./components/Nav";
 import TaskView from "./components/TaskView";
 import { useCommands, hint } from "./lib/useCommands";
 import { wireChangesEvents } from "./store/changes";
@@ -21,6 +19,7 @@ import { useConversations, wireConversationEvents } from "./store/conversations"
 import { wireTabsEvents } from "./store/tabs";
 import { wireLineCommentEvents } from "./store/line-comments";
 import { wirePrEvents } from "./store/pr";
+import { wireStepEvents } from "./store/steps";
 
 function App() {
   const load = useSidebar((s) => s.load);
@@ -37,6 +36,11 @@ function App() {
     const unlistenDiffs = wireDiffsEvents();
     const unlistenComments = wireLineCommentEvents();
     const unlistenPr = wirePrEvents();
+    // App-lifetime on purpose: `step:launch` is a directive, and the act of
+    // carrying it out navigates to the task view. A listener owned by the
+    // board would unmount itself the moment it fired, losing every
+    // settle-chained launch (and the step-done/queued flags with it).
+    const unlistenSteps = wireStepEvents();
     return () => {
       unlisten();
       unlistenTabs();
@@ -45,6 +49,7 @@ function App() {
       unlistenDiffs();
       unlistenComments();
       unlistenPr();
+      unlistenSteps();
     };
   }, [load]);
   const ensureConversations = useConversations((s) => s.ensure);
@@ -56,13 +61,7 @@ function App() {
 
   return (
     <main className="shell">
-      <Sidebar />
-      {selectedProjectId && !selectedTaskId && (
-        <ProjectHeader projectId={selectedProjectId} />
-      )}
-      {selectedTaskId && selectedProjectId && (
-        <TaskHeader taskId={selectedTaskId} projectId={selectedProjectId} />
-      )}
+      <Nav />
       <Onboarding />
       <CommandPalette />
       <Modals />
@@ -75,7 +74,9 @@ function App() {
           <ProjectView projectId={selectedProjectId} />
         ) : (
           <div className="placeholder">
-            <h1>fartCode</h1>
+            <h1 className="brand">
+              fart<span className="brand-accent">Code</span>
+            </h1>
             <p className="muted">
               Add a project to get started — press{" "}
               <span className="kbd-hint">{hint("new-project") || "⌘⇧N"}</span>{" "}

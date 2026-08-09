@@ -1,155 +1,89 @@
-// Git footer (E4-08): everyday verbs under the commit card — Fetch / Pull /
-// Push / Publish, plus the add-remote mini-form when the repo has no
-// remotes. State comes from the shared CommitState DTO (git_commit_state);
-// every action refetches it so affordances flip immediately (ticket:
-// "footer flips to push/pull afterward"). Errors surface inline until the
-// next successful action — the repo has no toast system.
+// Changes-panel footer (restyled to design_handoff_v2 §5d): the everyday
+// git verbs (fetch/pull/push/publish) left this footer for the ⌘K palette —
+// what remains is the mono hint line, the add-remote mini-form for the
+// no-remote edge (still driven by the shared CommitState DTO), and inline
+// errors (the repo has no toast system).
 import { useState } from "react";
 import { useChanges } from "../store/changes";
 import { useCommitState } from "../store/commit-state";
-
-type Action = "fetch" | "pull" | "push" | "publish" | "add-remote";
+import { hint } from "../lib/useCommands";
+import { useUi } from "../store/ui";
 
 export default function GitFooter({ workspaceId }: { workspaceId: string }) {
   const stateEntry = useCommitState((s) => s.byWorkspace[workspaceId]);
+  // Re-render when bindings change so the palette chord in the hint stays live.
+  useUi((s) => s.bindingsVersion);
 
-  const [busy, setBusy] = useState<Action | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [remoteName, setRemoteName] = useState("origin");
   const [remoteUrl, setRemoteUrl] = useState("");
   const st = stateEntry?.state ?? null;
-  if (!st) return null;
 
-
-  // Disabled matrix (ticket): driven by repo state, not by the UI.
-  const fetchDisabled = busy !== null || !st.hasRemote;
-  const pullDisabled = busy !== null || !st.upstream || st.behind === 0;
-  const pushDisabled =
-    busy !== null || !st.hasRemote || !st.branch || (!st.upstream && !st.published);
-  const publishVisible = st.branch !== null && st.hasRemote && !st.upstream;
-
-  const run = async (action: Action, fn: () => Promise<unknown>) => {
+  const addDisabled = busy || remoteName.trim() === "" || remoteUrl.trim() === "";
+  const addRemote = async () => {
+    if (addDisabled) return;
     setError(null);
-    setBusy(action);
+    setBusy(true);
     try {
-      await fn();
+      await useCommitState.getState().addRemote(workspaceId, remoteName, remoteUrl);
+      setRemoteUrl("");
       void useChanges.getState().refetch(workspaceId);
     } catch (e) {
       setError(String(e));
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
-  const label = (base: string, action: Action) => (busy === action ? "…" : base);
+  const paletteKey = hint("open-command-palette") || "⌘K";
 
   return (
-    <div className="git-footer">
-      <div className="git-footer-row">
-        <span className="git-branch" title={st.upstream ?? "no upstream"}>
-          {st.branch ?? "(detached)"}
-          {st.upstream && (
-            <span className="git-counts">
-              {st.ahead > 0 && <span className="git-ahead">↑{st.ahead}</span>}
-              {st.behind > 0 && <span className="git-behind">↓{st.behind}</span>}
-            </span>
-          )}
-        </span>
-        <span className="git-footer-actions">
-          <button
-            className="git-footer-btn"
-            disabled={fetchDisabled}
-            title={st.hasRemote ? `Fetch from ${st.remote}` : "No remote configured"}
-            onClick={() =>
-              void run("fetch", () => useCommitState.getState().fetch(workspaceId))
-            }
-          >
-            {label("Fetch", "fetch")}
-          </button>
-          <button
-            className="git-footer-btn"
-            disabled={pullDisabled}
-            title={
-              !st.upstream
-                ? "No upstream configured"
-                : st.behind === 0
-                  ? "Up to date"
-                  : `Fast-forward ${st.behind} commit${st.behind === 1 ? "" : "s"} from ${st.upstream}`
-            }
-            onClick={() =>
-              void run("pull", () => useCommitState.getState().pull(workspaceId))
-            }
-          >
-            {label("Pull", "pull")}
-          </button>
-          <button
-            className="git-footer-btn"
-            disabled={pushDisabled}
-            title={
-              !st.hasRemote
-                ? "No remote configured"
-                : !st.branch
-                  ? "HEAD is detached"
-                  : st.ahead > 0
-                    ? `Push ${st.ahead} commit${st.ahead === 1 ? "" : "s"} to ${st.remote}`
-                    : "Nothing to push"
-            }
-            onClick={() =>
-              void run("push", () => useCommitState.getState().push(workspaceId))
-            }
-          >
-            {label("Push", "push")}
-          </button>
-          {publishVisible && (
-            <button
-              className="git-footer-btn"
-              disabled={busy !== null}
-              title={`Push and set upstream on ${st.remote}`}
-              onClick={() =>
-                void run("publish", () => useCommitState.getState().publish(workspaceId))
-              }
-            >
-              {label("Publish", "publish")}
-            </button>
-          )}
-        </span>
-      </div>
-      {st.remotes.length === 0 && (
-        <div className="git-footer-row git-add-remote">
+    <div className="fc-git-footer">
+      {st && st.remotes.length === 0 && (
+        <div className="fc-add-remote">
           <input
-            className="git-remote-name"
-            placeholder="remote name"
+            className="fc-remote-name"
+            aria-label="Remote name"
+            placeholder="remote"
             value={remoteName}
-            disabled={busy === "add-remote"}
+            disabled={busy}
             onChange={(e) => setRemoteName(e.target.value)}
           />
           <input
-            className="git-remote-url"
+            className="fc-remote-url"
+            aria-label="Remote URL"
             placeholder="remote URL"
             value={remoteUrl}
-            disabled={busy === "add-remote"}
+            disabled={busy}
             onChange={(e) => setRemoteUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                void addRemote();
+              }
+            }}
           />
-          <button
-            className="git-footer-btn"
-            disabled={busy !== null || remoteName.trim() === "" || remoteUrl.trim() === ""}
+          <span
+            role="button"
+            className="fc-add-remote-btn"
+            aria-disabled={addDisabled}
             title="Add this remote"
-            onClick={() =>
-              void run("add-remote", async () => {
-                await useCommitState.getState().addRemote(workspaceId, remoteName, remoteUrl);
-                setRemoteUrl("");
-              })
-            }
+            onClick={() => void addRemote()}
           >
-            {label("Add remote", "add-remote")}
-          </button>
+            {busy ? "…" : "add"}
+          </span>
         </div>
       )}
       {error && (
-        <p className="git-footer-error" role="alert">
+        <p className="fc-footer-error" role="alert">
           {error}
         </p>
       )}
+      <p className="fc-footer-hint">
+        d discards after a confirm · fetch / pull / push in {paletteKey}
+      </p>
     </div>
   );
 }

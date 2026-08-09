@@ -2,18 +2,11 @@
 // scope). The keybinding dispatch reads this store to decide whether a
 // modal scope is active and what Esc closes first.
 import { create } from "zustand";
+import type { ScriptType } from "./scripts";
 
 export interface DeleteTaskTarget {
   projectId: string;
   taskId: string;
-}
-
-/** Pending discard confirmation (E4-03): the modal shows the path list,
- * with an extra warning when any path is untracked (deletes the file). */
-export interface DiscardTarget {
-  workspaceId: string;
-  paths: string[];
-  hasUntracked: boolean;
 }
 
 /** Pending "Create Task from comment" dialog (E4-10, §14): everything the
@@ -42,14 +35,20 @@ interface UiState {
   /** Open card-detail issue id (E17-02): takes precedence over the chat
    * panel in the project view's right region; null shows the chat. */
   boardDetailIssueId: string | null;
+  /** ⌘J drawer (7b): bottom sheet on the task view with the lifecycle
+   * script terminals. Not a modal — Esc belongs to the terminal. */
+  drawerOpen: boolean;
+  /** Which script's tab the drawer shows. */
+  drawerScript: ScriptType;
   /** App settings (E14-01 shortcut customization lives here). */
   settingsOpen: boolean;
   /** Project settings modal (opened from the sidebar gear). */
   projectSettingsOpen: boolean;
   sidebarVisible: boolean;
   deleteTaskTarget: DeleteTaskTarget | null;
+  /** Project id the create-task dialog targets (null = closed). */
+  createTaskTarget: string | null;
   deleteProjectTarget: string | null;
-  discardTarget: DiscardTarget | null;
   quickTaskTarget: QuickTaskTarget | null;
   onboardingOpen: boolean;
   /** Bumped when keybindings change so hint renderers re-read the registry
@@ -63,19 +62,39 @@ interface UiState {
   setProjectChatOpen: (open: boolean) => void;
   setTaskChatOpen: (open: boolean) => void;
   setBoardDetailIssueId: (id: string | null) => void;
+  setDrawerOpen: (open: boolean) => void;
+  setDrawerScript: (script: ScriptType) => void;
   setSettingsOpen: (open: boolean) => void;
   setProjectSettingsOpen: (open: boolean) => void;
   toggleSidebarVisible: () => void;
   setSidebarVisible: (visible: boolean) => void;
   setDeleteTaskTarget: (target: DeleteTaskTarget | null) => void;
+  setCreateTaskTarget: (projectId: string | null) => void;
   setDeleteProjectTarget: (id: string | null) => void;
-  setDiscardTarget: (target: DiscardTarget | null) => void;
   setQuickTaskTarget: (target: QuickTaskTarget | null) => void;
   setOnboardingOpen: (open: boolean) => void;
   bumpBindings: () => void;
   /** Esc handling (modal scope): close the topmost modal. */
   closeTopModal: () => void;
   modalOpen: () => boolean;
+}
+
+/** The flyout is pinned; its collapsed state persists across relaunches
+ * (v1 README: "⌘\ toggles it and the state persists"). */
+const SIDEBAR_KEY = "fc:sidebarVisible";
+function persistSidebar(visible: boolean): void {
+  try {
+    localStorage.setItem(SIDEBAR_KEY, visible ? "1" : "0");
+  } catch {
+    /* storage unavailable — in-memory only */
+  }
+}
+function initialSidebarVisible(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_KEY) !== "0";
+  } catch {
+    return true;
+  }
 }
 
 export const useUi = create<UiState>((set, get) => ({
@@ -86,12 +105,14 @@ export const useUi = create<UiState>((set, get) => ({
   projectChatOpen: true,
   taskChatOpen: false,
   boardDetailIssueId: null,
+  drawerOpen: false,
+  drawerScript: "setup",
   settingsOpen: false,
   projectSettingsOpen: false,
-  sidebarVisible: true,
+  sidebarVisible: initialSidebarVisible(),
   deleteTaskTarget: null,
+  createTaskTarget: null,
   deleteProjectTarget: null,
-  discardTarget: null,
   quickTaskTarget: null,
   onboardingOpen: false,
   bindingsVersion: 0,
@@ -103,13 +124,22 @@ export const useUi = create<UiState>((set, get) => ({
   setProjectChatOpen: (projectChatOpen) => set({ projectChatOpen }),
   setTaskChatOpen: (taskChatOpen) => set({ taskChatOpen }),
   setBoardDetailIssueId: (boardDetailIssueId) => set({ boardDetailIssueId }),
+  setDrawerOpen: (drawerOpen) => set({ drawerOpen }),
+  setDrawerScript: (drawerScript) => set({ drawerScript }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setProjectSettingsOpen: (projectSettingsOpen) => set({ projectSettingsOpen }),
-  toggleSidebarVisible: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
-  setSidebarVisible: (sidebarVisible) => set({ sidebarVisible }),
+  toggleSidebarVisible: () =>
+    set((s) => {
+      persistSidebar(!s.sidebarVisible);
+      return { sidebarVisible: !s.sidebarVisible };
+    }),
+  setSidebarVisible: (sidebarVisible) => {
+    persistSidebar(sidebarVisible);
+    set({ sidebarVisible });
+  },
   setDeleteTaskTarget: (deleteTaskTarget) => set({ deleteTaskTarget }),
+  setCreateTaskTarget: (createTaskTarget) => set({ createTaskTarget }),
   setDeleteProjectTarget: (deleteProjectTarget) => set({ deleteProjectTarget }),
-  setDiscardTarget: (discardTarget) => set({ discardTarget }),
   setQuickTaskTarget: (quickTaskTarget) => set({ quickTaskTarget }),
   setOnboardingOpen: (onboardingOpen) => set({ onboardingOpen }),
   bumpBindings: () => set((s) => ({ bindingsVersion: s.bindingsVersion + 1 })),
@@ -117,9 +147,9 @@ export const useUi = create<UiState>((set, get) => ({
   closeTopModal: () => {
     const s = get();
     if (s.paletteOpen) return set({ paletteOpen: false });
-    if (s.discardTarget) return set({ discardTarget: null });
     if (s.quickTaskTarget) return set({ quickTaskTarget: null });
     if (s.deleteTaskTarget) return set({ deleteTaskTarget: null });
+    if (s.createTaskTarget) return set({ createTaskTarget: null });
     if (s.deleteProjectTarget) return set({ deleteProjectTarget: null });
     if (s.projectSettingsOpen) return set({ projectSettingsOpen: false });
     if (s.settingsOpen) return set({ settingsOpen: false });
@@ -134,8 +164,8 @@ export const useUi = create<UiState>((set, get) => ({
       s.settingsOpen ||
       s.projectSettingsOpen ||
       s.deleteTaskTarget !== null ||
+      s.createTaskTarget !== null ||
       s.deleteProjectTarget !== null ||
-      s.discardTarget !== null ||
       s.quickTaskTarget !== null ||
       s.onboardingOpen
     );

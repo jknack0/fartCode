@@ -1,72 +1,516 @@
 // App-level modals (E14-01 modal scope): every dialog renders here, driven
 // by the ui store, so the Esc keybinding (close-modal) can reach the
 // topmost one via `closeTopModal`.
-import { useEffect, useState } from "react";
+//
+// Styling: overlay-card grammar (design_handoff_v2 §5h composer options +
+// §7a delete/archive confirm) — classes live in styles/modals.css.
+import { useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import ProjectSettings from "./ProjectSettings";
 import SettingsModal from "./SettingsModal";
 import {
+  BranchRef,
+  CreateTaskOptions,
+  archiveTask,
+  createTask as apiCreateTask,
   createTaskFromComment,
+  gitCommitState,
+  hostDependencyList,
+  listLineComments,
+  listProjectBranches,
   listProviders,
+  terminalListForTask,
   terminalOpenAgent,
   terminalWrite,
 } from "../lib/tauri";
-import { useChanges } from "../store/changes";
+import { hint } from "../lib/useCommands";
 import { useLineComments } from "../store/line-comments";
 
 import { useSidebar } from "../store/sidebar";
 import { useUi } from "../store/ui";
 
+/** True when the key event originates in a text-entry element — single-key
+ * shortcuts (a, ↵) must never fire while the user is typing. */
+function typingTarget(e: KeyboardEvent): boolean {
+  const t = e.target as HTMLElement | null;
+  if (!t) return false;
+  return t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable;
+}
+
 export function CreateProjectDialog({ onClose }: { onClose: () => void }) {
   const [path, setPath] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const createProject = useSidebar((s) => s.createProject);
 
   const submit = async () => {
-    if (!path.trim()) return;
+    if (!path.trim() || busy) return;
+    setBusy(true);
     try {
       await createProject(path.trim());
       onClose();
     } catch (e) {
       setError(String(e));
+      setBusy(false);
     }
   };
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Add project</h2>
-        <label>
-          Path to a local git repository
-          <div className="path-picker">
-            <input
-              autoFocus
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submit()}
-              placeholder="/path/to/repo"
-            />
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  const selected = await open({ directory: true, multiple: false });
-                  if (selected) setPath(selected as string);
-                } catch (e) {
-                  setError("Dialog failed: " + String(e));
-                }
-              }}
-            >
-              Browse…
+      <div
+        className="fc-overlay-card fc-composer"
+        role="dialog"
+        aria-label="Add project"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="fc-input-row">
+          <span className="fc-input-glyph" aria-hidden>
+            ›
+          </span>
+          <input
+            className="fc-input mono"
+            autoFocus
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void submit()}
+            placeholder="/path/to/repo"
+            aria-label="Path to a local git repository"
+          />
+          <button
+            type="button"
+            className="fc-input-action"
+            onClick={async () => {
+              try {
+                const selected = await open({ directory: true, multiple: false });
+                if (selected) setPath(selected as string);
+              } catch (e) {
+                setError("Dialog failed: " + String(e));
+              }
+            }}
+          >
+            browse…
+          </button>
+        </div>
+        {error && (
+          <p className="fc-modal-error row" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="fc-modal-foot">
+          <div className="fc-modal-foot-side">
+            <button type="button" onClick={onClose}>
+              <span className="fc-key">esc</span> cancel
             </button>
           </div>
-        </label>
-        {error && <p className="error">{error}</p>}
-        <div className="modal-actions">
-          <button onClick={onClose}>Cancel</button>
-          <button className="primary" disabled={!path.trim()} onClick={submit}>
-            Add project
-          </button>
+          <div className="fc-modal-foot-side">
+            <button type="button" disabled={!path.trim() || busy} onClick={submit}>
+              {busy ? (
+                "adding…"
+              ) : (
+                <>
+                  <span className="fc-key">↵</span> add project
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 5h "from" choices: base ref (fresh generated branch), the live checkout,
+ * or an existing branch to check out — the pre-redesign picker's exact
+ * capabilities, restyled into one options row. */
+type FromValue = "base" | "root" | `b:${string}`;
+
+export function CreateTaskDialog({
+  projectId,
+  onClose,
+}: {
+  projectId: string;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [branches, setBranches] = useState<BranchRef[]>([]);
+  const [from, setFrom] = useState<FromValue>("base");
+  const [touched, setTouched] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [agent, setAgent] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const baseRef =
+    useSidebar((s) => s.projects.find((p) => p.id === projectId))?.baseRef ??
+    "main";
+  // hint() re-render on rebinding (key footer).
+  useUi((s) => s.bindingsVersion);
+
+  useEffect(() => {
+    listProjectBranches(projectId)
+      .then(setBranches)
+      .catch(() => setBranches([])); // picker degrades to the two fixed rows
+  }, [projectId]);
+
+  // Agent row value: the default-agent setting (create_task launches it).
+  useEffect(() => {
+    hostDependencyList()
+      .then((deps) => setAgent(deps.find((d) => d.isDefault)?.providerId ?? null))
+      .catch(() => {});
+  }, []);
+
+  // ⌥ unfolds the options block; sticky once revealed (toggle per press).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Alt" && !e.repeat) setOptionsOpen((v) => !v);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Remote twins of a local name (and origin/HEAD) are dropped — they check
+  // out the same commit as their local.
+  const branchNames = useMemo(() => {
+    const locals = new Set(
+      branches.filter((b) => !b.is_remote).map((b) => b.name),
+    );
+    return branches
+      .filter((b) => !b.name.endsWith("/HEAD"))
+      .filter(
+        (b) => !b.is_remote || !locals.has(b.name.replace(/^[^/]+\//, "")),
+      )
+      .map((b) => b.name);
+  }, [branches]);
+
+  const fromLabel =
+    from === "base" ? baseRef : from === "root" ? "project root" : from.slice(2);
+  const branchValue =
+    from === "base"
+      ? "auto · fartCode…"
+      : from === "root"
+        ? "current checkout · no isolation"
+        : from.slice(2);
+
+  const submit = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      // Untouched options = project defaults: send nothing the user didn't
+      // pick. Empty name keeps the pre-composer default.
+      const opts: CreateTaskOptions = {};
+      if (touched) {
+        if (from === "root") {
+          opts.workspace = "project-root";
+        } else {
+          opts.workspace = "new-worktree";
+          if (from.startsWith("b:")) opts.branch = from.slice(2);
+        }
+      }
+      const task = await apiCreateTask(projectId, name.trim() || "New task", opts);
+      // Mirror the sidebar store's createTask bookkeeping (that path
+      // hardcodes the name — see notes): append + select immediately; the
+      // task:created event refetch keeps it consistent.
+      useSidebar.setState((s) => ({
+        tasksByProject: {
+          ...s.tasksByProject,
+          [projectId]: [...(s.tasksByProject[projectId] ?? []), task],
+        },
+        selectedProjectId: projectId,
+        selectedTaskId: task.id,
+      }));
+      onClose();
+    } catch (e) {
+      setError(String(e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="fc-overlay-card fc-composer"
+        role="dialog"
+        aria-label="New task"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          // ↵ create & start from anywhere in the card except an open menu.
+          if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "SELECT") {
+            e.preventDefault();
+            void submit();
+          }
+        }}
+      >
+        <div className="fc-input-row">
+          <span className="fc-input-glyph" aria-hidden>
+            ›
+          </span>
+          <input
+            className="fc-input"
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="describe the task…"
+            aria-label="Task name"
+          />
+        </div>
+        {optionsOpen && (
+          <div className="fc-opt-rows">
+            <div className="fc-opt-row">
+              <span>agent</span>
+              <span className="fc-opt-value">
+                <span className="fc-opt-ellipsis">
+                  {agent ? `${agent} · default model` : "default agent"}
+                </span>
+              </span>
+            </div>
+            <div className="fc-opt-row">
+              <span>from</span>
+              <span className="fc-opt-value">
+                <span className="fc-opt-ellipsis">{fromLabel}</span>
+                <span aria-hidden>⌄</span>
+                <select
+                  value={from}
+                  aria-label="Start from"
+                  onChange={(e) => {
+                    setFrom(e.target.value as FromValue);
+                    setTouched(true);
+                  }}
+                >
+                  <option value="base">{baseRef} · default</option>
+                  <option value="root">project root · current checkout</option>
+                  {branchNames.map((n) => (
+                    <option key={n} value={`b:${n}`}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </span>
+            </div>
+            <div className="fc-opt-row">
+              <span>branch</span>
+              <span className="fc-opt-value fc-opt-plain">
+                <span className="fc-opt-ellipsis">{branchValue}</span>
+              </span>
+            </div>
+          </div>
+        )}
+        {error && (
+          <p className="fc-modal-error row" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="fc-modal-foot">
+          <div className="fc-modal-foot-side">
+            <button type="button" onClick={() => setOptionsOpen((v) => !v)}>
+              <span className="fc-key">⌥</span>{" "}
+              {optionsOpen ? "hide options" : "options"}
+            </button>
+          </div>
+          <div className="fc-modal-foot-side">
+            <button type="button" disabled={busy} onClick={submit}>
+              {busy ? (
+                "creating…"
+              ) : (
+                <>
+                  <span className="fc-key">↵</span> create & start
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 7a delete/archive confirm — the one place that itemizes. ⌘⌫ deletes
+ * (the app's only red action label), `a` archives instead (worktree +
+ * branch survive; restore via ⌘K). */
+function DeleteTaskConfirm({
+  projectId,
+  taskId,
+  onClose,
+}: {
+  projectId: string;
+  taskId: string;
+  onClose: () => void;
+}) {
+  const task = useSidebar((s) =>
+    (s.tasksByProject[projectId] ?? []).find((t) => t.id === taskId),
+  );
+  const project = useSidebar((s) => s.projects.find((p) => p.id === projectId));
+  const deleteTask = useSidebar((s) => s.deleteTask);
+  useUi((s) => s.bindingsVersion);
+  const [agentRunning, setAgentRunning] = useState(false);
+  const [terminalCount, setTerminalCount] = useState(0);
+  const [commentCount, setCommentCount] = useState(0);
+  const [branch, setBranch] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Project-root tasks live in the repo checkout — no worktree to remove,
+  // no branch of their own to keep.
+  const isWorktree =
+    !!task?.workspaceId && task.workspaceId !== project?.repositoryWorkspaceId;
+
+  useEffect(() => {
+    let cancelled = false;
+    terminalListForTask(taskId)
+      .then((ts) => {
+        if (cancelled) return;
+        setAgentRunning(ts.some((t) => t.kind === "agent" && t.running));
+        setTerminalCount(ts.length);
+      })
+      .catch(() => {});
+    listLineComments(taskId)
+      .then((cs) => {
+        if (!cancelled) setCommentCount(cs.length);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [taskId]);
+
+  const workspaceId = isWorktree ? task?.workspaceId : null;
+  useEffect(() => {
+    if (!workspaceId) return;
+    let cancelled = false;
+    gitCommitState(workspaceId)
+      .then((s) => {
+        if (!cancelled) setBranch(s.branch);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
+
+  const doDelete = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteTask(projectId, taskId);
+      onClose();
+    } catch (e) {
+      setError(String(e));
+      setBusy(false);
+    }
+  };
+
+  const doArchive = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await archiveTask(taskId);
+      // The sidebar event wiring has no task:archived handler — mark the row
+      // locally so the card leaves the tree now (see notes).
+      useSidebar.setState((s) => ({
+        tasksByProject: {
+          ...s.tasksByProject,
+          [projectId]: (s.tasksByProject[projectId] ?? []).map((t) =>
+            t.id === taskId ? { ...t, archivedAt: new Date().toISOString() } : t,
+          ),
+        },
+        selectedTaskId: s.selectedTaskId === taskId ? null : s.selectedTaskId,
+      }));
+      onClose();
+    } catch (e) {
+      setError(String(e));
+      setBusy(false);
+    }
+  };
+
+  // Keys while open: ⌘⌫ delete · a archive (esc = global close-modal).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (typingTarget(e)) return;
+      if (e.key === "Backspace" && e.metaKey) {
+        e.preventDefault();
+        void doDelete();
+      } else if (
+        e.key.toLowerCase() === "a" &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey
+      ) {
+        e.preventDefault();
+        void doArchive();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  });
+
+  const countParts = [
+    commentCount > 0 &&
+      `${commentCount} line comment${commentCount === 1 ? "" : "s"}`,
+    terminalCount > 0 && `${terminalCount} terminal${terminalCount === 1 ? "" : "s"}`,
+  ].filter(Boolean);
+
+  const deleteKey = hint("delete-task") || "⌘⌫";
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="fc-overlay-card fc-confirm"
+        role="dialog"
+        aria-label="Delete task"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="fc-confirm-body">
+          <div className="fc-confirm-title">
+            Delete <span className="fc-confirm-id">#{taskId.slice(0, 8)}</span>{" "}
+            {task?.name ?? taskId}?
+          </div>
+          <div className="fc-confirm-list">
+            {agentRunning && (
+              <div className="fc-confirm-live">
+                <span className="status-dot status-in_progress" aria-hidden />
+                <span>kills the running agent</span>
+              </div>
+            )}
+            {isWorktree && (
+              <div>{branch ? `removes worktree ${branch}` : "removes the worktree"}</div>
+            )}
+            {countParts.length > 0 && <div>deletes {countParts.join(" · ")}</div>}
+            {isWorktree && branch && (
+              <div className="fc-confirm-kept">branch {branch} is kept</div>
+            )}
+          </div>
+          {error && (
+            <p className="fc-modal-error" role="alert">
+              {error}
+            </p>
+          )}
+        </div>
+        <div className="fc-modal-foot">
+          <div className="fc-modal-foot-side">
+            <button type="button" disabled={busy} onClick={onClose}>
+              <span className="fc-key">esc</span> cancel
+            </button>
+            <span aria-hidden>·</span>
+            <button type="button" disabled={busy} onClick={doArchive}>
+              <span className="fc-key">a</span> archive instead
+            </button>
+          </div>
+          <div className="fc-modal-foot-side">
+            <button
+              type="button"
+              className="fc-danger"
+              disabled={busy}
+              onClick={doDelete}
+            >
+              {busy ? (
+                "deleting…"
+              ) : (
+                <>
+                  <span className="fc-key">{deleteKey}</span> delete
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -77,33 +521,87 @@ export function ConfirmDelete({
   title,
   name,
   message,
+  confirmLabel = "Delete",
   onConfirm,
   onClose,
 }: {
   title: string;
   name: string;
   message: string;
-  onConfirm: () => void;
+  confirmLabel?: string;
+  /** Awaited: the modal stays open and shows the failure inline when the
+   * destructive action rejects — no silent deletes. */
+  onConfirm: () => Promise<void>;
   onClose: () => void;
 }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const confirm = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onConfirm();
+      onClose();
+    } catch (e) {
+      setError(String(e));
+      setBusy(false);
+    }
+  };
+
+  // ↵ confirms (esc = global close-modal). Not the 7a red path — delete-task
+  // has its own itemizing confirm; this label stays neutral.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (typingTarget(e)) return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void confirm();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  });
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>{title}</h2>
-        <p>
-          Delete <strong>{name}</strong>? {message}
-        </p>
-        <div className="modal-actions">
-          <button onClick={onClose}>Cancel</button>
-          <button
-            className="danger"
-            onClick={() => {
-              onConfirm();
-              onClose();
-            }}
-          >
-            Delete
-          </button>
+      <div
+        className="fc-overlay-card fc-confirm"
+        role="dialog"
+        aria-label={title}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="fc-confirm-body">
+          <div className="fc-confirm-title">
+            {confirmLabel} <span className="fc-confirm-id">{name}</span>?
+          </div>
+          <div className="fc-confirm-list">
+            <div>{message}</div>
+          </div>
+          {error && (
+            <p className="fc-modal-error" role="alert">
+              {error}
+            </p>
+          )}
+        </div>
+        <div className="fc-modal-foot">
+          <div className="fc-modal-foot-side">
+            <button type="button" disabled={busy} onClick={onClose}>
+              <span className="fc-key">esc</span> cancel
+            </button>
+          </div>
+          <div className="fc-modal-foot-side">
+            <button type="button" disabled={busy} onClick={confirm}>
+              {busy ? (
+                `${confirmLabel.toLowerCase()}…`
+              ) : (
+                <>
+                  <span className="fc-key">↵</span> {confirmLabel.toLowerCase()}
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -168,35 +666,78 @@ export function QuickTaskDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Create task from comment</h2>
-        <label>
-          Task name
+      <div
+        className="fc-overlay-card fc-composer"
+        role="dialog"
+        aria-label="Create task from comment"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "SELECT") {
+            e.preventDefault();
+            void submit();
+          }
+        }}
+      >
+        <div className="fc-input-row">
+          <span className="fc-input-glyph" aria-hidden>
+            ›
+          </span>
           <input
+            className="fc-input"
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submit()}
+            aria-label="Task name"
           />
-        </label>
-        <label>
-          Agent provider
-          <select value={provider} onChange={(e) => setProvider(e.target.value)}>
-            {providers.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {error && <p className="error">{error}</p>}
-        <div className="modal-actions">
-          <button onClick={onClose} disabled={busy}>
-            Cancel
-          </button>
-          <button className="primary" disabled={!name.trim() || busy} onClick={submit}>
-            {busy ? "Creating…" : "Create task"}
-          </button>
+        </div>
+        <div className="fc-opt-rows">
+          <div className="fc-opt-row">
+            <span>agent</span>
+            <span className="fc-opt-value">
+              <span className="fc-opt-ellipsis">{provider || "none"}</span>
+              <span aria-hidden>⌄</span>
+              <select
+                value={provider}
+                aria-label="Agent provider"
+                onChange={(e) => setProvider(e.target.value)}
+              >
+                {providers.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </span>
+          </div>
+          <div className="fc-opt-row">
+            <span>from</span>
+            <span className="fc-opt-value fc-opt-plain">
+              <span className="fc-opt-ellipsis">line comment</span>
+            </span>
+          </div>
+        </div>
+        {error && (
+          <p className="fc-modal-error row" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="fc-modal-foot">
+          <div className="fc-modal-foot-side">
+            <button type="button" disabled={busy} onClick={onClose}>
+              <span className="fc-key">esc</span> cancel
+            </button>
+          </div>
+          <div className="fc-modal-foot-side">
+            <button type="button" disabled={!name.trim() || busy} onClick={submit}>
+              {busy ? (
+                "creating…"
+              ) : (
+                <>
+                  <span className="fc-key">↵</span> create & start
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -214,13 +755,12 @@ export default function Modals() {
   const setDeleteProjectTarget = useUi((s) => s.setDeleteProjectTarget);
   const deleteTaskTarget = useUi((s) => s.deleteTaskTarget);
   const setDeleteTaskTarget = useUi((s) => s.setDeleteTaskTarget);
-  const discardTarget = useUi((s) => s.discardTarget);
-  const setDiscardTarget = useUi((s) => s.setDiscardTarget);
+  const createTaskTarget = useUi((s) => s.createTaskTarget);
+  const setCreateTaskTarget = useUi((s) => s.setCreateTaskTarget);
   const quickTaskTarget = useUi((s) => s.quickTaskTarget);
   const setQuickTaskTarget = useUi((s) => s.setQuickTaskTarget);
 
-  const { projects, tasksByProject, selectedProjectId, deleteProject, deleteTask } =
-    useSidebar();
+  const { projects, selectedProjectId, deleteProject } = useSidebar();
 
   return (
     <>
@@ -245,62 +785,21 @@ export default function Modals() {
           }
           message="Tasks, worktrees, and rows are torn down. The repository on disk is left untouched."
           onClose={() => setDeleteProjectTarget(null)}
-          onConfirm={() => {
-            deleteProject(deleteProjectTarget).catch(() => {});
-          }}
+          onConfirm={() => deleteProject(deleteProjectTarget)}
+        />
+      )}
+      {createTaskTarget && (
+        <CreateTaskDialog
+          projectId={createTaskTarget}
+          onClose={() => setCreateTaskTarget(null)}
         />
       )}
       {deleteTaskTarget && (
-        <ConfirmDelete
-          title="Delete task"
-          name={
-            (tasksByProject[deleteTaskTarget.projectId] ?? []).find(
-              (t) => t.id === deleteTaskTarget.taskId,
-            )?.name ?? deleteTaskTarget.taskId
-          }
-          message="Running agents are stopped and the worktree is removed. The source branch stays."
+        <DeleteTaskConfirm
+          projectId={deleteTaskTarget.projectId}
+          taskId={deleteTaskTarget.taskId}
           onClose={() => setDeleteTaskTarget(null)}
-          onConfirm={() => {
-            deleteTask(deleteTaskTarget.projectId, deleteTaskTarget.taskId).catch((e) =>
-              console.error("delete task failed", e),
-            );
-          }}
         />
-      )}
-      {discardTarget && (
-        <div className="modal-backdrop" onClick={() => setDiscardTarget(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Discard changes</h2>
-            <p>
-              Discard{" "}
-              <strong>
-                {discardTarget.paths.length === 1
-                  ? discardTarget.paths[0]
-                  : `${discardTarget.paths.length} files`}
-              </strong>
-              ?{" "}
-              {discardTarget.hasUntracked
-                ? "Untracked files are deleted from disk; tracked files revert to the staged state. This cannot be undone."
-                : "The files revert to the staged state. This cannot be undone."}
-            </p>
-            <div className="modal-actions">
-              <button onClick={() => setDiscardTarget(null)}>Cancel</button>
-              <button
-                className="danger"
-                onClick={() => {
-                  const target = discardTarget;
-                  setDiscardTarget(null);
-                  useChanges
-                    .getState()
-                    .discard(target.workspaceId, target.paths)
-                    .catch((e) => console.error("discard failed", e));
-                }}
-              >
-                Discard
-              </button>
-            </div>
-          </div>
-        </div>
       )}
       {quickTaskTarget && <QuickTaskDialog onClose={() => setQuickTaskTarget(null)} />}
     </>

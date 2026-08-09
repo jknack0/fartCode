@@ -1,21 +1,21 @@
-// Diff selection popover: highlight text in a diff editor and a floating
-// "Ask agent" button appears at the selection; click it (or it stays for
-// the current selection) and a prompt box opens — Enter submits the
-// selection (file, lines, code) plus the typed prompt to the task's ACP
-// conversation via the shared send path, then focuses the conversation tab
-// so the result is visible. Escape closes without sending.
+// Line-comment popover (design_handoff_v2 §5f): select lines in a diff and
+// a quiet "+ comment" affordance appears; open it and an overlay card sits
+// indented to the code start column. Two exits, both key-first:
+//   ↵  add note   — persist a human comment on the selected range (§14)
+//   ⌘↵ create task — persist the comment, then open the quick-task dialog
+//                    pre-filled; the dialog owns create_task_from_comment,
+//                    agent spawn, and the bidirectional comment↔task link.
+// Escape closes without saving.
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { MergeView } from "@codemirror/merge";
-import { ensureAcpConversation, focusConversationTab, focusOrOpenTab } from "../lib/acp-conversation";
 import { getDiffView } from "../lib/diff-views";
-import { terminalListForTask, terminalWrite } from "../lib/tauri";
-import { useConversations } from "../store/conversations";
 import { useDiffs, type DiffParams, type DiffSelection } from "../store/diffs";
 import { useLineComments } from "../store/line-comments";
 import { useSidebar } from "../store/sidebar";
-import { useTabs, type PaneId } from "../store/tabs";
 import { useUi } from "../store/ui";
 
+/** Popover width (kept in sync with .lc-popover in styles/comments.css). */
+const POPOVER_WIDTH = 380;
 
 export default function DiffSelectionPopover({
   tabId,
@@ -32,10 +32,8 @@ export default function DiffSelectionPopover({
   const projectId = useSidebar((s) => s.selectedProjectId);
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
-  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savingNote, setSavingNote] = useState(false);
-  const [destination, setDestination] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // A collapsed/changed selection resets the popover around the new one.
@@ -51,23 +49,6 @@ export default function DiffSelectionPopover({
     if (open) textareaRef.current?.focus();
   }, [open]);
 
-  // Where will the prompt go? Resolved when the popover opens so the user
-  // sees the routing (agent terminal vs ACP chat) before sending.
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    terminalListForTask(taskId)
-      .then((terms) => {
-        if (cancelled) return;
-        const agent = terms.find((t) => t.agent !== null);
-        setDestination(agent ? `${agent.agent} terminal` : "Agent chat");
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [open, taskId]);
-
   if (!selection || !projectId) return null;
 
   const position = computePosition(tabId, selection, containerRef.current);
@@ -78,51 +59,6 @@ export default function DiffSelectionPopover({
     setPrompt("");
     setError(null);
     useDiffs.getState().setSelection(tabId, null);
-  };
-
-  const submit = async () => {
-    const text = prompt.trim();
-    if (!text || sending) return;
-    setSending(true);
-    setError(null);
-    try {
-      const side = selection.side === "a" ? " (baseline)" : "";
-      const full =
-        `${params.path} lines ${selection.fromLine}–${selection.toLine}${side}:\n` +
-        "```\n" +
-        selection.text +
-        "\n```\n\n" +
-        text;
-
-      // Route: the task's live agent terminal first — the work context
-      // lives there, and the prompt lands where the user is already
-      // watching. ACP chat is the fallback when no agent terminal exists.
-      const terminals = await terminalListForTask(taskId);
-      const agentTerm = terminals.find((t) => t.agent !== null);
-      const tabs = useTabs.getState();
-      const pane: PaneId =
-        tabs.panesByTask[taskId]?.right && tabs.activePaneByTask[taskId] === "right"
-          ? "right"
-          : "left";
-
-      if (agentTerm) {
-        // Bracketed paste so multi-line content lands as one block, then
-        // Enter to submit.
-        await terminalWrite(agentTerm.id, `[200~${full}[201~\r`);
-        useDiffs.getState().setSelection(tabId, null);
-        focusOrOpenTab(taskId, agentTerm.id, "terminal", agentTerm.agent ?? "Agent", pane);
-        return;
-      }
-
-      const conv = await ensureAcpConversation(projectId, taskId);
-      if (!conv) throw new Error("no agent available for this task (no terminal, no ACP provider)");
-      await useConversations.getState().sendPrompt(conv.id, full);
-      useDiffs.getState().setSelection(tabId, null);
-      focusConversationTab(taskId, conv.id, pane);
-    } catch (e) {
-      setError(String(e));
-      setSending(false);
-    }
   };
 
   // §14 "Add Note": persist a human-only comment on the selected range and
@@ -164,9 +100,9 @@ export default function DiffSelectionPopover({
   // owns create_task_from_comment + agent spawn + linking.
   const createTask = () => {
     const text = prompt.trim();
-    if (!text) return;
-    const projectId = useSidebar.getState().selectedProjectId;
-    if (!projectId) return;
+    if (!text || savingNote) return;
+    const pid = useSidebar.getState().selectedProjectId;
+    if (!pid) return;
     // Persist the comment first so the created task links to a real row;
     // the dialog reads it back via commentId. Fire-and-forget, then open.
     void (async () => {
@@ -184,7 +120,7 @@ export default function DiffSelectionPopover({
           content: text,
         });
         useUi.getState().setQuickTaskTarget({
-          projectId,
+          projectId: pid,
           commentId: comment.id,
           selectedCode: selection.text,
           enclosingFunction: enclosingFunction(tabId, selection),
@@ -200,18 +136,18 @@ export default function DiffSelectionPopover({
   if (!open) {
     return (
       <button
-        className="diff-sel-fab"
+        className="lc-fab"
         style={{ left: position.left, top: position.top }}
         onClick={() => setOpen(true)}
       >
-        + Comment
+        + comment
       </button>
     );
   }
 
   return (
     <div
-      className="diff-sel-popover"
+      className="lc-popover"
       style={{ left: position.left, top: position.top }}
       onKeyDown={(e) => {
         if (e.key === "Escape") {
@@ -220,54 +156,54 @@ export default function DiffSelectionPopover({
         }
       }}
     >
-      <div className="diff-sel-header">
-        {params.path}:{selection.fromLine}–{selection.toLine}
-        {selection.side === "a" && <span className="muted"> (baseline)</span>}
-      </div>
       <textarea
         ref={textareaRef}
+        className="lc-input"
         value={prompt}
-        placeholder="Ask the agent about this code…  (Enter sends, ⇧Enter breaks)"
-        rows={3}
-        disabled={sending}
+        placeholder="note or task…"
+        rows={2}
+        disabled={savingNote}
         onChange={(e) => setPrompt(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
+          // stopPropagation: the global registry binds ⌘↵ (send-context)
+          // even while an editor is focused — the popover owns it here.
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
-            void submit();
+            e.stopPropagation();
+            createTask();
+          } else if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            void addNote();
           }
         }}
       />
-      {error && <p className="diff-sel-error">{error}</p>}
-      <div className="diff-sel-actions">
-        {destination && <span className="diff-sel-dest">→ {destination}</span>}
-        <button onClick={close} disabled={sending}>
-          Cancel
-        </button>
+      {error && <p className="lc-error">{error}</p>}
+      <div className="lc-popover-footer">
         <button
+          className="lc-key-action"
           onClick={() => void addNote()}
-          disabled={!prompt.trim() || savingNote || sending}
+          disabled={!prompt.trim() || savingNote}
           title="Save a note on these lines (no agent)"
         >
-          {savingNote ? "Saving…" : "Add Note"}
+          <kbd>↵</kbd> add note
         </button>
         <button
+          className="lc-key-action"
           onClick={createTask}
-          disabled={!prompt.trim() || sending}
+          disabled={!prompt.trim() || savingNote}
           title="Create a task for an agent to fix this"
         >
-          Create Task ⚡
-        </button>
-        <button className="primary" onClick={() => void submit()} disabled={!prompt.trim() || sending}>
-          {sending ? "Sending…" : "Send to agent"}
+          <kbd>⌘↵</kbd> create task
         </button>
       </div>
     </div>
   );
 }
 
-/** Popover position: near the selection's end, relative to the diff body,
- * clamped inside it. */
+/** Popover position (§5f: indented to the code start column): left edge at
+ * the selection's first-line content start, top under the selection's end,
+ * clamped inside the diff body. */
 function computePosition(
   tabId: string,
   selection: DiffSelection,
@@ -278,12 +214,16 @@ function computePosition(
   const editor =
     view instanceof MergeView ? (selection.side === "a" ? view.a : view.b) : view;
   if (selection.to > editor.state.doc.length) return null;
-  const coords = editor.coordsAtPos(selection.to);
+  const doc = editor.state.doc;
+  const lineStart = doc.line(Math.min(selection.fromLine, doc.lines)).from;
+  const startCoords = editor.coordsAtPos(lineStart);
+  const endCoords = editor.coordsAtPos(selection.to);
   const host = container.getBoundingClientRect();
-  if (!coords) return null;
+  if (!endCoords) return null;
+  const left = startCoords ? startCoords.left - host.left : 8;
   return {
-    left: Math.max(4, Math.min(coords.left - host.left, host.width - 260)),
-    top: Math.max(4, coords.bottom - host.top + 6),
+    left: Math.max(4, Math.min(left, host.width - (POPOVER_WIDTH + 8))),
+    top: Math.max(4, endCoords.bottom - host.top + 6),
   };
 }
 

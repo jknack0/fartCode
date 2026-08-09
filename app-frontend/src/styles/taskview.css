@@ -1,0 +1,259 @@
+/* Task view (design_handoff_v2 5a/5b/7b): 46px header row with breadcrumb +
+   script launchers, the stopped/empty state, and the ⌘J drawer. */
+
+/* -- 5a header ------------------------------------------------------------ */
+
+.tv-header {
+  height: 46px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.tv-header-id {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.tv-crumb {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
+  white-space: nowrap;
+}
+
+.tv-title {
+  font-size: 13px;
+  color: var(--text-card);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Agent dot rides the id row at 7px (8px is the hollow/row size). */
+.tv-header-id .status-dot {
+  width: 7px;
+  height: 7px;
+}
+
+/* The hollow needs-you ring keeps its 8px row size (the 1.5px border eats
+   inward, so 7px would read undersized). */
+.tv-header-id .status-dot.status-needs-you {
+  width: 8px;
+  height: 8px;
+}
+
+/* Idle/stopped agent — dimmer than the neutral row dot on purpose:
+   a stopped agent is a non-event (5b's dot). */
+.status-dot.tv-dot-idle {
+  background: var(--dot-idle);
+}
+
+.tv-header-actions {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  flex: none;
+}
+
+/* Script launchers + the changes toggle: mono 11px text buttons. */
+.tv-action {
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
+  cursor: pointer;
+}
+
+.tv-action:hover {
+  color: #a4a4ab;
+}
+
+/* A running script's label brightens while it runs. */
+.tv-action.running {
+  color: #a4a4ab;
+}
+
+/* A failed run turns the whole label red-text (`setup ✗`, 7b). */
+.tv-action.failed {
+  color: var(--fc-bad-text);
+}
+
+/* -- 5b nothing running ---------------------------------------------------- */
+
+/* 7b setup gate: while setup runs the pane carries one dimmed line where a
+   terminal's first row would land — accent ● (the agent to come), body at
+   half opacity (frame 7b). No key list: the agent will not start yet. */
+.tv-waiting {
+  height: 100%;
+  padding: 16px 22px;
+  background: var(--background);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-mid);
+  opacity: 0.5;
+}
+
+.tv-waiting-dot {
+  color: var(--accent);
+}
+
+.tv-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: var(--background);
+}
+
+/* Stop-reason label. Informative text never goes below the --meta floor. */
+.tv-empty-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--meta);
+}
+
+.tv-empty-label.failed {
+  color: var(--fc-bad-text);
+}
+
+.tv-empty-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 260px;
+}
+
+.tv-empty-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 24px;
+  padding: 0 0 11px;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  background: none;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  color: var(--text-card);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tv-empty-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.tv-empty-row:hover .tv-empty-key {
+  color: #a4a4ab;
+}
+
+.tv-empty-key {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--meta);
+}
+
+/* -- 7b drawer ------------------------------------------------------------- */
+
+.drawer {
+  height: 210px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--flyout-bg);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  outline: none;
+}
+
+.drawer-strip {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 10px 18px 0;
+}
+
+.drawer-tabs {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+}
+
+.drawer-tab {
+  border: none;
+  background: none;
+  padding: 0 0 9px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #55555c;
+  cursor: pointer;
+}
+
+.drawer-tab:hover {
+  color: #a4a4ab;
+}
+
+.drawer-tab.active {
+  color: var(--foreground);
+}
+
+/* Failed script: red text + a 1px red underline, active or not (7b). */
+.drawer-tab.failed {
+  color: var(--fc-bad-text);
+  border-bottom: 1px solid var(--fc-bad);
+}
+
+.drawer-keys {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding-bottom: 9px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
+}
+
+.drawer-key {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.drawer-key:hover {
+  color: #a4a4ab;
+}
+
+.drawer-body {
+  flex: 1;
+  min-height: 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.drawer-body .terminal-container {
+  padding: 12px 18px;
+}
+
+/* A script that has never run: --meta-dim is allowed here (disabled/empty). */
+.drawer-empty {
+  padding: 12px 18px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--meta-dim);
+}

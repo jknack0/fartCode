@@ -7,6 +7,7 @@ import { getViewState, setViewState } from "./tauri";
 import { registerAllCommands, registry } from "./commands";
 import {
   ActiveBinding,
+  CommandId,
   KEYBINDINGS_VIEW_STATE_KEY,
   applyUserOverrides,
   dispatchKey,
@@ -73,6 +74,11 @@ export function bindings(): ActiveBinding[] {
 /** Hint for one command ("" when unbound). */
 export function hint(id: Parameters<typeof hintFor>[1]): string {
   return hintFor(registry, id);
+}
+
+/** Runs a registered command by id (clickable hint chips, palette rows). */
+export function runCommand(id: CommandId): void {
+  registry.commands.find((c) => c.id === id)?.run();
 }
 
 /** Persists an override for one command ({commandId -> [chord strings]});

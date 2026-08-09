@@ -173,54 +173,61 @@ export default function ProviderAccounts() {
   };
 
   return (
-    <div className="provider-accounts">
-      <h3>Provider accounts</h3>
-      <p className="hint">
+    <div className="fc-accounts">
+      <div className="fc-set-group-label">Provider accounts</div>
+      <p className="fc-set-hint">
         API keys are stored in the OS keyring — never in the database, logs,
         or UI. The first account per provider becomes the default used for
         agent launches. OAuth accounts (e.g. Claude "Sign in with Claude
         Code") use your subscription — no API charges — and fartCode never
         passes an API key for them.
       </p>
-      {error && <p className="error">{error}</p>}
+      {error && <p className="fc-set-error">{error}</p>}
 
       {accounts.length > 0 && (
-        <ul className="account-list">
+        <ul className="fc-acct-list">
           {accounts.map((a) => {
             const badge = methodBadge(a.authMethod);
             return (
-              <li key={a.id} className="account-row">
-                <span className="account-provider">{providerName(a.providerId)}</span>
-                <span className="account-id">
+              <li key={a.id} className="fc-acct-row">
+                <span className="fc-acct-name">
+                  {providerName(a.providerId)}
+                  {a.isDefault && <span className="fc-tag-green">default</span>}
+                </span>
+                <span className="fc-acct-meta">
                   {a.label ? `${a.label} (${a.accountId})` : a.accountId}
-                </span>
-                {badge && <span className="account-method">{badge}</span>}
-                <span className="account-secret" title="Secret mask">
-                  {a.authMethod === "claude-login" ? "—" : a.maskedSecret}
-                </span>
-                {a.isDefault ? (
-                  <span className="account-default">default</span>
-                ) : (
-                  <button onClick={() => void makeDefault(a.id)} title="Make default">
-                    make default
+                  {badge ? ` · ${badge}` : ""}
+                  {a.authMethod === "claude-login" ? "" : ` · ${a.maskedSecret}`}
+                  {!a.isDefault && (
+                    <>
+                      {" · "}
+                      <button
+                        className="fc-acct-action"
+                        onClick={() => void makeDefault(a.id)}
+                        title="Make default"
+                      >
+                        make default
+                      </button>
+                    </>
+                  )}
+                  {" · "}
+                  <button
+                    className="fc-acct-action remove"
+                    onClick={() => void remove(a.id)}
+                    title="Remove account (deletes the keyring secret)"
+                  >
+                    ✗
                   </button>
-                )}
-                <button
-                  className="account-remove"
-                  onClick={() => void remove(a.id)}
-                  title="Remove account (deletes the keyring secret)"
-                >
-                  &times;
-                </button>
+                </span>
               </li>
             );
           })}
         </ul>
       )}
 
-      <div className="account-add">
-        <label>
-          Provider
+      <div className="fc-acct-editor">
+        <label className="fc-acct-field">
+          <span className="fc-acct-field-name">provider</span>
           <select value={providerId} onChange={(e) => onProviderChange(e.target.value)}>
             {providers.map((p) => (
               <option key={p.id} value={p.id}>
@@ -231,8 +238,8 @@ export default function ProviderAccounts() {
         </label>
 
         {methods.length > 0 && (
-          <label>
-            Auth method
+          <label className="fc-acct-field">
+            <span className="fc-acct-field-name">auth method</span>
             <select value={method?.id ?? ""} onChange={(e) => onMethodChange(e.target.value)}>
               {methods.map((m) => (
                 <option key={m.id} value={m.id}>
@@ -245,92 +252,97 @@ export default function ProviderAccounts() {
 
         {isLogin ? (
           <>
-            <label className="account-full">
-              Login status
-              <span className="account-login-status">
+            <div className="fc-acct-field">
+              <span className="fc-acct-field-name">login status</span>
+              <span className="fc-acct-status">
                 {checkingStatus ? (
-                  "Checking…"
+                  "checking…"
                 ) : authStatus?.authenticated ? (
-                  <>
-                    <span className="account-ok">
-                      Signed in as {authStatus.account ?? "your Claude account"} (OAuth)
-                    </span>
-                  </>
+                  <span className="fc-acct-status-ok">
+                    signed in as {authStatus.account ?? "your Claude account"} (OAuth)
+                  </span>
                 ) : (
                   <>
-                    <span className="account-muted">
-                      Not signed in via the CLI{authStatusError ? ` — ${authStatusError}` : ""}
-                    </span>
-                    <button className="primary account-login-btn" onClick={() => void signIn()}>
-                      Sign in with Claude Code
+                    not signed in via the CLI{authStatusError ? ` — ${authStatusError}` : ""}
+                    {" · "}
+                    <button
+                      className="fc-acct-editor-action signin"
+                      onClick={() => void signIn()}
+                    >
+                      sign in with Claude Code
                     </button>
                   </>
                 )}
               </span>
-            </label>
-            <label>
-              Account id (from your CLI login)
+            </div>
+            <label className="fc-acct-field">
+              <span className="fc-acct-field-name">account id (from your CLI login)</span>
               <input
                 value={accountId}
                 onChange={(e) => setAccountId(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void add()}
                 placeholder="you@example.com"
               />
             </label>
-            <label>
-              Label (optional)
+            <label className="fc-acct-field">
+              <span className="fc-acct-field-name">label (optional)</span>
               <input
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void add()}
                 placeholder="work account"
               />
             </label>
-            <label className="account-actions">
+            <div className="fc-acct-editor-keys">
               <button
-                className="primary"
+                className="fc-acct-editor-action"
                 disabled={!providerId || !accountId.trim() || !authStatus?.authenticated}
                 onClick={() => void add()}
               >
-                Add OAuth account
+                ↵ add account
               </button>
-            </label>
+            </div>
           </>
         ) : (
           <>
-            <label>
-              Account id (username / email)
+            <label className="fc-acct-field">
+              <span className="fc-acct-field-name">account id (username / email)</span>
               <input
                 value={accountId}
                 onChange={(e) => setAccountId(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void add()}
                 placeholder="you@example.com"
               />
             </label>
-            <label>
-              API key
+            <label className="fc-acct-field">
+              <span className="fc-acct-field-name">api key</span>
               <input
                 type="password"
                 autoComplete="off"
                 value={secret}
                 onChange={(e) => setSecret(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void add()}
                 placeholder="sk-…"
               />
             </label>
-            <label>
-              Label (optional)
+            <label className="fc-acct-field">
+              <span className="fc-acct-field-name">label (optional)</span>
               <input
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void add()}
                 placeholder="work account"
               />
             </label>
-            <label className="account-actions">
+            <div className="fc-acct-editor-keys">
               <button
-                className="primary"
+                className="fc-acct-editor-action"
                 disabled={!providerId || !accountId.trim() || !secret.trim()}
                 onClick={() => void add()}
               >
-                Add account
+                ↵ add account
               </button>
-            </label>
+            </div>
           </>
         )}
       </div>

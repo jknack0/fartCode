@@ -19,9 +19,13 @@ import { useEffect, useRef, useState } from "react";
 import { Compartment, EditorState, RangeSet, type Extension, type Range } from "@codemirror/state";
 import { EditorView, GutterMarker, gutter, keymap } from "@codemirror/view";
 import { MergeView, unifiedMergeView } from "@codemirror/merge";
-import { LanguageDescription } from "@codemirror/language";
+import {
+  HighlightStyle,
+  LanguageDescription,
+  syntaxHighlighting,
+} from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
-import { oneDark } from "@codemirror/theme-one-dark";
+import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
 import DiffSelectionPopover from "./DiffSelectionPopover";
 import CommentThread from "./CommentThread";
@@ -41,8 +45,113 @@ function formatSize(bytes: number): string {
   return `${bytes} B`;
 }
 
+// -- Audit 19: token editor theme (replaces @codemirror/theme-one-dark) --------
+// DESIGN.md ramp on the CodeMirror surface: ground var(--background) #101012
+// for editor + gutters, gutter numbers at the meta floor, code at rest
+// --text-mid, additions in the #8fd6ae family, deletions in the #c96b6b
+// family, active line a bare white tint, selection = the diff-selection
+// token (styles/comments.css still owns the .diff-body override — same
+// wash plus the accent outline, kept via !important).
+const diffTheme = EditorView.theme(
+  {
+    "&": {
+      backgroundColor: "var(--background)",
+      color: "var(--text-mid)",
+    },
+    ".cm-content": { caretColor: "var(--accent)" },
+    ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--accent)" },
+    "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
+      { backgroundColor: "rgba(110, 231, 168, 0.14)" },
+    ".cm-selectionMatch": { backgroundColor: "rgba(255, 255, 255, 0.06)" },
+    "&.cm-focused .cm-matchingBracket, &.cm-focused .cm-nonmatchingBracket": {
+      backgroundColor: "rgba(255, 255, 255, 0.06)",
+      outline: "none",
+    },
+    ".cm-gutters": {
+      backgroundColor: "var(--background)",
+      color: "var(--meta)",
+      border: "none",
+    },
+    ".cm-activeLine": { backgroundColor: "rgba(255, 255, 255, 0.03)" },
+    ".cm-activeLineGutter": {
+      backgroundColor: "rgba(255, 255, 255, 0.03)",
+      color: "var(--text-secondary)",
+    },
+    ".cm-foldPlaceholder": {
+      background: "none",
+      border: "none",
+      color: "var(--meta)",
+    },
+    ".cm-tooltip": {
+      background: "var(--overlay)",
+      border: "1px solid rgba(255, 255, 255, 0.12)",
+      color: "var(--text-secondary)",
+    },
+    // @codemirror/merge chunks: quiet washes, no base-theme underlines.
+    "&.cm-merge-b .cm-changedLine, .cm-inlineChangedLine": {
+      backgroundColor: "rgba(143, 214, 174, 0.07)",
+    },
+    "&.cm-merge-b .cm-changedText": {
+      background: "rgba(143, 214, 174, 0.18)",
+    },
+    "&.cm-merge-a .cm-changedLine, .cm-deletedChunk": {
+      backgroundColor: "rgba(201, 107, 107, 0.07)",
+    },
+    "&.cm-merge-a .cm-changedText, .cm-deletedChunk .cm-deletedText": {
+      background: "rgba(201, 107, 107, 0.18)",
+    },
+    "&.cm-merge-b .cm-deletedText": {
+      background: "rgba(201, 107, 107, 0.18)",
+    },
+    "&.cm-merge-a .cm-changedLineGutter, .cm-deletedLineGutter": {
+      background: "#c96b6b",
+    },
+    "&.cm-merge-b .cm-changedLineGutter": { background: "#8fd6ae" },
+    ".cm-inlineChangedLineGutter": { background: "#8fd6ae" },
+    ".cm-collapsedLines": {
+      color: "var(--meta)",
+      background: "rgba(255, 255, 255, 0.03)",
+    },
+  },
+  { dark: true },
+);
+
+// Quiet syntax ramp: grays carry structure (basicSetup's fallback
+// HighlightStyle is light-oriented and unreadable on the near-black
+// ground, so replacing oneDark means supplying this too). The only
+// colours are the system's own: --info for links, --fc-bad-text for
+// invalid tokens.
+const diffHighlight = HighlightStyle.define([
+  { tag: tags.comment, color: "var(--meta)" },
+  { tag: [tags.keyword, tags.operator, tags.modifier], color: "var(--text-secondary)" },
+  {
+    tag: [
+      tags.string,
+      tags.special(tags.string),
+      tags.regexp,
+      tags.number,
+      tags.bool,
+      tags.null,
+      tags.atom,
+    ],
+    color: "#9a9aa1", // text-muted (DESIGN.md ramp)
+  },
+  {
+    tag: [
+      tags.definition(tags.name),
+      tags.function(tags.name),
+      tags.typeName,
+      tags.className,
+    ],
+    color: "var(--text-card)",
+  },
+  { tag: tags.heading, color: "var(--foreground)", fontWeight: "600" },
+  { tag: tags.link, color: "var(--info)" },
+  { tag: tags.invalid, color: "var(--fc-bad-text)" },
+]);
+
 function baseExtensions(lang: Extension[]): Extension[] {
-  return [basicSetup, oneDark, ...lang];
+  return [basicSetup, diffTheme, syntaxHighlighting(diffHighlight), ...lang];
 }
 
 function readOnlyExtensions(): Extension[] {
@@ -106,8 +215,8 @@ class CommentMarker extends GutterMarker {
   }
   toDOM() {
     const span = document.createElement("span");
-    span.className = this.resolved ? "comment-marker resolved" : "comment-marker";
-    span.textContent = this.resolved ? "✓" : "💬";
+    span.className = this.resolved ? "lc-marker resolved" : "lc-marker";
+    span.textContent = this.resolved ? "✓" : "●";
     span.title = this.resolved ? "Resolved comment" : "Comment";
     span.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -416,15 +525,15 @@ export default function DiffView({
         </span>
         {params && (
           <span className={`diff-side-badge side-${params.side}`}>
-            {params.side === "staged" ? "Staged" : "Unstaged"}
+            {params.side === "staged" ? "staged" : "unstaged"}
           </span>
         )}
-        {payload && !payload.oldExists && <span className="diff-badge added">Added</span>}
-        {payload && !payload.newExists && <span className="diff-badge deleted">Deleted</span>}
+        {payload && !payload.oldExists && <span className="diff-badge added">added</span>}
+        {payload && !payload.newExists && <span className="diff-badge deleted">deleted</span>}
         {dirty && <span className="diff-badge dirty" title="Unsaved changes — ⌘S to save">●</span>}
         {saveError && (
           <span className="diff-save-error" title={saveError}>
-            Save failed
+            save failed
           </span>
         )}
         {payload && !singleDoc && !payload.binary && !payload.tooLarge && (
@@ -433,13 +542,13 @@ export default function DiffView({
               className={mode === "unified" ? "active" : undefined}
               onClick={() => setMode("unified")}
             >
-              Unified
+              unified
             </button>
             <button
               className={mode === "split" ? "active" : undefined}
               onClick={() => setMode("split")}
             >
-              Split
+              split
             </button>
           </div>
         )}
@@ -452,7 +561,7 @@ export default function DiffView({
       ) : entry?.error && !payload ? (
         <div className="diff-notice">
           <p className="error">{entry.error}</p>
-          <button onClick={() => void useDiffs.getState().refresh(tabId)}>Retry</button>
+          <button onClick={() => void useDiffs.getState().refresh(tabId)}>retry</button>
         </div>
       ) : payload?.binary ? (
         <p className="diff-notice">Binary file — preview unavailable.</p>

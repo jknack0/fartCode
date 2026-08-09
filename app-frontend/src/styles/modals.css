@@ -1,0 +1,244 @@
+/* Composer options unfold + delete/archive confirm (design_handoff_v2 5h/7a).
+   Overlay-card grammar: #17171b plate, .12 hairline, radius 10, mono key
+   footer (esc left / primary key right, keys #a4a4ab). */
+
+/* -- shared overlay card ---------------------------------------------------- */
+
+.fc-overlay-card {
+  border-radius: 10px;
+  background: var(--overlay);
+  border: 1px solid var(--hairline-strong);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+  overflow: hidden;
+}
+
+.fc-composer {
+  width: 460px;
+}
+
+.fc-confirm {
+  width: 420px;
+}
+
+/* -- composer input row (5h) ------------------------------------------------ */
+
+.fc-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 18px 18px 16px;
+}
+
+.fc-input-glyph {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.5;
+  color: #5f5f66;
+}
+
+.fc-input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--foreground);
+  caret-color: var(--accent);
+}
+.fc-input:focus {
+  outline: none;
+}
+.fc-input::placeholder {
+  color: #5f5f66;
+}
+/* Paths are machine text (create-project). */
+.fc-input.mono {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+/* Trailing action inside the input row (browse…). */
+.fc-input-action {
+  flex: none;
+  margin: 2px 0 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
+  cursor: pointer;
+}
+.fc-input-action:hover {
+  color: #a4a4ab;
+  background: none;
+}
+
+/* -- 5h options block (⌥) --------------------------------------------------- */
+
+.fc-opt-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
+}
+
+.fc-opt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Interactive value: visible span pair with an invisible native select
+   stretched on top (styled selects can't right-align text in WKWebView). */
+.fc-opt-value {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: #a4a4ab;
+}
+.fc-opt-value select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  opacity: 0;
+  cursor: pointer;
+}
+.fc-opt-value:focus-within {
+  color: var(--text-card);
+}
+/* Non-interactive value (generated branch): inherits the row's #66666d. */
+.fc-opt-plain {
+  color: inherit;
+}
+.fc-opt-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -- mono key footer -------------------------------------------------------- */
+
+.fc-modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
+}
+.fc-modal-foot-side {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.fc-modal-foot button {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.fc-modal-foot button:hover {
+  color: #a4a4ab;
+  background: none;
+}
+.fc-modal-foot button:disabled,
+.fc-modal-foot button:disabled .fc-key {
+  color: var(--meta-dim);
+  cursor: default;
+}
+
+.fc-key {
+  color: #a4a4ab;
+}
+
+/* 7a ⌘⌫ delete — THE only red action label in the app. */
+.fc-modal-foot button.fc-danger,
+.fc-modal-foot button.fc-danger:hover,
+.fc-modal-foot button.fc-danger .fc-key {
+  color: var(--fc-bad-text);
+}
+
+/* -- 7a confirm card -------------------------------------------------------- */
+
+.fc-confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px 14px;
+}
+
+.fc-confirm-title {
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--text-card);
+  text-wrap: pretty;
+}
+.fc-confirm-id {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* Itemized consequence list. */
+.fc-confirm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #7c7c83;
+}
+.fc-confirm-live {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-card);
+}
+/* Frame 7a draws the live dot at 7px (base .status-dot is 8px). */
+.fc-confirm-live .status-dot {
+  width: 7px;
+  height: 7px;
+}
+.fc-confirm-kept {
+  color: var(--meta);
+}
+
+/* -- inline errors ---------------------------------------------------------- */
+
+.fc-modal-error {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--fc-bad-text);
+  text-wrap: pretty;
+}
+/* Own row above the footer (composer shells). */
+.fc-modal-error.row {
+  padding: 12px 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}

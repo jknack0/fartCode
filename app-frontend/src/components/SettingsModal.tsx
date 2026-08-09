@@ -1,25 +1,43 @@
-// App settings modal (E14-01): shortcut customization — every registered
-// command with its live binding, remap by pressing the new chord, reset per
-// command or clear all (restores the default map and removes hints).
+// Unified settings surface (design_handoff_v2 7c): 170px left nav —
+// App / Keys / one row per project — with the active row pulled into the
+// gutter by the accent bar. App pane = agents on this machine (7d) +
+// provider accounts; Keys pane = the E14-01 shortcut editor restyled to
+// rows; project panes = ProjectSettingsPane (full field map). Rendering is
+// gated by Modals.tsx (settingsOpen / projectSettingsOpen) — the default
+// export here draws the surface unconditionally.
 import { useReducer, useState } from "react";
 import { chordFromEvent, formatChord, isBindableChord } from "../lib/keychord";
-import { bindings, clearAllOverrides, saveOverride } from "../lib/useCommands";
+import { bindings, clearAllOverrides, hint, saveOverride } from "../lib/useCommands";
+import { useSidebar } from "../store/sidebar";
 import { useUi } from "../store/ui";
+import AgentsList from "./AgentsList";
+import { ProjectSettingsPane } from "./ProjectSettings";
 import ProviderAccounts from "./ProviderAccounts";
 
-export default function SettingsModal({ onClose }: { onClose: () => void }) {
+const SCOPE_LABELS: Record<string, string> = {
+  global: "Everywhere",
+  "app-view": "Everywhere",
+  "project-view": "Project open",
+  "task-view": "Task open",
+  editor: "Editor focused",
+  modal: "Dialogs",
+};
+
+const SCOPE_ORDER = ["Everywhere", "Project open", "Task open", "Editor focused", "Dialogs"];
+
+/* -- Keys pane: the shortcut editor as rows ------------------------------ */
+
+function KeysPane() {
   // Registry mutations are outside zustand — bump to re-render after them.
   const [, bump] = useReducer((n: number) => n + 1, 0);
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const list = bindings();
-  const settingsOpen = useUi((s) => s.settingsOpen);
-
-  if (!settingsOpen) return null;
 
   const captureChord = (commandId: string) => (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
       e.preventDefault();
+      e.stopPropagation();
       setEditing(null);
       setError(null);
       return;
@@ -59,87 +77,147 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     });
   };
 
+  const groups = SCOPE_ORDER.map((label) => ({
+    label,
+    rows: list.filter((b) => (SCOPE_LABELS[b.scope] ?? b.scope) === label),
+  })).filter((g) => g.rows.length > 0);
+
+  return (
+    <>
+      {error && <p className="fc-set-error">{error}</p>}
+      {groups.map((g) => (
+        <div className="fc-set-group" key={g.label}>
+          <div className="fc-set-group-label">{g.label}</div>
+          {g.rows.map((b) => (
+            <div className="fc-key-row" key={b.id}>
+              <span className="fc-key-label">
+                {b.label}
+                {b.customized && (
+                  <span className="fc-key-custom" title="Customized">
+                    custom
+                  </span>
+                )}
+              </span>
+              <span className="fc-key-right">
+                {editing === b.id ? (
+                  <span
+                    className="fc-key-editing"
+                    tabIndex={0}
+                    onKeyDown={captureChord(b.id)}
+                    ref={(el) => el?.focus()}
+                  >
+                    press a chord… esc cancels
+                  </span>
+                ) : (
+                  <button
+                    className={`fc-key-chord${b.customized ? " customized" : ""}`}
+                    title={
+                      b.hint
+                        ? `Remap ${b.label} — click, then press the new chord`
+                        : `Bind ${b.label}`
+                    }
+                    onClick={() => {
+                      setError(null);
+                      setEditing(b.id);
+                    }}
+                  >
+                    {b.hint || "unbound"}
+                  </button>
+                )}
+                {b.customized && editing !== b.id && (
+                  <button
+                    className="fc-key-reset"
+                    title="Reset to default"
+                    onClick={() => void saveOverride(b.id, null).then(bump)}
+                  >
+                    ↺
+                  </button>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      ))}
+      <div className="fc-set-spacer" />
+      <div className="fc-set-footer">
+        <span className="fc-set-legend">click a binding · press the new chord</span>
+        <button
+          className="fc-set-footer-action"
+          title="Remove every custom binding"
+          onClick={() => void clearAllOverrides().then(bump)}
+        >
+          clear custom bindings
+        </button>
+      </div>
+    </>
+  );
+}
+
+/* -- shell --------------------------------------------------------------- */
+
+export default function SettingsModal({
+  onClose,
+  initialSection = "app",
+}: {
+  onClose: () => void;
+  initialSection?: string;
+}) {
+  const [section, setSection] = useState(initialSection);
+  const projects = useSidebar((s) => s.projects);
+  // Hints re-render live when bindings change (spec: subscribe bindingsVersion).
+  useUi((s) => s.bindingsVersion);
+
+  const activeProject = section.startsWith("project:")
+    ? projects.find((p) => `project:${p.id}` === section) ?? null
+    : null;
+  const title = section === "app" ? "App" : section === "keys" ? "Keys" : activeProject?.name ?? "";
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal settings-modal shortcuts-settings" onClick={(e) => e.stopPropagation()}>
-        <h2>Settings</h2>
-
-        <h3>Keyboard shortcuts</h3>
-        <p className="hint">
-          Click a binding and press the new chord. ⌘ maps to Ctrl on
-          Windows/Linux. Changes apply immediately and survive restarts.
-        </p>
-        {error && <p className="error">{error}</p>}
-
-        <table className="shortcut-table">
-          <thead>
-            <tr>
-              <th>Command</th>
-              <th>Scope</th>
-              <th>Binding</th>
-            </tr>
-          </thead>
-          <tbody>
-            {list.map((b) => (
-              <tr key={b.id}>
-                <td className="shortcut-label">
-                  {b.label}
-                  {b.customized && <span className="customized-mark" title="Customized" />}
-                </td>
-                <td className="shortcut-scope">{b.scope}</td>
-                <td>
-                  {editing === b.id ? (
-                    <span
-                      className="shortcut-editing"
-                      tabIndex={0}
-                      onKeyDown={captureChord(b.id)}
-                      ref={(el) => el?.focus()}
-                    >
-                      press a chord… (Esc cancels)
-                    </span>
-                  ) : (
-                    <button
-                      className={`shortcut-chord${b.customized ? " customized" : ""}`}
-                      title={
-                        b.hint
-                          ? `Remap ${b.label} — click, then press the new chord`
-                          : `Bind ${b.label}`
-                      }
-                      onClick={() => {
-                        setError(null);
-                        setEditing(b.id);
-                      }}
-                    >
-                      {b.hint || "unbound"}
-                    </button>
-                  )}
-                  {b.customized && editing !== b.id && (
-                    <button
-                      className="shortcut-reset"
-                      title="Reset to default"
-                      onClick={() => void saveOverride(b.id, null).then(bump)}
-                    >
-                      ↺
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        <ProviderAccounts />
-
-        <div className="modal-actions">
+      <div className="fc-settings" onClick={(e) => e.stopPropagation()}>
+        <nav className="fc-set-nav">
           <button
-            title="Remove every custom binding"
-            onClick={() => void clearAllOverrides().then(bump)}
+            className={`fc-set-nav-row${section === "app" ? " active" : ""}`}
+            onClick={() => setSection("app")}
           >
-            Clear all custom bindings
+            App
           </button>
-          <button className="primary" onClick={onClose}>
-            Done
+          <button
+            className={`fc-set-nav-row${section === "keys" ? " active" : ""}`}
+            onClick={() => setSection("keys")}
+          >
+            Keys
           </button>
+          {projects.map((p) => (
+            <button
+              key={p.id}
+              className={`fc-set-nav-row${section === `project:${p.id}` ? " active" : ""}`}
+              onClick={() => setSection(`project:${p.id}`)}
+            >
+              {p.name}
+            </button>
+          ))}
+        </nav>
+        <div className="fc-set-pane">
+          <div className="fc-set-pane-head">
+            <span className="fc-set-pane-title">{title}</span>
+            <button className="fc-set-esc" onClick={onClose} title="Close settings">
+              {(hint("close-modal") || "esc").toLowerCase()}
+            </button>
+          </div>
+          {section === "app" && (
+            <div className="fc-set-pane-body">
+              <AgentsList />
+              <ProviderAccounts />
+              <div className="fc-set-spacer" />
+            </div>
+          )}
+          {section === "keys" && (
+            <div className="fc-set-pane-body">
+              <KeysPane />
+            </div>
+          )}
+          {activeProject && <ProjectSettingsPane projectId={activeProject.id} />}
         </div>
       </div>
     </div>

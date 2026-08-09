@@ -2,6 +2,7 @@
 // task-switch ordering contract (visible tree order, skipping collapsed).
 import { create } from "zustand";
 import {
+  CreateTaskOptions,
   FartcodeEvent,
   ProjectDto,
   TaskDto,
@@ -12,6 +13,7 @@ import {
   listProjects,
   listTasks,
   onFartcodeEvent,
+  projectGitPull,
   setViewState,
   togglePin as apiTogglePin,
 } from "../lib/tauri";
@@ -30,7 +32,7 @@ interface SidebarState {
   /** Task-switch navigation (E2-10): select a task and its project. */
   switchToTask: (task: TaskDto) => void;
   toggleCollapsed: (id: string) => void;
-  createTask: (projectId: string) => Promise<void>;
+  createTask: (projectId: string, opts?: CreateTaskOptions) => Promise<void>;
   createProject: (path: string) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   deleteTask: (projectId: string, taskId: string) => Promise<void>;
@@ -38,6 +40,18 @@ interface SidebarState {
 }
 
 const SIDEBAR_VIEW_STATE_KEY = "view-state:app:sidebar";
+
+// ponytail: 30s cooldown per project, in-memory only — restart just re-pulls.
+const lastPullAt: Record<string, number> = {};
+
+const PULL_COOLDOWN_MS = 30_000;
+
+function autoPullProject(id: string) {
+  const now = Date.now();
+  if (now - (lastPullAt[id] ?? 0) < PULL_COOLDOWN_MS) return;
+  lastPullAt[id] = now;
+  projectGitPull(id).catch((e) => console.warn("project pull failed:", e));
+}
 
 export const useSidebar = create<SidebarState>((set, get) => ({
   projects: [],
@@ -94,8 +108,12 @@ export const useSidebar = create<SidebarState>((set, get) => ({
   },
 
   selectProject: (id) => {
+    const changed = id !== get().selectedProjectId;
     set({ selectedProjectId: id, selectedTaskId: null });
     persistSidebarView();
+    // Entering the project view implies wanting the root current (merged
+    // worktree branches) — pull --ff-only in the background.
+    if (changed) autoPullProject(id);
   },
   selectTask: (id) => {
     // A task is always selected under its own project — keeps TaskView's
@@ -116,8 +134,8 @@ export const useSidebar = create<SidebarState>((set, get) => ({
     persistSidebarView();
   },
 
-  createTask: async (projectId: string) => {
-    const task = await apiCreateTask(projectId, "New task");
+  createTask: async (projectId: string, opts?: CreateTaskOptions) => {
+    const task = await apiCreateTask(projectId, "New task", opts);
     set((s) => {
       const tasks = [...(s.tasksByProject[projectId] ?? []), task];
       return {
@@ -234,7 +252,14 @@ export function wireSidebarEvents(): () => void {
       });
     } else if (event.type === "project:added") {
       s.load().catch(() => {});
-    } else if (event.type === "task:created" || event.type === "task:deleted") {
+    } else if (
+      event.type === "task:created" ||
+      event.type === "task:deleted" ||
+      // 7a: archive/restore flip archivedAt — refetch so the board/flyout
+      // drop or resurface the task (restore may come from the palette).
+      event.type === "task:archived" ||
+      event.type === "task:restored"
+    ) {
       // Refetch the affected project's tasks.
       const projectId = event.type === "task:created" ? event.projectId : null;
       if (projectId) {

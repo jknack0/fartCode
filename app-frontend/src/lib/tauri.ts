@@ -34,6 +34,8 @@ export type FartcodeEvent =
   | { type: "task:created"; id: string; projectId: string; name: string }
   | { type: "task:deleted"; taskId: string }
   | { type: "task:status_changed"; taskId: string; status: string }
+  | { type: "task:archived"; taskId: string }
+  | { type: "task:restored"; taskId: string }
   | { type: "git:changed"; projectId: string; workspaceId: string }
   | { type: "files:changed"; workspaceId: string; paths: string[] }
   | { type: "comment:created"; id: string; taskId: string; filePath: string; lineNumber: number }
@@ -41,7 +43,39 @@ export type FartcodeEvent =
   | { type: "pr:updated"; workspaceId: string; prUrl: string }
   | { type: "issue:created"; id: string; projectId: string; title: string }
   | { type: "issue:updated"; id: string; projectId: string }
-  | { type: "issue:deleted"; id: string; projectId: string };
+  | { type: "issue:deleted"; id: string; projectId: string }
+  // E18-04/05 step engine (fartcode-app/src/app.rs `event_to_value`).
+  // `step:launch` is a DIRECTIVE — open/focus the task's agent session;
+  // the rest are notifications. Note a command-path launch emits the event
+  // AND returns the same payload in `EnterOutcomeDto.launch`, so a
+  // consumer that acts on both must dedupe (BoardView does).
+  | {
+      type: "step:launch";
+      issueId: string;
+      projectId: string;
+      columnId: string;
+      taskId: string;
+      prompt: string;
+      provider: string;
+      model: string | null;
+      effort: string | null;
+      reattached: boolean;
+    }
+  | {
+      type: "step:queued";
+      issueId: string;
+      projectId: string;
+      columnId: string;
+      provider: string;
+      model: string | null;
+      effort: string | null;
+    }
+  | { type: "step:queue_cleared"; issueId: string; projectId: string; columnId: string }
+  /** The step settled and its column HOLDS — the card's step-done dot
+   * (v3 system rules). Derived state: nothing is stored, so it lives only
+   * for this session. */
+  | { type: "step:settled"; issueId: string; projectId: string; columnId: string; taskId: string }
+  | { type: "setting:changed"; key: string };
 
 export function listProjects(): Promise<ProjectDto[]> {
   return invoke("list_projects");
@@ -52,8 +86,32 @@ export function createProject(path: string): Promise<ProjectDto> {
 export function deleteProject(id: string): Promise<void> {
   return invoke("delete_project", { id });
 }
-export function createTask(projectId: string, name: string): Promise<TaskDto> {
-  return invoke("create_task", { projectId, name });
+export type WorkspaceKind = "new-worktree" | "project-root";
+export interface CreateTaskOptions {
+  workspace?: WorkspaceKind;
+  /** Existing branch to check out in the worktree (default: new branch off the base ref). */
+  branch?: string;
+}
+export function createTask(
+  projectId: string,
+  name: string,
+  opts: CreateTaskOptions = {},
+): Promise<TaskDto> {
+  return invoke("create_task", {
+    projectId,
+    name,
+    workspace: opts.workspace ?? null,
+    branch: opts.branch ?? null,
+  });
+}
+export interface BranchRef {
+  name: string;
+  upstream: string | null;
+  is_remote: boolean;
+  object: string;
+}
+export function listProjectBranches(projectId: string): Promise<BranchRef[]> {
+  return invoke("list_project_branches", { projectId });
 }
 
 export function listTasks(projectId: string): Promise<TaskDto[]> {
@@ -84,6 +142,17 @@ export function deleteTask(
     deleteWorktree: options.deleteWorktree ?? null,
     deleteBranch: options.deleteBranch ?? null,
   });
+}
+
+/** 7a "a archive instead": the card leaves the board; worktree + branch
+ * survive. Emits `task:archived`. */
+export function archiveTask(id: string): Promise<void> {
+  return invoke("task_archive", { taskId: id });
+}
+
+/** ⌘K restore: clears `archivedAt`, the task returns. Emits `task:restored`. */
+export function restoreTask(id: string): Promise<void> {
+  return invoke("task_restore", { taskId: id });
 }
 
 /** Subscribe to backend events; returns an unsubscribe fn. */
@@ -135,6 +204,22 @@ export function updateProjectSettings(
 }
 export function shareWithTeam(projectId: string): Promise<boolean> {
   return invoke("share_with_team", { projectId });
+}
+
+/** 7c `⇧⌘s share local values` (E1-02): moves local shareable values into
+ * the repo `.fartCode.json` and clears them from the DB. */
+export function projectSettingsShare(projectId: string): Promise<void> {
+  return invoke("project_settings_share", { projectId });
+}
+
+/** Which source won each SHAREABLE setting key (`preservePatterns` /
+ * `shellSetup` / `scripts`): "shared" = the `.fartCode.json` value wins
+ * (7c green tag), "local" = a DB override beats it, "default" = neither
+ * defines it. */
+export function projectSettingsProvenance(
+  projectId: string,
+): Promise<Record<string, "default" | "shared" | "local">> {
+  return invoke("project_settings_provenance", { projectId });
 }
 
 // -- View state (E1-08) -------------------------------------------------------
@@ -263,6 +348,58 @@ export function listProviders(): Promise<ProviderDto[]> {
   return invoke("list_providers");
 }
 
+/** ProjectSettings "Default agent · model" row: writes the app-wide
+ * `defaultAgent` setting (validated against the provider registry).
+ * Emits `setting:changed` with key `defaultAgent` — refetch on it. */
+export function setDefaultAgent(providerId: string): Promise<void> {
+  return invoke("set_default_agent", { providerId });
+}
+
+// -- 7d Agents on this machine (E3-02 host dependencies) ----------------------
+
+/** One agent CLI row. `latest` is set only when cheaply known (the network
+ * update check is a Phase-0 stub — currently always null, so hide "update
+ * available" affordances until it lands). `acp` mirrors the provider
+ * registry capability; `isDefault` = the `defaultAgent` app setting. */
+export interface HostDependencyDto {
+  providerId: string;
+  name: string;
+  version: string | null;
+  path: string | null;
+  installed: boolean;
+  latest: string | null;
+  acp: boolean;
+  isDefault: boolean;
+}
+
+/** Registry tail counts (7d `+ 31 more in the registry · 22 acp`). */
+export interface DependencyRegistrySummaryDto {
+  total: number;
+  acp: number;
+}
+
+/** Every registered agent CLI with detection state. `refresh` forces a
+ * re-detect (PATH scan + version probes); default serves the 300s cache. */
+export function hostDependencyList(refresh = false): Promise<HostDependencyDto[]> {
+  return invoke("host_dependency_list", { refresh });
+}
+
+/** Installs the provider's CLI via its registry plan; resolves with the
+ * re-detected row when the installer finishes. No progress events — the
+ * install runner reports no percentage (see backend module docs). */
+export function hostDependencyInstall(id: string): Promise<HostDependencyDto> {
+  return invoke("host_dependency_install", { providerId: id });
+}
+
+/** Updates the provider's CLI; resolves with the re-detected row. */
+export function hostDependencyUpdate(id: string): Promise<HostDependencyDto> {
+  return invoke("host_dependency_update", { providerId: id });
+}
+
+export function hostDependencyRegistrySummary(): Promise<DependencyRegistrySummaryDto> {
+  return invoke("host_dependency_registry_summary");
+}
+
 // -- E2-12 interactive terminals ---------------------------------------------
 
 export function terminalOpen(
@@ -297,12 +434,16 @@ export function terminalSurviving(taskId: string): Promise<number> {
 
 /** A task terminal: `kind` is `shell` | `agent` | `lifecycle` (script
  * terminals stay listed after the script exits so their tab can reattach
- * the output tail — E1-06). */
+ * the output tail — E1-06). `running` is false only for retained finished
+ * lifecycle entries; `exitCode` is set for those (7b `setup ✗ exit 1`),
+ * null while running or when the OS reported none. */
 export interface TaskTerminalDto {
   id: string;
   agent: string | null;
   kind: string;
   scriptType: string | null;
+  running: boolean;
+  exitCode: number | null;
 }
 
 /** Lists the task's terminals (diff selection routing + restore). */
@@ -997,6 +1138,14 @@ export interface BlockerRefDto {
   id: string;
   title: string;
   lane: Lane;
+  /** The blocker's effective column (mirror first, seeded lane as the
+   * fallback) — `lane` cannot name a non-seeded column, so this is the
+   * only thing that can label the row with the column the card is
+   * actually in. null when its lane maps to no column at all. */
+  columnId: string | null;
+  /** True when the blocker's column carries counts_as_done (E18-03,
+   * ADR-0037 item 6) — key "is it finished?" off this, not the lane. */
+  countsAsDone: boolean;
 }
 
 /** One board card. `blocked` is derived server-side (any blocker lane ≠
@@ -1016,6 +1165,10 @@ export interface IssueDto {
   linkedTaskId: string | null;
   /** Source URL when imported from an external tracker (GitHub #import). */
   externalRef: string | null;
+  /** Mirror pointer to the card's board column (E18-04): maintained by
+   * the enter primitive (lane moves route through it); lane stays
+   * authoritative until E18-07. null on never-moved cards. */
+  columnId: string | null;
   blocked: boolean;
   blockers: BlockerRefDto[];
   createdAt: string | null;
@@ -1095,6 +1248,156 @@ export interface DispatchOutcomeDto {
  * reattaches to the live one. */
 export function issueDispatch(issueId: string): Promise<DispatchOutcomeDto> {
   return invoke("issue_dispatch", { issueId });
+}
+
+// -- E18 configurable pipeline columns (ADR-0037) -------------------------------
+// Spike behind the seeded default: `lane` stays authoritative on IssueDto;
+// columns are data the board does not render from yet.
+
+export type ColumnKind = "shelf" | "agent_step" | "human_gate";
+/** Step trigger: `run` fires on drop; `queue` confirms first. */
+export type ColumnOnEnter = "run" | "queue";
+/** Settle behavior: `hold` waits for a human drag; `advance` auto-moves. */
+export type ColumnOnSettle = "hold" | "advance";
+
+/** One board column (ADR-0037): kind + flags + agent-step config. */
+export interface BoardColumnDto {
+  id: string;
+  projectId: string;
+  name: string;
+  position: number;
+  kind: ColumnKind;
+  countsAsDone: boolean;
+  isLanding: boolean;
+  onEnter: ColumnOnEnter;
+  onSettle: ColumnOnSettle;
+  /** Explicit advance target (same-project column id); null = the next
+   * column by position. Seeded Quick targets Done. */
+  advanceTo: string | null;
+  /** null on an agent step = the built-in dispatch packet. */
+  stepPrompt: string | null;
+  stepProvider: string | null;
+  stepModel: string | null;
+  stepEffort: string | null;
+  /** Tool allowlist for the step's agent session. null = unrestricted;
+   * a list allows ONLY the listed tools (so [] allows none — a corrupt
+   * stored allowlist also reads as [], failing closed). */
+  stepTools: string[] | null;
+  /** The legacy lane a seeded column mirrors ("backlog" | "ready" |
+   * "in_progress" | "in_review" | "done"); null on Quick and user-created
+   * columns. Read-only. */
+  seedLane: Lane | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+/** Columns for a project in board order (position). */
+export function columnList(projectId: string): Promise<BoardColumnDto[]> {
+  return invoke("column_list", { projectId });
+}
+
+/** Creates a column appended to the end of the board. `isLanding: true`
+ * moves the landing flag onto the new column (never duplicates it).
+ * `advanceTo` must reference a same-project column. */
+export function columnCreate(args: {
+  projectId: string;
+  name: string;
+  kind: ColumnKind;
+  countsAsDone?: boolean;
+  isLanding?: boolean;
+  onEnter?: ColumnOnEnter;
+  onSettle?: ColumnOnSettle;
+  advanceTo?: string | null;
+  stepPrompt?: string | null;
+  stepProvider?: string | null;
+  stepModel?: string | null;
+  stepEffort?: string | null;
+  /** Omit/null = unrestricted; a list (even empty) = allowlist. */
+  stepTools?: string[] | null;
+}): Promise<BoardColumnDto> {
+  return invoke("column_create", { request: args });
+}
+
+/** Field patch — tri-state per clearable field: OMIT the key to leave the
+ * field alone; EXPLICIT null clears it (advanceTo → back to next-column,
+ * stepTools → back to unrestricted, step* → unset); a VALUE sets it. The
+ * backend distinguishes absent from null, so spreads that materialize
+ * undefined keys as null will clear fields. `name` is non-nullable.
+ * `isLanding: true` moves the landing flag; `false` on the landing column
+ * is rejected (move it instead). */
+export function columnUpdate(
+  columnId: string,
+  patch: {
+    name?: string;
+    kind?: ColumnKind;
+    countsAsDone?: boolean;
+    isLanding?: boolean;
+    onEnter?: ColumnOnEnter;
+    onSettle?: ColumnOnSettle;
+    advanceTo?: string | null;
+    stepPrompt?: string | null;
+    stepProvider?: string | null;
+    stepModel?: string | null;
+    stepEffort?: string | null;
+    stepTools?: string[] | null;
+  },
+): Promise<BoardColumnDto> {
+  return invoke("column_update", { columnId, patch });
+}
+
+/** Rejected while the column is occupied (derived from the authoritative
+ * lane for seeded columns, from the mirror pointer otherwise) and for the
+ * landing column; remaining positions compact to 0..n-1. */
+export function columnDelete(columnId: string): Promise<void> {
+  return invoke("column_delete", { columnId });
+}
+
+/** Full-board reorder: `columnIds` must list every column of the project
+ * exactly once, in the new order. Returns the reordered board. */
+export function columnReorder(
+  projectId: string,
+  columnIds: string[],
+): Promise<BoardColumnDto[]> {
+  return invoke("column_reorder", { projectId, columnIds });
+}
+
+// -- E18-04/05 step engine ------------------------------------------------------
+
+/** Launch payload (DispatchOutcomeDto parity: empty prompt + reattached
+ * on reattach). Also rides the `step:launch` event. */
+export interface StepLaunchInfoDto {
+  task: TaskDto;
+  prompt: string;
+  provider: string;
+  model: string | null;
+  effort: string | null;
+  reattached: boolean;
+}
+
+/** What the engine did on entry/confirm. */
+export interface EnterOutcomeDto {
+  issue: IssueDto;
+  /** "launched" | "queued" | "reattached" | "inert" */
+  step: "launched" | "queued" | "reattached" | "inert";
+  launch: StepLaunchInfoDto | null;
+}
+
+/** The engine's move: enter a column, then run/queue/nothing per the
+ * column's kind and onEnter. Position omitted = append. Events:
+ * step:launch / step:queued ride the fartcode:event channel. */
+export function issueEnterColumn(
+  issueId: string,
+  columnId: string,
+  position?: number,
+): Promise<EnterOutcomeDto> {
+  return invoke("issue_enter_column", { issueId, columnId, position: position ?? null });
+}
+
+/** Fires the parked (queue-mode) step. Single-shot: throws "no parked
+ * step" when nothing is parked (already confirmed, or cleared by a
+ * drag — see step:queue_cleared). */
+export function stepConfirm(issueId: string): Promise<EnterOutcomeDto> {
+  return invoke("step_confirm", { issueId });
 }
 
 /** Project-scoped (PM chat) conversations (E17-04). */

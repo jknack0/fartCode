@@ -1,70 +1,198 @@
-// Issue board (E17-02, #56): the project view's primary surface. One
-// plate with five hairline-ruled lanes render from issue_list in board
-// order; native HTML5 drag/drop persists moves via issue_move. Dragging
-// a blocked card into In Progress gates on a confirm modal (ADR-0032:
-// confirm, never a hard stop); the actual task spawn is E17-03. Card
-// click swaps the right region to the card detail. GitHub issues arrive
-// as NATIVE cards via the header's "Sync from GitHub". All state
-// reconciles by refetching on issue events (blocked badges are derived
-// — one move can flip OTHER cards).
+// Issue board (E17-02 #56, generalized by E18-07 #66): the project view's
+// primary surface. ONE plate of N hairline-ruled COLUMNS, rendered from
+// board_columns in position order (ADR-0037) — there is no lane list here,
+// no five, and nothing keyed on a column's name. Every column carries its
+// own semantics as data: `kind` decides the header subline, `on_enter`
+// decides whether a drop runs an agent or parks it behind a confirm,
+// `on_settle` decides whether a settled step holds or advances,
+// `counts_as_done` dims the column, `is_landing` takes new work.
+//
+// Moves go through the step engine's ONE primitive, `issue_enter_column`
+// (E18-04/05), which runs/queues/does nothing per the target column and
+// hands back a launch payload; `step:launch` carries the same directive for
+// launches the engine chained on its own. Within-column reorder stays on
+// `issue_move` — the enter primitive is a step trigger, and re-entering an
+// agent step reattaches, which is not what dragging a card up the list
+// means. The board NEVER kills an agent (ADR-0037 item 11): a move into a
+// terminal column confirms and then moves; the agent keeps running.
+//
+// Card run-state derives from the LIVE SESSION (runState.ts), never from
+// the card's column. Blockedness derives from `countsAsDone`, never from a
+// lane string. All state reconciles by refetching on issue/step events —
+// one move can flip OTHER cards' blocked badges.
+//
+// Keyboard (frame 4b + v3 §8b): j/k move card focus, h/l walk EVERY column
+// (empty ones included), ⇧+those move the card through the same gates, ↵
+// opens (a failed card's ↵ reads the linked task), a adds an issue to the
+// landing column. Under 900px the board collapses to the §8b narrow mode:
+// a scrolling mono strip of every column, the focused column alone below
+// it, and the strip following focus.
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-shell";
 import {
+  gitCommitState,
   issueCreate,
-  issueDispatch,
+  issueEnterColumn,
+  issueImportGithub,
   issueList,
   issueMove,
   onFartcodeEvent,
-  terminalOpenAgent,
-  terminalWrite,
+  projectGithubIssues,
+  stepConfirm,
+  type BoardColumnDto,
   type IssueDto,
-  type Lane,
   type TaskDto,
 } from "../../lib/tauri";
+import {
+  columnConfigSummary,
+  columnIdForIssue,
+  columnSublineTone,
+  groupByColumn,
+  landingColumn,
+  stepArtifact,
+} from "../../lib/columnConfig";
+import { useColumns } from "../../store/columns";
+import { defaultAgentName, useDependencies } from "../../store/dependencies";
+import { useScripts } from "../../store/scripts";
 import { useSidebar } from "../../store/sidebar";
+import { useSteps } from "../../store/steps";
 import { useUi } from "../../store/ui";
-import { IconGitHub, IconPlus } from "../icons";
+import {
+  agentLive,
+  blockerLabel,
+  elapsedShort,
+  issueRefParts,
+  runStateFor,
+} from "./runState";
 
-const LANES: { id: Lane; label: string }[] = [
-  { id: "backlog", label: "Backlog" },
-  { id: "ready", label: "Ready" },
-  { id: "in_progress", label: "In Progress" },
-  { id: "in_review", label: "In Review" },
-  { id: "done", label: "Done" },
-];
+// GitHub issue sync autoruns on view entry (formerly the header's manual
+// "Sync from GitHub" button): import every open issue not already on the
+// board (deduped by URL); the IssueCreated events then drive the board's
+// own reload. Failures stay quiet — the board works fine offline/local.
+// ponytail: 60s cooldown per project, in-memory only — remount re-syncs.
+const lastIssueSyncAt: Record<string, number> = {};
+const ISSUE_SYNC_COOLDOWN_MS = 60_000;
 
-export const LANE_LABEL: Record<Lane, string> = {
-  backlog: "Backlog",
-  ready: "Ready",
-  in_progress: "In Progress",
-  in_review: "In Review",
-  done: "Done",
-};
+/** §8b / DESIGN.md Layout: below this WINDOW width the board is one column
+ * plus the mono strip. Deliberately not the board pane's own width — see
+ * the resize effect. */
+const NARROW_PX = 900;
+
+export function isNarrowViewport(): boolean {
+  return typeof window !== "undefined" && window.innerWidth < NARROW_PX;
+}
+
+/** Stable empty arrays — a fresh literal in a zustand selector re-renders
+ * forever. */
+const NO_COLUMNS: BoardColumnDto[] = [];
+const NO_TASKS: TaskDto[] = [];
+
+async function syncGithubIssues(projectId: string): Promise<void> {
+  const [ghIssues, board] = await Promise.all([
+    projectGithubIssues(projectId),
+    issueList(projectId),
+  ]);
+  const imported = new Set(
+    board.filter((i) => i.externalRef).map((i) => i.externalRef),
+  );
+  for (const g of ghIssues.filter((x) => !imported.has(x.url))) {
+    await issueImportGithub({
+      projectId,
+      number: g.number,
+      title: g.title,
+      url: g.url,
+      body: g.body,
+      labels: g.labels,
+      assignees: g.assignees,
+      milestone: g.milestone,
+    });
+  }
+}
 
 /** Provider chip label: the display name minus any "CLI"/"-cli" suffix
  * ("Claude Code CLI" → "Claude Code"). */
 const providerLabel = (provider: string) => provider.replace(/\s*[-\s]?CLI$/i, "");
 
-/** A blocked drop awaiting the user's confirm (issue + where it lands). */
-interface PendingBlockedDrop {
+/** A gated move awaiting the user's confirm (§5g, templated per §8c from
+ * column config). `blocked` and `live-agent` have NOT moved the card yet —
+ * esc keeps it where it is, and the footer says so. `queued` is different
+ * in kind: the engine writes the move BEFORE it parks the step
+ * (step_engine.rs — an errored move must leave the park untouched), so by
+ * the time the confirm exists the card has already arrived. Its footer
+ * must therefore promise what esc actually does, which is leave the step
+ * parked, not put the card back. */
+type PendingConfirm = {
+  kind: "blocked" | "live-agent" | "queued";
   issue: IssueDto;
-  lane: Lane;
-  position: number;
+  /** The move's target column — the one whose name fills the copy. */
+  column: BoardColumnDto;
+  /** Where the card sits now, for "esc keep in <column>". */
+  from: BoardColumnDto | null;
+  position: number | null;
+};
+
+/** Insertion point during a drag — rendered as a 1px accent line between
+ * cards, never a ghost box (frame 4b). */
+interface DropTarget {
+  columnId: string;
+  index: number;
 }
+
+const isEditableTarget = (t: EventTarget | null): boolean =>
+  t instanceof HTMLElement &&
+  (t.tagName === "INPUT" ||
+    t.tagName === "TEXTAREA" ||
+    t.tagName === "SELECT" ||
+    t.isContentEditable);
 
 export default function BoardView({ projectId }: { projectId: string }) {
   const [issues, setIssues] = useState<IssueDto[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
-  const [overLane, setOverLane] = useState<Lane | null>(null);
-  const [pending, setPending] = useState<PendingBlockedDrop | null>(null);
+  const [over, setOver] = useState<DropTarget | null>(null);
+  const [pending, setPending] = useState<PendingConfirm | null>(null);
+  /** Linked task's branch for the confirm footer (fetched lazily). */
+  const [pendingBranch, setPendingBranch] = useState<string | null>(null);
+  /** Keyboard focus (frame 4b "focused"): roving, by issue id. */
+  const [focusId, setFocusId] = useState<string | null>(null);
+  /** Column focus is its OWN cursor: h/l walks every column, including
+   * empty ones, and narrow mode renders whichever one holds it. */
+  const [focusColumnId, setFocusColumnId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [creating, setCreating] = useState(false);
+  const [narrow, setNarrow] = useState(() => isNarrowViewport());
+  // Step state lives in an app-lifetime store, NOT here: carrying out a
+  // launch navigates to the task view and unmounts this component, so
+  // component state would be wiped by the very act it is tracking.
+  const steps = useSteps((s) => s.byIssue);
+  const stepError = useSteps((s) => s.error);
+  /** Park whose confirm the user dismissed — the park itself lives on. */
+  const [dismissedPark, setDismissedPark] = useState<string | null>(null);
   const detailIssueId = useUi((s) => s.boardDetailIssueId);
-  const projectTasks = useSidebar((s) => s.tasksByProject[projectId]);
+  const projectTasks = useSidebar((s) => s.tasksByProject[projectId]) ?? NO_TASKS;
+  const agentByTask = useScripts((s) => s.agentByTask);
+  const columns = useColumns((s) => s.byProject[projectId] ?? NO_COLUMNS);
+  const columnsLoaded = useColumns((s) => s.loaded[projectId] ?? false);
+  const columnsError = useColumns((s) => s.error);
+  const defaultAgent = useDependencies((s) => defaultAgentName(s.deps));
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  /** Latest issues for event handlers, which close over their mount. */
+  const issuesRef = useRef<IssueDto[]>([]);
+  issuesRef.current = issues;
+
+  // Columns are the board's shape — load before anything is drawn. The
+  // default agent names step columns whose provider is unpinned (§8a
+  // subline), so make sure the dependency cache is warm.
+  useEffect(() => {
+    void useColumns.getState().load(projectId);
+    if (useDependencies.getState().deps.length === 0) {
+      void useDependencies.getState().load();
+    }
+  }, [projectId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -78,6 +206,15 @@ export default function BoardView({ projectId }: { projectId: string }) {
         })
         .catch((e) => !cancelled && setError(String(e)));
     void reload();
+    // Autorun the GitHub import (cooldown-gated; imports emit IssueCreated,
+    // which the listener below turns into a reload).
+    const now = Date.now();
+    if (now - (lastIssueSyncAt[projectId] ?? 0) >= ISSUE_SYNC_COOLDOWN_MS) {
+      lastIssueSyncAt[projectId] = now;
+      syncGithubIssues(projectId).catch((e) =>
+        console.warn("github issue sync failed:", e),
+      );
+    }
     const unlisten = onFartcodeEvent((ev) => {
       if (
         (ev.type === "issue:created" ||
@@ -92,6 +229,16 @@ export default function BoardView({ projectId }: { projectId: string }) {
       if (ev.type === "task:deleted" || ev.type === "task:status_changed") {
         void reload();
       }
+      // Step engine (E18-04/05): the DIRECTIVE and the flags belong to the
+      // app-lifetime store (store/steps.ts) — see the note by `steps`
+      // above. The board only needs the card list refreshed, since a
+      // launch or an advance moves the card.
+      if (
+        (ev.type === "step:launch" || ev.type === "step:settled") &&
+        ev.projectId === projectId
+      ) {
+        void reload();
+      }
     });
     return () => {
       cancelled = true;
@@ -99,36 +246,357 @@ export default function BoardView({ projectId }: { projectId: string }) {
     };
   }, [projectId]);
 
-  const move = (issueId: string, lane: Lane, position: number) =>
-    issueMove(issueId, lane, position).catch((e) => setError(String(e)));
+  // Run-state is the live agent terminal, not task.status (ADR-0037 / the
+  // TaskHeader-dot finding) — hydrate every linked task once so the board
+  // knows which sessions are actually alive.
+  useEffect(() => {
+    const known = useScripts.getState().agentByTask;
+    for (const id of new Set(
+      issues.map((i) => i.linkedTaskId).filter((id): id is string => Boolean(id)),
+    )) {
+      if (!known[id]) void useScripts.getState().hydrate(id);
+    }
+  }, [issues]);
 
-  /** Focuses the card's linked task (reattach never spawns a second
-   * worktree — ADR-0032). */
-  const focusLinkedTask = (taskId: string) => {
-    const task = (useSidebar.getState().tasksByProject[projectId] ?? []).find(
-      (t) => t.id === taskId,
-    );
-    if (task) useSidebar.getState().switchToTask(task);
+  // §8b narrow mode follows the WINDOW, not the board pane. Measuring the
+  // pane looked more precise and was wrong: the rail (56) + flyout (244) +
+  // the 400px card-detail sheet come off the same width, so clicking a
+  // card on a 14" laptop dropped a perfectly wide board into single-column
+  // mode and took cross-column drag away mid-gesture. DESIGN.md's Layout
+  // rule is window-scoped ("Under ~900px the board collapses to one column
+  // and the rail narrows to 48px"), and a board too narrow for its columns
+  // already has the right answer: .board-frame scrolls sideways.
+  useEffect(() => {
+    const onResize = () => setNarrow(isNarrowViewport());
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // Elapsed meta ("· 4m") is derived from statusChangedAt, never stored —
+  // refresh on a slow tick (the display is minute-coarse).
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  const byColumn = useMemo(() => groupByColumn(issues, columns), [issues, columns]);
+  const cardsIn = (columnId: string | null): IssueDto[] =>
+    (columnId && byColumn.get(columnId)) || [];
+  const columnById = (id: string | null): BoardColumnDto | null =>
+    columns.find((c) => c.id === id) ?? null;
+  const columnOf = (issue: IssueDto): BoardColumnDto | null =>
+    columnById(columnIdForIssue(issue, columns));
+
+  // Keep the column cursor on a real column — first load, a deleted
+  // column, or a project switch all land here.
+  useEffect(() => {
+    if (columns.length === 0) {
+      if (focusColumnId !== null) setFocusColumnId(null);
+      return;
+    }
+    if (!columns.some((c) => c.id === focusColumnId)) {
+      setFocusColumnId(landingColumn(columns)?.id ?? columns[0].id);
+    }
+  }, [columns, focusColumnId]);
+
+  // Drop stale keyboard focus when its card leaves the board.
+  useEffect(() => {
+    if (focusId && !issues.some((i) => i.id === focusId)) setFocusId(null);
+  }, [issues, focusId]);
+
+  useEffect(() => {
+    if (!focusId) return;
+    document
+      .querySelector(`.board-card[data-issue-id="${focusId}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [focusId, issues]);
+
+  // §8b "the strip auto-scrolls to keep focus visible" — instant, never a
+  // smooth scroll (the app has exactly two keyframes).
+  useEffect(() => {
+    if (!narrow || !focusColumnId) return;
+    stripRef.current
+      ?.querySelector(`[data-column-id="${focusColumnId}"]`)
+      ?.scrollIntoView({ inline: "nearest", block: "nearest" });
+  }, [narrow, focusColumnId, columns]);
+
+  const linkedTask = (issue: IssueDto): TaskDto | undefined =>
+    issue.linkedTaskId
+      ? projectTasks.find((t) => t.id === issue.linkedTaskId)
+      : undefined;
+
+  /** Does this card have a live agent right now? The scripts store is the
+   * authority once hydrated; before that the legacy status test stands in. */
+  const hasLiveAgent = (issue: IssueDto): boolean => {
+    const task = linkedTask(issue);
+    if (!task) return false;
+    return agentLive(agentByTask[task.id], task.status);
   };
 
-  /** E17-03: dispatch an unlinked card — backend creates the task, then
-   * the agent terminal opens with the prompt packet bracket-pasted in. */
-  const dispatch = async (issue: IssueDto) => {
+  /** Focuses the card's linked task (reattach never spawns a second
+   * worktree — ADR-0032; the engine dedupes on linked_task_id). */
+  const focusLinkedTask = (taskId: string) => {
+    const task = projectTasks.find((t) => t.id === taskId);
+    if (task) useSidebar.getState().switchToTask(task);
+    else useSidebar.getState().selectTask(taskId);
+  };
+
+  /** THE move: enter a column and let the engine decide (run / queue /
+   * nothing) from that column's config.
+   *
+   * The outcome's `launch` is deliberately IGNORED. Every launch also
+   * emits `step:launch`, which the app-lifetime store carries out, so
+   * acting on both would need a dedupe — and the wall-clock dedupe that
+   * used to do it swallowed genuine second dispatches inside its window.
+   * One channel, no window.
+   *
+   * The `queued` discriminator IS used: the command already knows the step
+   * parked and returns the moved issue, so the confirm never has to race
+   * the card into the refetched list.
+   */
+  const enter = async (issue: IssueDto, column: BoardColumnDto, position: number | null) => {
     try {
-      const outcome = await issueDispatch(issue.id);
-      if (outcome.reattached) {
-        useSidebar.getState().switchToTask(outcome.task);
-        return;
+      const outcome = await issueEnterColumn(issue.id, column.id, position ?? undefined);
+      if (outcome.step === "queued") {
+        setPending({
+          kind: "queued",
+          issue: outcome.issue,
+          column,
+          from: columnOf(issue),
+          position: null,
+        });
       }
-      const terminalId = await terminalOpenAgent(outcome.task.id, outcome.provider, 24, 80);
-      await terminalWrite(terminalId, `\u001b[200~${outcome.prompt}\u001b[201~\r`);
-      useSidebar.getState().switchToTask(outcome.task);
     } catch (e) {
       setError(String(e));
     }
   };
 
-  /** Index among the lane's cards where the cursor is (midpoint rule). */
+  /** Within-column reorder — position only. Deliberately NOT the enter
+   * primitive: re-entering an agent step reattaches its session, which is
+   * not what dragging a card up its own column means. */
+  const reorder = (issue: IssueDto, position: number) =>
+    issueMove(issue.id, issue.lane, position).catch((e) => setError(String(e)));
+
+  /** Cross-column move with the §5g/§8c gates. The card does not move
+   * until the confirm resolves — esc keeps it where it is. */
+  const requestMove = (issue: IssueDto, column: BoardColumnDto, position: number) => {
+    const from = columnOf(issue);
+    if (from?.id === column.id) {
+      void reorder(issue, position);
+      return;
+    }
+    // Blocked work entering a step: confirm, never a hard stop (ADR-0032).
+    if (column.kind === "agent_step" && issue.blocked) {
+      setPending({ kind: "blocked", issue, column, from, position });
+      return;
+    }
+    // Live agent into a terminal column: the board never kills, so this
+    // asks and then moves — the agent keeps running either way.
+    if (column.countsAsDone && hasLiveAgent(issue)) {
+      setPending({ kind: "live-agent", issue, column, from, position });
+      return;
+    }
+    void enter(issue, column, position);
+  };
+
+  const confirmPending = () => {
+    if (!pending) return;
+    const { kind, issue, column, position } = pending;
+    setPending(null);
+    if (kind === "queued") {
+      // The park is consumed by the backend; the launch it produces
+      // arrives as `step:launch` like every other launch.
+      useSteps.getState().clearPark(issue.id);
+      stepConfirm(issue.id).catch((e) => setError(String(e)));
+      return;
+    }
+    void enter(issue, column, position);
+  };
+
+  const dismissPending = () => {
+    if (pending?.kind === "queued") {
+      // The card already moved and the backend park SURVIVES — esc means
+      // "leave it parked", which is what the footer now says. Keeping the
+      // flag is what preserves the dashed queued ring and lets the confirm
+      // be reopened, so it is deliberately not cleared here.
+      setDismissedPark(pending.issue.id);
+    }
+    setPending(null);
+  };
+
+  // Reconcile parks the UI did not raise itself: a settle that advanced
+  // into a queue-mode step, or the engine re-parking after a restart.
+  // `issues` IS a dep — a park announced before the card reached the list
+  // used to be dropped on the floor — and a dismissed park is remembered
+  // by id so the overlay does not immediately reopen.
+  useEffect(() => {
+    if (pending) return;
+    for (const [issueId, flags] of Object.entries(steps)) {
+      if (!flags.queuedColumnId || dismissedPark === issueId) continue;
+      const issue = issues.find((i) => i.id === issueId);
+      const column = columns.find((c) => c.id === flags.queuedColumnId);
+      if (!issue || !column) continue;
+      setPending({ kind: "queued", issue, column, from: columnOf(issue), position: null });
+      return;
+    }
+    // columnOf is derived from columns/issues, both already deps.
+  }, [steps, columns, issues, pending, dismissedPark]);
+
+  // A park that goes away (confirmed, superseded, card dragged out) frees
+  // its dismissal, so the next park on that card asks again.
+  useEffect(() => {
+    if (dismissedPark && !steps[dismissedPark]?.queuedColumnId) setDismissedPark(null);
+  }, [steps, dismissedPark]);
+
+  // Confirm footer branch: only a linked task has one ("… on <branch>";
+  // a fresh dispatch generates its branch server-side, so omit).
+  useEffect(() => {
+    setPendingBranch(null);
+    if (!pending || pending.kind === "live-agent") return;
+    const task = linkedTask(pending.issue);
+    if (!task?.workspaceId) return;
+    let cancelled = false;
+    gitCommitState(task.workspaceId)
+      .then((s) => {
+        if (!cancelled && s.branch) setPendingBranch(s.branch);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending]);
+
+  const openCard = (issue: IssueDto) => {
+    setFocusId(issue.id);
+    const col = columnOf(issue);
+    if (col) setFocusColumnId(col.id);
+    const ui = useUi.getState();
+    ui.setBoardDetailIssueId(issue.id);
+    // The detail swaps into the right sheet — make sure it's visible
+    // regardless of changes/chat.
+    ui.setChangesOpen(true);
+  };
+
+  // Board keyboard (frame 4b + §8b): j/k cards, h/l EVERY column, ⇧ moves
+  // the card, ↵ opens (reads on a failed card), a adds an issue. The
+  // confirm overlay swallows ↵/esc while open.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return;
+      if (pending) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          confirmPending();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          dismissPending();
+        }
+        return;
+      }
+      if (useUi.getState().modalOpen()) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      const cur = focusId ? (issues.find((i) => i.id === focusId) ?? null) : null;
+      if (e.key === "Enter") {
+        // A DOM-focused card handles its own Enter — don't double-open.
+        if (e.target instanceof HTMLElement && e.target.closest(".board-card")) return;
+        if (cur) {
+          e.preventDefault();
+          // A failed card advertises "↵ read" — Enter goes to the linked
+          // task, not the detail sheet (frame 4a).
+          const t = linkedTask(cur);
+          const rs = runStateFor({
+            status: t?.status,
+            agent: t ? agentByTask[t.id] : undefined,
+            stepDone: false,
+            queued: false,
+          });
+          if (t && rs.actionable) focusLinkedTask(t.id);
+          else openCard(cur);
+        }
+        return;
+      }
+      if (e.key === "a") {
+        e.preventDefault();
+        setAdding(true);
+        return;
+      }
+      const key = e.key.toLowerCase();
+      if (key !== "j" && key !== "k" && key !== "h" && key !== "l") return;
+      if (columns.length === 0) return;
+      e.preventDefault();
+
+      // THE COLUMN CURSOR is what h/l walks, and it is always well defined
+      // — the focused card's column when there is one, otherwise the
+      // column cursor itself. Deriving direction from the CARD was the
+      // bug: landing on an empty column nulls the card, and the next press
+      // then had nothing to step from, so it restarted the scan and
+      // teleported to the leftmost non-empty column. §8b says h/l walks
+      // EVERY column, so the walk must never depend on a card existing.
+      const curColumn = cur ? columnOf(cur) : columnById(focusColumnId);
+      const colIdx = Math.max(
+        0,
+        columns.findIndex((c) => c.id === curColumn?.id),
+      );
+      const list = cardsIn(columns[colIdx]?.id ?? null);
+      const idx = cur ? list.findIndex((i) => i.id === cur.id) : -1;
+
+      /** Steps the cursor one column and takes the nearest card with it
+       * (none when the column is empty — an empty column is a real stop). */
+      const walk = (dir: -1 | 1): void => {
+        const next = colIdx + dir;
+        if (next < 0 || next >= columns.length) return;
+        const target = columns[next];
+        setFocusColumnId(target.id);
+        const cand = cardsIn(target.id);
+        setFocusId(
+          cand.length > 0 ? cand[Math.min(Math.max(idx, 0), cand.length - 1)].id : null,
+        );
+      };
+
+      if (!e.shiftKey) {
+        if (key === "h" || key === "l") {
+          walk(key === "h" ? -1 : 1);
+          return;
+        }
+        // j/k with no focused card: take the first card of the column the
+        // cursor is on. On an empty column there is nothing to take, and
+        // j/k no-op rather than teleporting.
+        if (!cur) {
+          if (list.length > 0) setFocusId(list[key === "j" ? 0 : list.length - 1].id);
+          return;
+        }
+        if (key === "j" && idx < list.length - 1) setFocusId(list[idx + 1].id);
+        else if (key === "k" && idx > 0) setFocusId(list[idx - 1].id);
+        return;
+      }
+      // ⇧: move the card itself. With no card focused there is nothing to
+      // move, but the cursor still walks so the board stays navigable.
+      if (!cur) {
+        if (key === "h" || key === "l") walk(key === "h" ? -1 : 1);
+        return;
+      }
+      // Within-column positions use the after-removal convention (see
+      // handleDrop).
+      if (key === "j" && idx < list.length - 1) void reorder(cur, idx + 1);
+      else if (key === "k" && idx > 0) void reorder(cur, idx - 1);
+      else if (key === "h" || key === "l") {
+        const next = colIdx + (key === "h" ? -1 : 1);
+        if (next < 0 || next >= columns.length) return;
+        const target = columns[next];
+        setFocusColumnId(target.id);
+        requestMove(cur, target, Math.min(Math.max(idx, 0), cardsIn(target.id).length));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issues, columns, byColumn, focusId, focusColumnId, pending, agentByTask, projectId]);
+
+  /** Index among the column's cards where the cursor is (midpoint rule). */
   const dropIndex = (clientY: number, listEl: HTMLElement): number => {
     const cards = Array.from(listEl.querySelectorAll<HTMLElement>(".board-card"));
     for (let i = 0; i < cards.length; i++) {
@@ -138,41 +606,25 @@ export default function BoardView({ projectId }: { projectId: string }) {
     return cards.length;
   };
 
-  const handleDrop = (e: React.DragEvent, lane: Lane) => {
+  const handleDrop = (e: React.DragEvent, column: BoardColumnDto) => {
     e.preventDefault();
     setDragId(null);
-    setOverLane(null);
+    setOver(null);
     const issueId = e.dataTransfer.getData("text/fartCode-issue");
     const issue = issues.find((i) => i.id === issueId);
     if (!issue) return;
     const position = dropIndex(e.clientY, e.currentTarget as HTMLElement);
 
-    if (issue.lane === lane) {
-      // Within-lane reorder: removing the card shifts later indices down.
-      const siblings = issues.filter((i) => i.lane === lane);
+    if (columnOf(issue)?.id === column.id) {
+      // Within-column reorder: removing the card shifts later indices down.
+      const siblings = cardsIn(column.id);
       const from = siblings.findIndex((i) => i.id === issueId);
       const to = position > from ? position - 1 : position;
       if (to === from) return; // dropped back on itself
-      void move(issueId, lane, to);
+      void reorder(issue, to);
       return;
     }
-    if (lane === "in_progress") {
-      // Reattach: a live linked task gets a status move + focus, never a
-      // second spawn (ADR-0032).
-      if (issue.linkedTaskId) {
-        void move(issueId, lane, position);
-        focusLinkedTask(issue.linkedTaskId);
-        return;
-      }
-      // Dispatch spawns a real agent — blocked cards confirm first.
-      if (issue.blocked) {
-        setPending({ issue, lane, position });
-        return;
-      }
-      void dispatch(issue);
-      return;
-    }
-    void move(issueId, lane, position);
+    requestMove(issue, column, position);
   };
 
   const submitNew = async () => {
@@ -180,7 +632,12 @@ export default function BoardView({ projectId }: { projectId: string }) {
     if (!title || creating) return;
     setCreating(true);
     try {
-      const created = await issueCreate({ projectId, title, lane: "backlog" });
+      const created = await issueCreate({ projectId, title });
+      // ADR-0037 item 7: new work lands in the `is_landing` column,
+      // whichever it is — routed through the enter primitive so a landing
+      // column that IS a step behaves like every other entry into it.
+      const landing = landingColumn(columns);
+      if (landing) await enter(created, landing, null);
       const ui = useUi.getState();
       ui.setBoardDetailIssueId(created.id);
       ui.setChangesOpen(true);
@@ -193,23 +650,99 @@ export default function BoardView({ projectId }: { projectId: string }) {
   };
 
   const total = issues.length;
+  const landing = landingColumn(columns);
+  const focusedColumn = columnById(focusColumnId);
+  /** Columns rendered right now: all of them, or just the focused one. */
+  const visibleColumns = narrow
+    ? focusedColumn
+      ? [focusedColumn]
+      : columns.slice(0, 1)
+    : columns;
+  /** Empty-state copy names the first step column instead of a lane. */
+  const firstStep = columns.find((c) => c.kind === "agent_step");
+
+  const summaryOf = (column: BoardColumnDto) =>
+    columnConfigSummary(column, { columns, defaultAgent });
+
+  const columnHasLiveAgent = (columnId: string): boolean =>
+    cardsIn(columnId).some((i) => hasLiveAgent(i));
+
+  const renderCards = (column: BoardColumnDto) => {
+    const cards = cardsIn(column.id);
+    const artifact = stepArtifact(column);
+    return (
+      <div
+        className="board-lane-cards"
+        onDragOver={(e) => {
+          if (!dragId) return;
+          e.preventDefault();
+          const index = dropIndex(e.clientY, e.currentTarget as HTMLElement);
+          setOver((o) =>
+            o && o.columnId === column.id && o.index === index
+              ? o
+              : { columnId: column.id, index },
+          );
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+            setOver((o) => (o?.columnId === column.id ? null : o));
+          }
+        }}
+        onDrop={(e) => handleDrop(e, column)}
+      >
+        {cards.map((issue, i) => (
+          <Fragment key={issue.id}>
+            {over?.columnId === column.id && over.index === i && dragId !== issue.id && (
+              <div className="board-drop-line" />
+            )}
+            <BoardCard
+              issue={issue}
+              task={linkedTask(issue)}
+              agent={
+                issue.linkedTaskId ? agentByTask[issue.linkedTaskId] : undefined
+              }
+              stepDone={steps[issue.id]?.settledColumnId === column.id}
+              queued={steps[issue.id]?.queuedColumnId === column.id}
+              artifact={artifact}
+              selected={detailIssueId === issue.id}
+              focused={focusId === issue.id}
+              dragging={dragId === issue.id}
+              onDragStart={(e) => {
+                e.dataTransfer.setData("text/fartCode-issue", issue.id);
+                e.dataTransfer.effectAllowed = "move";
+                setDragId(issue.id);
+              }}
+              onDragEnd={() => {
+                setDragId(null);
+                setOver(null);
+              }}
+              onOpen={() => openCard(issue)}
+              onOpenIssue={(otherId) => {
+                const other = issues.find((x) => x.id === otherId);
+                if (other) openCard(other);
+              }}
+              onReadTask={(taskId) => focusLinkedTask(taskId)}
+            />
+          </Fragment>
+        ))}
+        {over?.columnId === column.id && over.index === cards.length && (
+          <div className="board-drop-line" />
+        )}
+        {cards.length === 0 && <div className="board-lane-placeholder" />}
+      </div>
+    );
+  };
+
+  // A column read that failed must SAY so — the shape of the board comes
+  // from it, so a silent failure would leave "Reading the board…" forever.
+  // A launch directive that could not be carried out (agent binary gone,
+  // PTY refused) fails in the app-lifetime store — surface it here rather
+  // than letting the card sit looking dispatched with nothing running.
+  const shown = error ?? stepError ?? columnsError;
 
   return (
-    <div className="board">
-      <div className="board-toolbar">
-        <h2 className="board-title">Board</h2>
-        <span className="board-total">{total}</span>
-        <button
-          className="board-add"
-          onClick={() => setAdding(true)}
-          title="Add issue to Backlog"
-        >
-          <IconPlus size={10} />
-          Add issue
-        </button>
-      </div>
-
-      {error && <p className="error board-error">{error}</p>}
+    <div className="board" ref={boardRef}>
+      {shown && <p className="error board-error">{shown}</p>}
 
       {adding && (
         <div className="board-new-card">
@@ -228,181 +761,337 @@ export default function BoardView({ projectId }: { projectId: string }) {
               }
             }}
           />
-          <button
-            className="primary"
-            disabled={!newTitle.trim() || creating}
-            onClick={() => void submitNew()}
-          >
-            {creating ? "Adding…" : "Add"}
-          </button>
-          <button
-            onClick={() => {
-              setAdding(false);
-              setNewTitle("");
-            }}
-          >
-            Cancel
-          </button>
+          <span className="board-new-keys">
+            <span className="board-key">↵</span> add ·{" "}
+            <span className="board-key">esc</span> cancel
+          </span>
         </div>
       )}
 
-      {!loaded && !error ? (
+      {(!loaded || !columnsLoaded) && !shown ? (
         <div className="board-empty muted">Reading the board…</div>
+      ) : columns.length === 0 ? (
+        <div className="board-empty">
+          <p className="muted">This project has no columns.</p>
+        </div>
       ) : total === 0 && !adding ? (
         <div className="board-empty">
           <p className="muted">The board is empty.</p>
           <p className="muted">
             Pull work onto it — the GitHub key above imports every open issue,
-            or add a card by hand. Dragging one into In&nbsp;Progress dispatches
-            an agent in its own worktree.
+            or add a card by hand.
+            {firstStep
+              ? ` Dragging one into ${firstStep.name} dispatches an agent in its own worktree.`
+              : ""}
           </p>
-          <button className="primary" onClick={() => setAdding(true)}>
-            Add issue
+          <button className="board-empty-add" onClick={() => setAdding(true)}>
+            <span className="board-key">a</span> add issue
           </button>
         </div>
-      ) : (
-        <div className="board-frame">
-          <div className="board-lane-heads">
-            {LANES.map(({ id, label }) => {
-              const count = issues.filter((i) => i.lane === id).length;
-              return (
-                <div key={id} className="board-lane-head" data-lane={id}>
-                  <span className="board-lane-name">{label}</span>
-                  <span className="board-lane-count">{count}</span>
-                </div>
-              );
-            })}
-          </div>
-          <div className="board-lanes">
-            {LANES.map(({ id }) => {
-              const cards = issues.filter((i) => i.lane === id);
-              return (
-                <section
-                  key={id}
-                  className={`board-lane${overLane === id && dragId ? " over" : ""}`}
-                  data-lane={id}
+      ) : narrow ? (
+        // §8b narrow: the mono strip walks every column, the focused one
+        // renders below it, and the spend subline survives under the strip.
+        <div className="board-narrow">
+          <div className="board-strip-wrap">
+            <div className="board-strip" ref={stripRef}>
+              {columns.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  className="board-strip-entry"
+                  data-column-id={c.id}
+                  data-active={c.id === focusColumnId ? "" : undefined}
+                  data-working={columnHasLiveAgent(c.id) ? "" : undefined}
+                  onClick={() => {
+                    setFocusColumnId(c.id);
+                    setFocusId(cardsIn(c.id)[0]?.id ?? null);
+                  }}
                 >
-                  <div
-                    className="board-lane-cards"
-                    onDragOver={(e) => {
-                      if (dragId) {
-                        e.preventDefault();
-                        setOverLane(id);
-                      }
-                    }}
-                    onDragLeave={(e) => {
-                      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-                        setOverLane((l) => (l === id ? null : l));
-                      }
-                    }}
-                    onDrop={(e) => handleDrop(e, id)}
-                  >
-                    {cards.map((issue) => (
-                      <BoardCard
-                        key={issue.id}
-                        issue={issue}
-                        tasks={projectTasks ?? []}
-                        selected={detailIssueId === issue.id}
-                        dragging={dragId === issue.id}
-                        onDragStart={(e) => {
-                          e.dataTransfer.setData("text/fartCode-issue", issue.id);
-                          e.dataTransfer.effectAllowed = "move";
-                          setDragId(issue.id);
-                        }}
-                        onDragEnd={() => {
-                          setDragId(null);
-                          setOverLane(null);
-                        }}
-                        onOpen={() => {
-                          const ui = useUi.getState();
-                          ui.setBoardDetailIssueId(issue.id);
-                          // The detail swaps into the right sheet — make
-                          // sure it's visible regardless of changes/chat.
-                          ui.setChangesOpen(true);
-                        }}
-                      />
-                    ))}
-                    {cards.length === 0 && <div className="board-lane-placeholder" />}
-                  </div>
+                  {c.name.toLowerCase()}{" "}
+                  <span className="board-strip-count">{cardsIn(c.id).length}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          {focusedColumn && (
+            <div className="board-strip-sub" data-tone={columnSublineTone(focusedColumn)}>
+              {summaryOf(focusedColumn)}
+            </div>
+          )}
+          <div className="board-frame" style={{ ["--column-count" as string]: 1 }}>
+            <div className="board-columns">
+              {visibleColumns.map((column) => (
+                <section
+                  key={column.id}
+                  className="board-column"
+                  data-done={column.countsAsDone ? "" : undefined}
+                >
+                  {renderCards(column)}
                 </section>
-              );
-            })}
+              ))}
+            </div>
+          </div>
+          <div className="board-narrow-foot">
+            <span className="board-key">h</span> <span className="board-key">l</span> walk
+            every column · strip follows focus
+          </div>
+        </div>
+      ) : (
+        <div
+          className="board-frame"
+          style={{ ["--column-count" as string]: columns.length }}
+        >
+          <div className="board-columns">
+            {columns.map((column) => (
+              <section
+                key={column.id}
+                className="board-column"
+                data-done={column.countsAsDone ? "" : undefined}
+              >
+                <div className="board-lane-head">
+                  <div className="board-lane-name-row">
+                    <span className="board-lane-name">{column.name}</span>
+                    {column.isLanding && <span className="board-lane-landing">landing</span>}
+                    <span className="board-lane-side">
+                      {landing?.id === column.id && (
+                        <button
+                          className="project-action"
+                          onClick={() => setAdding(true)}
+                          title={`Add issue to ${column.name}`}
+                          aria-label={`Add issue to ${column.name}`}
+                        >
+                          +
+                        </button>
+                      )}
+                      <span className="board-lane-count">{cardsIn(column.id).length}</span>
+                    </span>
+                  </div>
+                  <div className="board-lane-kind" data-tone={columnSublineTone(column)}>
+                    {summaryOf(column)}
+                  </div>
+                </div>
+                {renderCards(column)}
+              </section>
+            ))}
           </div>
         </div>
       )}
 
       {pending && (
-        <div className="modal-backdrop" onClick={() => setPending(null)}>
-          <div
-            className="modal"
-            role="dialog"
-            aria-label="Dispatch blocked issue"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2>Dispatch blocked issue?</h2>
-            <p>
-              <strong>{pending.issue.title}</strong> is blocked by:
-            </p>
-            <ul className="blocked-confirm-list">
-              {pending.issue.blockers.map((b) => (
-                <li key={b.id}>
-                  {b.title} <em>({LANE_LABEL[b.lane] ?? b.lane})</em>
-                </li>
-              ))}
-            </ul>
-            <div className="modal-actions">
-              <button onClick={() => setPending(null)}>Cancel</button>
-              <button
-                className="primary"
-                onClick={() => {
-                  const { issue, lane, position } = pending;
-                  setPending(null);
-                  if (issue.linkedTaskId) {
-                    void move(issue.id, lane, position);
-                  } else {
-                    void dispatch(issue);
-                  }
-                }}
-              >
-                Dispatch anyway
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmOverlay
+          pending={pending}
+          branch={pendingBranch}
+          onKeep={dismissPending}
+          onGo={confirmPending}
+          summary={summaryOf(pending.column)}
+        />
       )}
     </div>
   );
 }
 
-/** One card. Dot-first: the linked-task state leads, then the title,
- * then provenance + agent + dependency chips. */
+/** §5g confirm overlay — renders inside the board, key-first: esc keeps
+ * the card where it is, ↵ proceeds. Never a hard stop. Every name in the
+ * copy is a template slot filled from column config (§8c); #68 owns the
+ * final wording. */
+function ConfirmOverlay({
+  pending,
+  branch,
+  summary,
+  onKeep,
+  onGo,
+}: {
+  pending: PendingConfirm;
+  branch: string | null;
+  summary: string;
+  onKeep: () => void;
+  onGo: () => void;
+}) {
+  const { issue, column, from } = pending;
+  const { ref, title } = issueRefParts(issue.title, issue.externalRef);
+  const self = ref ? (
+    <span className="board-confirm-ref">{ref}</span>
+  ) : (
+    <>“{title.length > 48 ? `${title.slice(0, 48)}…` : title}”</>
+  );
+
+  let body: React.ReactNode;
+  let goLabel: string;
+  let label: string;
+  // "esc keep in <column>" is only honest for the confirms raised BEFORE
+  // the move. A queued step is raised after it (the engine writes the move,
+  // then parks), so esc leaves the card exactly where it now is and the
+  // step parked — which is what the footer must say.
+  let keepLabel = `esc keep in ${from?.name ?? column.name}`;
+  if (pending.kind === "blocked") {
+    // Finished-ness is the column's counts_as_done flag, never a name.
+    const active = issue.blockers.filter((b) => !b.countsAsDone);
+    body = (
+      <>
+        {self} is blocked by{" "}
+        {active.map((b, i) => (
+          <Fragment key={b.id}>
+            {i > 0 && ", "}
+            <span className="board-confirm-ref">{blockerLabel(b.title)}</span>
+          </Fragment>
+        ))}
+        , still in progress. Send to {column.name} anyway?
+      </>
+    );
+    // Name the agent: the column's pinned provider first, else the issue's,
+    // else the app's default agent (the summary already carries it).
+    const agentName = column.stepProvider
+      ? providerLabel(column.stepProvider)
+      : issue.provider
+        ? providerLabel(issue.provider)
+        : null;
+    goLabel = `dispatch${agentName ? ` ${agentName}` : ""}${branch ? ` on ${branch}` : ""}`;
+    label = "Dispatch blocked issue";
+  } else if (pending.kind === "live-agent") {
+    // The board never kills — this moves the card and leaves the agent be.
+    body = <>{self} has a live agent. Move to {column.name} anyway?</>;
+    goLabel = `move to ${column.name}`;
+    label = `Move live task to ${column.name}`;
+  } else {
+    body = (
+      <>
+        {column.name} runs <span className="board-confirm-ref">{summary}</span> on {self}.
+        Dispatch?
+      </>
+    );
+    goLabel = `dispatch${branch ? ` on ${branch}` : ""}`;
+    label = `Dispatch queued step in ${column.name}`;
+    keepLabel = "esc leave parked";
+  }
+
+  return (
+    <div className="board-confirm-backdrop" onClick={onKeep}>
+      <div
+        className="board-confirm"
+        role="alertdialog"
+        aria-label={label}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="board-confirm-body">{body}</div>
+        <div className="board-confirm-foot">
+          <button type="button" onClick={onKeep}>
+            {keepLabel}
+          </button>
+          <button type="button" onClick={onGo}>
+            <span className="board-confirm-key">↵</span> {goLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** One card (frames 4a/4b + v3 step-done): optional run-state dot, mono
+ * meta line (ref · run state · elapsed · blocked by · gh · ac), then the
+ * title. Hover reveals "↵ open" — except on a failed card, whose ↵ goes to
+ * "↵ read" (the linked task). A settled step adds the accent dot and, when
+ * the step declares an artifact, the "↵ read <artifact> · drag on" hint.
+ * Blockedness is derived, never stored. */
 function BoardCard({
   issue,
-  tasks,
+  task,
+  agent,
+  stepDone,
+  queued,
+  artifact,
   selected,
+  focused,
   dragging,
   onDragStart,
   onDragEnd,
   onOpen,
+  onOpenIssue,
+  onReadTask,
 }: {
   issue: IssueDto;
-  tasks: TaskDto[];
+  task: TaskDto | undefined;
+  agent: { running: boolean } | undefined;
+  stepDone: boolean;
+  queued: boolean;
+  artifact: string | null;
   selected: boolean;
+  focused: boolean;
   dragging: boolean;
   onDragStart: (e: React.DragEvent) => void;
   onDragEnd: () => void;
   onOpen: () => void;
+  onOpenIssue: (issueId: string) => void;
+  onReadTask: (taskId: string) => void;
 }) {
-  const task = issue.linkedTaskId
-    ? tasks.find((t) => t.id === issue.linkedTaskId)
-    : undefined;
+  const rs = runStateFor({ status: task?.status, agent, stepDone, queued });
+  const { ref, title } = issueRefParts(issue.title, issue.externalRef);
+  // "Still blocking?" is the blocker column's counts_as_done flag (E18-03,
+  // ADR-0037 item 6) — no lane name is consulted anywhere.
+  const activeBlockers = issue.blockers.filter((b) => !b.countsAsDone);
+  const showHint = rs.kind === "step-done" && Boolean(artifact);
+
+  const segs: React.ReactNode[] = [];
+  if (ref) segs.push(<span key="ref">{ref}</span>);
+  if (task && rs.label) {
+    segs.push(<span key="run">{rs.label}</span>);
+    if (task.statusChangedAt) {
+      segs.push(<span key="elapsed">{elapsedShort(task.statusChangedAt)}</span>);
+    }
+  }
+  if (issue.blocked && activeBlockers.length > 0) {
+    segs.push(
+      <span key="blocked">
+        blocked by{" "}
+        {activeBlockers.map((b, i) => (
+          <Fragment key={b.id}>
+            {i > 0 && " "}
+            <button
+              type="button"
+              className="board-blocked-ref"
+              title={b.title}
+              draggable={false}
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenIssue(b.id);
+              }}
+            >
+              {blockerLabel(b.title)}
+            </button>
+          </Fragment>
+        ))}
+      </span>,
+    );
+  }
+  if (issue.externalRef) {
+    segs.push(
+      <button
+        key="gh"
+        type="button"
+        className="board-gh-link"
+        title={issue.externalRef}
+        draggable={false}
+        onClick={(e) => {
+          e.stopPropagation();
+          void open(issue.externalRef!).catch(() => {});
+        }}
+      >
+        gh
+      </button>,
+    );
+  }
+  if (issue.acceptance.length > 0) {
+    segs.push(<span key="ac">{issue.acceptance.length} ac</span>);
+  }
+
   return (
     <article
       className={[
         "board-card",
         selected ? "selected" : "",
+        focused ? "focused" : "",
         dragging ? "dragging" : "",
-        issue.blocked ? "blocked" : "",
+        issue.blocked || rs.dimTitle ? "dim-title" : "",
+        rs.dimRow ? "dim-row" : "",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -413,57 +1102,63 @@ function BoardCard({
       onDragEnd={onDragEnd}
       onClick={onOpen}
       onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          // "↵ read" wins on an actionable (failed) card — frame 4a — and
+          // on a step-done card with an artifact to read.
+          if (task && (rs.actionable || showHint)) onReadTask(task.id);
+          else onOpen();
+        } else if (e.key === " ") {
           e.preventDefault();
           onOpen();
         }
       }}
     >
-      <span className="board-card-main">
-        {issue.linkedTaskId && (
-          <span
-            className={`status-dot${task ? ` status-${task.status}` : ""}`}
-            title={task ? `${task.name} — ${task.status.replace("_", " ")}` : "task linked"}
-          />
-        )}
-        <span className="board-card-title">{issue.title}</span>
-        {issue.acceptance.length > 0 && (
-          <span className="board-card-ac">
-            {issue.acceptance.length}
-            <span className="board-card-ac-unit">ac</span>
+      {rs.kind !== "neutral" && (
+        <span className={`status-dot board-run-dot ${rs.dot}`.trim()} />
+      )}
+      <span className="board-card-body">
+        <span className={`board-card-meta${rs.bad ? " board-meta-bad" : ""}`}>
+          <span className="board-card-meta-left">
+            {segs.map((s, i) => (
+              <Fragment key={i}>
+                {i > 0 && <span className="board-meta-sep"> · </span>}
+                {s}
+              </Fragment>
+            ))}
+          </span>
+          {!(task && rs.actionable) && (
+            <span className="board-card-open">↵ open</span>
+          )}
+        </span>
+        <span className="board-card-title">{title}</span>
+        {task && rs.actionable && (
+          <span className="board-card-action">
+            <button
+              type="button"
+              draggable={false}
+              onClick={(e) => {
+                e.stopPropagation();
+                onReadTask(task.id);
+              }}
+            >
+              ↵ read
+            </button>
           </span>
         )}
-      </span>
-      <span className="board-card-chips">
-        {issue.blocked && (
-          <span className="board-chip board-chip-blocked">
-            blocked
-            <span className="blocked-popover" role="tooltip">
-              {issue.blockers.map((b) => (
-                <span key={b.id} className="blocked-popover-row">
-                  {b.title}
-                  <em>{LANE_LABEL[b.lane] ?? b.lane}</em>
-                </span>
-              ))}
-            </span>
-          </span>
-        )}
-        {issue.externalRef && (
-          <button
-            className="board-chip board-chip-gh"
-            title={issue.externalRef}
-            draggable={false}
-            onClick={(e) => {
-              e.stopPropagation();
-              void open(issue.externalRef!).catch(() => {});
-            }}
-          >
-            <IconGitHub size={10} />
-          </button>
-        )}
-        {issue.provider && (
-          <span className="board-chip board-chip-provider" title={issue.provider}>
-            {providerLabel(issue.provider)}
+        {task && !rs.actionable && showHint && (
+          <span className="board-card-action">
+            <button
+              type="button"
+              draggable={false}
+              onClick={(e) => {
+                e.stopPropagation();
+                onReadTask(task.id);
+              }}
+            >
+              ↵ read {artifact}
+            </button>
+            <span className="board-card-hint-tail"> · drag on</span>
           </span>
         )}
       </span>

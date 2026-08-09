@@ -1,0 +1,397 @@
+/* PR & checks tab (design_handoff_v2 5e).
+   Panel anatomy: 46px header (`pr N` + head → base refs in --info), mono
+   tab row with accent underline sitting ON the hairline, check rows with
+   7px status dots (failed sorts first), and a mono key footer. All rows
+   boxless; the only red is failing checks (--fc-bad / --fc-bad-text). */
+
+.fc-pr {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  outline: none;
+}
+
+/* -- header: 46px, `pr 214` left / `head → base` right ------------------- */
+.fc-pr-head {
+  height: 46px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.fc-pr-id {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.fc-pr-id:hover {
+  text-decoration: underline;
+}
+
+.fc-pr-refs {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--info);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -- tabs: mono 11px, active = foreground + accent underline on the
+      hairline (margin-bottom -1px) ---------------------------------------- */
+.fc-pr-tabs {
+  flex: none;
+  display: flex;
+  gap: 18px;
+  padding: 12px 18px 0;
+  border-bottom: 1px solid var(--hairline);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.fc-pr-tabs button {
+  background: none;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 0 0 12px;
+  font: inherit;
+  color: #55555c;
+  cursor: pointer;
+}
+
+.fc-pr-tabs button:hover:not(:disabled) {
+  background: none;
+  color: #a4a4ab;
+}
+
+.fc-pr-tabs button.active,
+.fc-pr-tabs button.active:hover:not(:disabled) {
+  color: var(--foreground);
+  border-bottom: 1px solid var(--accent);
+  margin-bottom: -1px;
+}
+
+/* -- body ---------------------------------------------------------------- */
+.fc-pr-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px;
+}
+
+.fc-pr-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.fc-pr-list.dense {
+  gap: 10px;
+}
+
+.fc-pr-empty {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--meta);
+}
+
+/* -- check rows: 7px dot + name + mono meta line ------------------------- */
+.fc-pr-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Size override on the shared .status-dot (styles.css) — 5e dots are 7px.
+   status-failed / status-in_progress (fc-pulse) come from the shared set.
+   Compound selectors on purpose: pr.css is @imported ahead of styles.css's
+   own rules, so a bare .fc-pr-* class ties the shared .status-dot base on
+   specificity and loses on source order. .status-dot.fc-pr-* (0,2,0)
+   outranks the base regardless of import order, while the shared
+   .status-dot.status-failed / .status-in_progress (also 0,2,0, later in
+   source) still win for those kinds, as intended. */
+.status-dot.fc-pr-dot {
+  width: 7px;
+  height: 7px;
+  background: var(--dot-idle);
+}
+
+/* Explicit idle dot for "other"/neutral conclusions (skipped, cancelled,
+   neutral, …) — same #46464d as the base, spelled out so the DOT_CLASS map
+   is never ambiguous. */
+.status-dot.fc-pr-dot-idle {
+  background: var(--dot-idle);
+}
+
+.status-dot.fc-pr-dot-passed {
+  background: var(--accent);
+}
+
+.status-dot.fc-pr-dot-queued {
+  background: transparent;
+  border: 1px dashed #6e6e75;
+}
+
+.fc-pr-check-main {
+  min-width: 0;
+}
+
+.fc-pr-check-name {
+  font-size: 12.5px;
+  color: var(--text-card);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc-pr-check.queued .fc-pr-check-name {
+  color: #a4a4ab;
+}
+
+.fc-pr-check-name a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.fc-pr-check-name a:hover {
+  text-decoration: underline;
+}
+
+.fc-pr-check-meta {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--meta);
+  margin-top: 3px;
+}
+
+.fc-pr-check.failed .fc-pr-check-meta {
+  color: var(--fc-bad-text);
+}
+
+.fc-pr-check-meta a {
+  color: var(--info);
+  text-decoration: none;
+}
+
+.fc-pr-check-meta a:hover {
+  text-decoration: underline;
+}
+
+/* -- files tab: letter + mono path + quiet stats ------------------------- */
+.fc-pr-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fc-pr-file-letter {
+  flex: none;
+  width: 10px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--meta);
+}
+
+.fc-pr-file-path {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-card);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc-pr-file-stats {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--meta);
+}
+
+/* -- commits tab: same row rhythm as .fc-pr-check — 12.5px subject over a
+      10.5px mono meta line (3px apart), 16px between rows from .fc-pr-list.
+      min-width: 0 keeps the subject's ellipsis working inside the flex
+      column. ------------------------------------------------------------- */
+.fc-pr-commit {
+  min-width: 0;
+}
+
+.fc-pr-commit-subject {
+  font-size: 12.5px;
+  color: var(--text-card);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc-pr-commit-subject a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.fc-pr-commit-subject a:hover {
+  text-decoration: underline;
+}
+
+.fc-pr-commit-meta {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--meta);
+  margin-top: 3px;
+}
+
+/* -- comments tab -------------------------------------------------------- */
+.fc-pr-comment {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.fc-pr-comment-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--meta);
+  min-width: 0;
+}
+
+.fc-pr-comment-author {
+  color: #a4a4ab;
+}
+
+.fc-pr-comment-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc-pr-comment-body {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #a4a4ab;
+  text-decoration: none;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+a.fc-pr-comment-body:hover {
+  text-decoration: underline;
+}
+
+/* -- footer: hairline above, mono 11px; failing text in --fc-bad-text,
+      key glyph #a4a4ab ---------------------------------------------------- */
+.fc-pr-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 18px;
+  padding: 14px 0 18px;
+  border-top: 1px solid var(--hairline);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #66666d;
+}
+
+/* The no-PR empty state has no body above it — push the footer down. */
+.fc-pr-state + .fc-pr-foot {
+  margin-top: auto;
+}
+
+.fc-pr-foot-left {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--meta);
+}
+
+.fc-pr-foot-bad {
+  color: var(--fc-bad-text);
+}
+
+.fc-pr-refresh {
+  flex: none;
+  background: none;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  color: #66666d;
+  cursor: pointer;
+}
+
+.fc-pr-refresh:hover:not(:disabled) {
+  background: none;
+  color: #a4a4ab;
+}
+
+.fc-pr-refresh:disabled {
+  cursor: default;
+}
+
+.fc-pr-refresh kbd {
+  font: inherit;
+  color: #a4a4ab;
+}
+
+/* -- non-PR states (loading / error / no remote / no PR / token gate) ---- */
+.fc-pr-state {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--meta);
+}
+
+.fc-pr-state-branch {
+  color: #a4a4ab;
+}
+
+.fc-pr-token-gate {
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  color: #a4a4ab;
+}
+
+.fc-pr-token-gate p {
+  margin: 0;
+}
+
+.fc-pr-token-actions,
+.fc-pr-token-paste {
+  display: flex;
+  gap: 6px;
+}
+
+.fc-pr-token-paste input {
+  flex: 1;
+}
