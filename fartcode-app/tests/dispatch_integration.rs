@@ -110,6 +110,20 @@ fn dispatch_creates_task_worktree_link_and_moves_card() {
     assert!(!outcome.reattached);
     assert_eq!(outcome.task.name, "Implement the thing");
     assert_eq!(outcome.issue.lane, Lane::InProgress);
+    // #66 authority flip: column_id owns placement — the card must land
+    // ON the seeded In Progress column, not merely mirror the lane.
+    let in_progress_col = fx
+        .app
+        .columns
+        .list_for_project(&fx.project_id)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.seed_lane.as_deref() == Some("in_progress"))
+        .unwrap();
+    assert_eq!(
+        outcome.issue.column_id.as_deref(),
+        Some(in_progress_col.id.as_str())
+    );
     assert_eq!(
         outcome.issue.linked_task_id.as_deref(),
         Some(outcome.task.id.as_str())
@@ -168,6 +182,76 @@ fn redispatch_reattaches_and_deleted_task_respawns() {
     let third = issue_dispatch_core(&fx.app, &issue.id).unwrap();
     assert!(!third.reattached);
     assert_ne!(third.task.id, first_task_id);
+}
+
+/// #66 fix round (gap 3): the seeded In Progress column is deletable
+/// since the flip, and dispatch must then refuse TYPED and EARLY —
+/// before any task row or worktree exists.
+#[test]
+fn dispatch_with_deleted_in_progress_column_refuses_before_provisioning() {
+    let fx = fixture();
+    let issue = fx.new_issue("nowhere to go");
+    let in_progress_col = fx
+        .app
+        .columns
+        .list_for_project(&fx.project_id)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.seed_lane.as_deref() == Some("in_progress"))
+        .unwrap();
+    fx.app.columns.delete(&in_progress_col.id).unwrap();
+
+    let err = issue_dispatch_core(&fx.app, &issue.id).unwrap_err();
+    assert!(
+        err.contains("no seeded In Progress column"),
+        "typed refusal expected, got: {err}"
+    );
+    // Nothing was provisioned: no task row, no worktree directory.
+    let task_count: i64 = fx
+        .app
+        .db
+        .conn()
+        .lock()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM tasks", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(task_count, 0);
+    assert!(!fx._tmp.path().join("worktrees").exists());
+    // The card is untouched.
+    let after = fx.app.issues.get(&issue.id).unwrap().unwrap();
+    assert_eq!(after.lane, Lane::Ready);
+    assert!(after.linked_task_id.is_none());
+}
+
+/// Reattach short-circuits BEFORE column resolution: a card with a live
+/// linked task still reattaches even when In Progress is gone.
+#[test]
+fn reattach_survives_a_deleted_in_progress_column() {
+    let fx = fixture();
+    let issue = fx.new_issue("come back");
+    let first = issue_dispatch_core(&fx.app, &issue.id).unwrap();
+    assert!(!first.reattached);
+
+    // Vacate the column (delete guard refuses occupied columns), then
+    // delete it.
+    let cols = fx.app.columns.list_for_project(&fx.project_id).unwrap();
+    let ready = cols
+        .iter()
+        .find(|c| c.seed_lane.as_deref() == Some("ready"))
+        .unwrap();
+    let in_progress = cols
+        .iter()
+        .find(|c| c.seed_lane.as_deref() == Some("in_progress"))
+        .unwrap();
+    fx.app
+        .issues
+        .enter_column(&issue.id, &ready.id, None)
+        .unwrap();
+    fx.app.columns.delete(&in_progress.id).unwrap();
+
+    let second = issue_dispatch_core(&fx.app, &issue.id).unwrap();
+    assert!(second.reattached);
+    assert_eq!(second.task.id, first.task.id);
 }
 
 #[test]

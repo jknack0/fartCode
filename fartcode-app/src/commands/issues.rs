@@ -134,10 +134,26 @@ pub fn issue_move(
     position: Option<i64>,
 ) -> Result<Issue, String> {
     let lane = Lane::parse(&lane).map_err(String::from)?;
-    crate::step_engine::on_lane_move(&app, &issue_id, lane);
-    app.issues
+    // Fail-closed ordering (#66 fix round): since the authority flip,
+    // `move_to` can REFUSE (target lane's seeded column deleted). The
+    // engine side effects (epoch reset, park drop) are destructive and
+    // must not run for a move that never happened — so capture the
+    // pre-move lane, run the fallible move FIRST, and only on success
+    // apply the drag-overrides-park semantics keyed on the PRE-move lane
+    // (a same-lane reorder touches nothing).
+    let pre_lane = app
+        .issues
+        .get(&issue_id)
+        .map_err(String::from)?
+        .map(|i| i.lane);
+    let moved = app
+        .issues
         .move_to(&issue_id, lane, position)
-        .map_err(String::from)
+        .map_err(String::from)?;
+    if pre_lane != Some(lane) {
+        crate::step_engine::on_lane_move_committed(&app, &issue_id, lane);
+    }
+    Ok(moved)
 }
 
 #[tauri::command]
@@ -200,6 +216,11 @@ fn issue_dispatch_blocking(
     app: &App,
     issue_id: &str,
 ) -> Result<crate::dispatch::DispatchOutcome, String> {
+    // Fail-closed ordering (#66 fix round): resolve every failable
+    // precondition BEFORE the destructive park drop — a refused dispatch
+    // (issue gone, seeded In Progress column deleted) must leave the
+    // pending confirm gate intact.
+    crate::dispatch::issue_dispatch_precheck(app, issue_id)?;
     // E18-04 item 5: a dispatch entry supersedes any parked step (the
     // dispatch launches an agent now; the pending confirm is moot).
     crate::step_engine::drop_parked_step(app, issue_id);
@@ -372,6 +393,68 @@ mod tests {
             out.push(event);
         }
         out
+    }
+
+    /// Fail-closed ordering (#66 fix round, defect 2): a dispatch the
+    /// core would REFUSE (seeded In Progress column deleted — legal
+    /// since the flip) must not destroy the pending confirm gate. The
+    /// park drop runs only after the precheck passes.
+    #[tokio::test]
+    async fn refused_dispatch_keeps_the_parked_confirm_gate() {
+        use fartcode_core::issues::columns::{ColumnPatch, ColumnStore, OnEnter};
+
+        let app = fixture();
+        let issue = new_issue(&app, "parked card");
+        let col_store = ColumnStore::new(app.db.clone());
+        let columns = col_store.list_for_project("p1").unwrap();
+        let quick = columns.iter().find(|c| c.name == "Quick").unwrap();
+        let in_progress = columns
+            .iter()
+            .find(|c| c.seed_lane.as_deref() == Some("in_progress"))
+            .unwrap();
+        // Park the card: Quick becomes queue-mode, then enter it.
+        col_store
+            .update(
+                &quick.id,
+                ColumnPatch {
+                    on_enter: Some(OnEnter::Queue),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        crate::step_engine::enter_column_from_command(&app, &issue.id, &quick.id, None).unwrap();
+        assert!(app.steps.peek_park(&issue.id).is_some());
+        // Delete the seeded In Progress column (empty → legal since #66).
+        col_store.delete(&in_progress.id).unwrap();
+
+        let mut rx = app.event_bus.subscribe();
+        let tapp = managed(&app);
+        let err = issue_dispatch(tapp.state::<Arc<App>>(), issue.id.clone())
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("no seeded In Progress column"),
+            "typed refusal expected, got: {err}"
+        );
+        // No task, no worktree, and — the defect — the park SURVIVES:
+        // step_confirm still fires the gated step.
+        assert_eq!(task_count(&app), 0);
+        assert!(app.steps.peek_park(&issue.id).is_some());
+        assert!(
+            !drain(&mut rx)
+                .iter()
+                .any(|e| matches!(e, InternalEvent::StepQueueCleared { .. })),
+            "a refused dispatch must not clear the queue gate"
+        );
+        // The confirm gate still works: confirm takes the park and
+        // proceeds to launch — in this repo-less fixture it then fails
+        // at git provisioning, but it must NOT be the "no parked step"
+        // refusal the defect produced.
+        let confirm_err = crate::step_engine::confirm_step(&app, &issue.id).unwrap_err();
+        assert!(
+            !confirm_err.contains("no parked step"),
+            "the confirm gate was destroyed: {confirm_err}"
+        );
     }
 
     /// Error text is part of the wire contract (the board surfaces it) —
