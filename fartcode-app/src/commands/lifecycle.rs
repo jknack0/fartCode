@@ -12,6 +12,13 @@
 //! `autoRunRunScriptOnTaskCreation`) fires at task creation from
 //! `create_task` / `create_task_from_comment`: the terminal is spawned
 //! backend-side, and the task view surfaces it as a tab on open.
+//!
+//! **Threading (#80):** `terminal_open_lifecycle` is `async fn` and runs
+//! `spawn_lifecycle_script` inside `tauri::async_runtime::spawn_blocking` —
+//! a non-async command body is inlined into the invoke handler and would
+//! read settings and fork a PTY on the macOS main thread, stalling the run
+//! loop. `spawn_lifecycle_script` itself stays synchronous: the auto-run
+//! hook already calls it from off-thread contexts.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -209,7 +216,7 @@ pub fn run_auto_lifecycle_scripts<R: tauri::Runtime>(
 /// setup/run/teardown in the worktree with the FARTCODE_* env contract. Returns
 /// the terminal id — the frontend adds a tab keyed by it.
 #[tauri::command]
-pub fn terminal_open_lifecycle(
+pub async fn terminal_open_lifecycle(
     terminals: State<'_, Arc<TerminalManager>>,
     app: State<'_, Arc<App>>,
     task_id: String,
@@ -217,9 +224,30 @@ pub fn terminal_open_lifecycle(
     rows: u16,
     cols: u16,
 ) -> Result<String, String> {
-    let script_type = LifecycleScriptType::parse(&script_type)
+    let terminals = terminals.inner().clone();
+    let app = app.inner().clone();
+    // Off the IPC thread: the spawn reads the project's `.fartCode.json`
+    // settings and forks a PTY running `sh -c '<script>'`.
+    tauri::async_runtime::spawn_blocking(move || {
+        terminal_open_lifecycle_blocking(&terminals, &app, &task_id, &script_type, rows, cols)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// `terminal_open_lifecycle`'s body, off the IPC thread. Generic over the
+/// Tauri runtime so tests can drive it with `tauri::test::MockRuntime`.
+pub fn terminal_open_lifecycle_blocking<R: tauri::Runtime>(
+    terminals: &TerminalManager<R>,
+    app: &App,
+    task_id: &str,
+    script_type: &str,
+    rows: u16,
+    cols: u16,
+) -> Result<String, String> {
+    let script_type = LifecycleScriptType::parse(script_type)
         .ok_or_else(|| format!("unknown lifecycle script type: {script_type}"))?;
-    spawn_lifecycle_script(&terminals, &app, &task_id, script_type, rows, cols)
+    spawn_lifecycle_script(terminals, app, task_id, script_type, rows, cols)
 }
 
 #[cfg(test)]
