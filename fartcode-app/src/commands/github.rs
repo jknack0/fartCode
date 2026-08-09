@@ -16,7 +16,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::app::App;
-use crate::commands::git::{project_push_remote, workspace_path};
+use crate::commands::git::{off_main_thread, project_push_remote, workspace_path};
 
 /// Payload for the Pull Requests tab: distinguishes "no token", "not a
 /// GitHub repo / detached HEAD", "no PR for the branch", and "render".
@@ -145,27 +145,61 @@ fn token_status() -> Result<GithubTokenStatusDto, String> {
 }
 
 /// Current token state for the PR tab's empty-state CTA.
+///
+/// The four token commands are `async` + `spawn_blocking` for the same
+/// reason as the git commands (#80): the keyring is a synchronous IPC call
+/// to the OS, and a locked keychain turns it into an unbounded wait behind
+/// a modal the app itself must keep repainting to show. `import` is worse
+/// still — it scans `PATH` and spawns `gh`.
 #[tauri::command]
-pub fn github_token_status() -> Result<GithubTokenStatusDto, String> {
-    token_status()
+pub async fn github_token_status() -> Result<GithubTokenStatusDto, String> {
+    off_main_thread(token_status).await
 }
 
 /// Imports the active gh CLI token into the keyring.
 #[tauri::command]
-pub fn github_token_import() -> Result<GithubTokenStatusDto, String> {
-    token::import_from_gh().map_err(|e| e.to_string())?;
-    token_status()
+pub async fn github_token_import() -> Result<GithubTokenStatusDto, String> {
+    off_main_thread(|| {
+        token::import_from_gh().map_err(|e| e.to_string())?;
+        token_status()
+    })
+    .await
 }
 
 /// Stores a pasted PAT. The value is never echoed back (status only).
 #[tauri::command]
-pub fn github_token_set(token: String) -> Result<GithubTokenStatusDto, String> {
-    token::set_token(&token).map_err(|e| e.to_string())?;
-    token_status()
+pub async fn github_token_set(token: String) -> Result<GithubTokenStatusDto, String> {
+    off_main_thread(move || {
+        token::set_token(&token).map_err(|e| e.to_string())?;
+        token_status()
+    })
+    .await
 }
 
 /// Forgets the stored token.
 #[tauri::command]
-pub fn github_token_clear() -> Result<(), String> {
-    token::clear_token().map_err(|e| e.to_string())
+pub async fn github_token_clear() -> Result<(), String> {
+    off_main_thread(|| token::clear_token().map_err(|e| e.to_string())).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The token commands must stay `async` (#80). This asserts exactly
+    /// that and nothing else: an `async fn` runs none of its body until
+    /// polled, so building the futures and dropping them never reaches the
+    /// OS keychain — which a test must never read, write, or clear, since
+    /// it is the developer's real one.
+    ///
+    /// A sync `fn` returns `Result<…>`, which is not a `Future`, so a
+    /// regression fails this at compile time rather than at runtime.
+    #[test]
+    fn token_commands_stay_async_without_touching_the_keyring() {
+        fn assert_future<F: std::future::Future>(_: F) {}
+        assert_future(github_token_status());
+        assert_future(github_token_import());
+        assert_future(github_token_set("never-stored".into()));
+        assert_future(github_token_clear());
+    }
 }

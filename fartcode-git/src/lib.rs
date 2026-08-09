@@ -20,8 +20,8 @@ pub mod status;
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Duration;
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 pub use fartcode_core::git::{BranchRef, GitOps, WorktreeEntry};
 use fartcode_core::Error;
@@ -51,14 +51,190 @@ pub(crate) fn git_cmd(path: Option<&Path>) -> Command {
     cmd
 }
 
+/// How long a git subprocess may run before it is killed (#80).
+///
+/// `Command::output()` has no upper bound: `remote::run` could wait forever
+/// on an unreachable remote, and the caller — a Tauri command — never
+/// returned. Every git invocation in this crate now goes through
+/// [`output_bounded`], which kills the child at its deadline and returns
+/// [`Error::GitTimeout`], a typed error the UI renders like any other git
+/// failure.
+///
+/// Defaults and their overrides (whole seconds; `0` disables the bound
+/// entirely, restoring the old unbounded wait):
+///
+/// | class      | default | env var                               |
+/// |------------|---------|---------------------------------------|
+/// | `Local`    | 30s     | `FARTCODE_GIT_TIMEOUT_LOCAL_SECS`     |
+/// | `Network`  | 60s     | `FARTCODE_GIT_TIMEOUT_NETWORK_SECS`   |
+/// | `Extended` | 600s    | `FARTCODE_GIT_TIMEOUT_EXTENDED_SECS`  |
+///
+/// The three classes exist because one number cannot be both honest and
+/// safe: a `status` that takes 30s is broken, a `push` that takes 30s is
+/// merely on hotel wifi, and a `commit` that takes 30s is running the
+/// repo's own pre-commit hook.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitTimeout {
+    /// Disk-only work — status, diff, add, restore, rev-parse. Finishes in
+    /// milliseconds; the bound only fires on a wedged filesystem or an
+    /// index lock held by something else.
+    Local,
+    /// The wire — fetch/pull/push/publish. Generous enough for a slow link,
+    /// short enough that a black-holed remote becomes an error rather than
+    /// a spinner that never stops.
+    Network,
+    /// Work whose honest duration is defined by the user's repo: `commit`
+    /// (runs pre-commit/commit-msg hooks) and `clone` (arbitrarily large
+    /// transfers). The bound is a backstop, not a policy.
+    Extended,
+}
+
+impl GitTimeout {
+    const fn env_var(self) -> &'static str {
+        match self {
+            Self::Local => "FARTCODE_GIT_TIMEOUT_LOCAL_SECS",
+            Self::Network => "FARTCODE_GIT_TIMEOUT_NETWORK_SECS",
+            Self::Extended => "FARTCODE_GIT_TIMEOUT_EXTENDED_SECS",
+        }
+    }
+
+    const fn default_duration(self) -> Duration {
+        match self {
+            Self::Local => Duration::from_secs(30),
+            Self::Network => Duration::from_secs(60),
+            Self::Extended => Duration::from_secs(600),
+        }
+    }
+
+    /// Resolved bound. `None` means unbounded (an explicit `0` override).
+    pub fn duration(self) -> Option<Duration> {
+        parse_timeout_secs(
+            std::env::var(self.env_var()).ok().as_deref(),
+            self.default_duration(),
+        )
+    }
+}
+
+/// Parses a timeout override. Unset/empty/garbage keeps `default` — a
+/// typo must never silently restore the unbounded wait; only a literal `0`
+/// does, and that is the documented escape hatch.
+fn parse_timeout_secs(raw: Option<&str>, default: Duration) -> Option<Duration> {
+    match raw.map(str::trim) {
+        None | Some("") => Some(default),
+        Some(v) => match v.parse::<u64>() {
+            Ok(0) => None,
+            Ok(secs) => Some(Duration::from_secs(secs)),
+            Err(_) => Some(default),
+        },
+    }
+}
+
+/// Longest gap between `try_wait` polls. Starts far shorter (see
+/// [`output_within`]) so a 5ms `rev-parse` is not rounded up to a poll tick.
+const MAX_POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// Runs `cmd` capturing both streams, killing it if it outlives its class's
+/// bound. Same result shape as `Command::output()`; the only new outcome is
+/// [`Error::GitTimeout`].
+pub(crate) fn output_bounded(
+    cmd: Command,
+    class: GitTimeout,
+    label: &str,
+) -> Result<Output, Error> {
+    output_within(cmd, class.duration(), label)
+}
+
+/// [`output_bounded`] with an explicit bound (`None` = wait forever).
+pub(crate) fn output_within(
+    mut cmd: Command,
+    timeout: Option<Duration>,
+    label: &str,
+) -> Result<Output, Error> {
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| Error::Git(format!("failed to spawn git: {e}")))?;
+
+    // Drain both pipes on their own threads. `output()` drains while it
+    // waits; a `try_wait` loop does not, so without these a chatty git
+    // (push progress, a long diff) would fill a pipe buffer and block
+    // forever — a deadlock wearing a timeout's clothes.
+    let mut out_pipe = child.stdout.take();
+    let mut err_pipe = child.stderr.take();
+    let out_reader = std::thread::spawn(move || drain(out_pipe.as_mut()));
+    let err_reader = std::thread::spawn(move || drain(err_pipe.as_mut()));
+
+    let Some(timeout) = timeout else {
+        let status = child
+            .wait()
+            .map_err(|e| Error::Git(format!("waiting on git {label}: {e}")))?;
+        return Ok(collect(status, out_reader, err_reader));
+    };
+
+    let deadline = Instant::now() + timeout;
+    let mut interval = Duration::from_micros(250);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(collect(status, out_reader, err_reader)),
+            Ok(None) => {
+                let now = Instant::now();
+                if now >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    // Deliberately NOT joining the readers: a killed git may
+                    // leave a grandchild (ssh, credential helper) holding the
+                    // write end, and joining would hang the very call this
+                    // bound exists to end. The threads exit at EOF.
+                    return Err(Error::GitTimeout(format!(
+                        "git {label} exceeded {}s",
+                        timeout.as_secs()
+                    )));
+                }
+                std::thread::sleep(interval.min(deadline - now));
+                interval = (interval * 2).min(MAX_POLL_INTERVAL);
+            }
+            Err(e) => return Err(Error::Git(format!("waiting on git {label}: {e}"))),
+        }
+    }
+}
+
+fn drain(pipe: Option<&mut impl Read>) -> Vec<u8> {
+    let mut buf = Vec::new();
+    if let Some(pipe) = pipe {
+        let _ = pipe.read_to_end(&mut buf);
+    }
+    buf
+}
+
+fn collect(
+    status: std::process::ExitStatus,
+    out: std::thread::JoinHandle<Vec<u8>>,
+    err: std::thread::JoinHandle<Vec<u8>>,
+) -> Output {
+    Output {
+        status,
+        stdout: out.join().unwrap_or_default(),
+        stderr: err.join().unwrap_or_default(),
+    }
+}
+
+/// First arg of a git invocation — the subcommand, which is all a timeout
+/// message needs ("git fetch exceeded 60s").
+fn label_of<'a>(args: &[&'a str]) -> &'a str {
+    match args.first().copied() {
+        Some(a) if !a.starts_with('-') => a,
+        _ => "command",
+    }
+}
+
 /// Runs git in `worktree`, returning raw stdout bytes; non-zero exit is an
 /// `Error::Git` carrying stderr.
 pub(crate) fn git_stdout(worktree: &Path, args: &[&str]) -> Result<Vec<u8>, Error> {
     let mut cmd = git_cmd(Some(worktree));
     cmd.args(args);
-    let output = cmd
-        .output()
-        .map_err(|e| Error::Git(format!("failed to spawn git: {e}")))?;
+    let output = output_bounded(cmd, GitTimeout::Local, label_of(args))?;
     if output.status.success() {
         Ok(output.stdout)
     } else {
@@ -76,7 +252,16 @@ pub(crate) fn git_stdout(worktree: &Path, args: &[&str]) -> Result<Vec<u8>, Erro
 pub(crate) fn git_stdout_ok(worktree: &Path, args: &[&str]) -> Option<Vec<u8>> {
     let mut cmd = git_cmd(Some(worktree));
     cmd.args(args);
-    let output = cmd.output().ok()?;
+    // A probe's contract is "absence is data", so a timeout still reads as
+    // `None` — but it is an anomaly, not an answer, so it gets logged.
+    let output = match output_bounded(cmd, GitTimeout::Local, label_of(args)) {
+        Ok(output) => output,
+        Err(e @ Error::GitTimeout(_)) => {
+            tracing::warn!(error = %e, ?args, "git probe timed out");
+            return None;
+        }
+        Err(_) => return None,
+    };
     output.status.success().then_some(output.stdout)
 }
 
@@ -86,15 +271,30 @@ impl CliGit {
         I: IntoIterator<Item = S>,
         S: AsRef<std::ffi::OsStr>,
     {
+        self.run_timed(path, args, GitTimeout::Local)
+    }
+
+    fn run_timed<I, S>(
+        &self,
+        path: Option<&Path>,
+        args: I,
+        class: GitTimeout,
+    ) -> Result<String, Error>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
         let args: Vec<std::ffi::OsString> = args
             .into_iter()
             .map(|a| a.as_ref().to_os_string())
             .collect();
+        let label = args
+            .first()
+            .map(|a| a.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "command".to_string());
         let mut cmd = git_cmd(path);
         cmd.args(&args);
-        let output = cmd
-            .output()
-            .map_err(|e| Error::Git(format!("failed to spawn git: {e}")))?;
+        let output = output_bounded(cmd, class, &label)?;
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         if output.status.success() {
             Ok(stdout)
@@ -115,19 +315,38 @@ impl CliGit {
         self.run(path, args).map(|_| ())
     }
 
+    fn run_ok_timed<I, S>(
+        &self,
+        path: Option<&Path>,
+        args: I,
+        class: GitTimeout,
+    ) -> Result<(), Error>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        self.run_timed(path, args, class).map(|_| ())
+    }
+
     fn run_quiet_ok<I, S>(&self, path: Option<&Path>, args: I) -> Result<bool, Error>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<std::ffi::OsStr>,
     {
+        let args: Vec<std::ffi::OsString> = args
+            .into_iter()
+            .map(|a| a.as_ref().to_os_string())
+            .collect();
+        let label = args
+            .first()
+            .map(|a| a.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "command".to_string());
         let mut cmd = git_cmd(path);
-        cmd.args(args);
+        cmd.args(&args);
         // Pipe (don't inherit) stdout/stderr: "quiet" must not print — e.g.
         // `rev-parse --verify` would otherwise leak the oid, and
         // `--is-inside-work-tree` would print "true" into the host terminal.
-        let output = cmd
-            .output()
-            .map_err(|e| Error::Git(format!("failed to spawn git: {e}")))?;
+        let output = output_bounded(cmd, GitTimeout::Local, &label)?;
         Ok(output.status.success())
     }
 }
@@ -140,9 +359,7 @@ impl GitOps for CliGit {
     fn init(&self, path: &Path) -> Result<(), Error> {
         let mut cmd = git_cmd(Some(path));
         cmd.arg("init");
-        let output = cmd
-            .output()
-            .map_err(|e| Error::Git(format!("failed to spawn git: {e}")))?;
+        let output = output_bounded(cmd, GitTimeout::Local, "init")?;
         if output.status.success() {
             Ok(())
         } else {
@@ -156,9 +373,9 @@ impl GitOps for CliGit {
     fn clone(&self, url: &str, target: &Path) -> Result<(), Error> {
         let mut cmd = git_cmd(None);
         cmd.arg("clone").arg(url).arg(target);
-        let output = cmd
-            .output()
-            .map_err(|e| Error::Git(format!("failed to spawn git: {e}")))?;
+        // Extended, not Network: a first clone is an unbounded-by-nature
+        // transfer, and killing it at 60s would break big repos on purpose.
+        let output = output_bounded(cmd, GitTimeout::Extended, "clone")?;
         if output.status.success() {
             Ok(())
         } else {
@@ -206,9 +423,7 @@ impl GitOps for CliGit {
         // that's not an error, just "no branch".
         let mut cmd = git_cmd(Some(path));
         cmd.args(["branch", "--show-current"]);
-        let output = cmd
-            .output()
-            .map_err(|e| Error::Git(format!("failed to spawn git: {e}")))?;
+        let output = output_bounded(cmd, GitTimeout::Local, "branch")?;
         if output.status.success() {
             let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
             Ok(if branch.is_empty() {
@@ -344,7 +559,7 @@ impl GitOps for CliGit {
     }
 
     fn fetch(&self, repo_path: &Path, remote: &str) -> Result<(), Error> {
-        self.run_ok(Some(repo_path), ["fetch", remote])
+        self.run_ok_timed(Some(repo_path), ["fetch", remote], GitTimeout::Network)
     }
 
     fn worktree_add(
@@ -370,50 +585,18 @@ impl GitOps for CliGit {
 
     fn worktree_prune_timed(&self, repo_path: &Path, timeout: Duration) -> Result<(), Error> {
         // Bounded prune (reference pruneGitWorktrees: 5s timeout + the
-        // NON_INTERACTIVE_ENV already applied by git_cmd). Poll try_wait —
-        // the CLI never streams enough output to deadlock on full pipes.
+        // NON_INTERACTIVE_ENV already applied by git_cmd). The caller names
+        // the bound here, so it goes to `output_within` rather than a class.
         let mut cmd = git_cmd(Some(repo_path));
-        cmd.args(["worktree", "prune"])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| Error::Git(format!("failed to spawn git: {e}")))?;
-        let deadline = std::time::Instant::now() + timeout;
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    if status.success() {
-                        return Ok(());
-                    }
-                    let stderr = child
-                        .stderr
-                        .take()
-                        .map(|mut s| {
-                            let mut buf = String::new();
-                            let _ = Read::read_to_string(&mut s, &mut buf);
-                            buf
-                        })
-                        .unwrap_or_default();
-                    return Err(Error::Git(format!(
-                        "git worktree prune failed: {}",
-                        stderr.trim()
-                    )));
-                }
-                Ok(None) => {
-                    if std::time::Instant::now() >= deadline {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return Err(Error::GitTimeout(format!(
-                            "git worktree prune exceeded {}s",
-                            timeout.as_secs()
-                        )));
-                    }
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                Err(e) => return Err(Error::Git(format!("git worktree prune wait: {e}"))),
-            }
+        cmd.args(["worktree", "prune"]);
+        let output = output_within(cmd, Some(timeout), "worktree prune")?;
+        if output.status.success() {
+            return Ok(());
         }
+        Err(Error::Git(format!(
+            "git worktree prune failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )))
     }
 
     fn is_worktree_clean(&self, _repo: &Path, worktree: &Path) -> Result<bool, Error> {
@@ -494,7 +677,7 @@ impl GitOps for CliGit {
         args.push(remote.into());
         args.push(branch.into());
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
-        self.run_ok(Some(repo_path), args)
+        self.run_ok_timed(Some(repo_path), args, GitTimeout::Network)
     }
 
     fn is_tracked(&self, repo_path: &Path, rel_path: &str) -> Result<bool, Error> {
@@ -547,6 +730,96 @@ mod tests {
             .unwrap();
         assert!(status.success());
         Ok(())
+    }
+
+    #[test]
+    fn timeout_overrides_parse_conservatively() {
+        let default = Duration::from_secs(30);
+        // Unset / empty / garbage all keep the default: a typo in the env
+        // must never silently restore the unbounded wait.
+        assert_eq!(parse_timeout_secs(None, default), Some(default));
+        assert_eq!(parse_timeout_secs(Some("  "), default), Some(default));
+        assert_eq!(parse_timeout_secs(Some("soon"), default), Some(default));
+        assert_eq!(parse_timeout_secs(Some("-5"), default), Some(default));
+        // A number is the bound; a literal 0 is the documented opt-out.
+        assert_eq!(
+            parse_timeout_secs(Some("90"), default),
+            Some(Duration::from_secs(90))
+        );
+        assert_eq!(
+            parse_timeout_secs(Some(" 90 "), default),
+            Some(Duration::from_secs(90))
+        );
+        assert_eq!(parse_timeout_secs(Some("0"), default), None);
+    }
+
+    #[test]
+    fn timeout_classes_keep_their_documented_defaults() {
+        // Read the constants, not `duration()`: the latter honours env
+        // overrides, and a developer's shell must not fail the suite.
+        assert_eq!(
+            GitTimeout::Local.default_duration(),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            GitTimeout::Network.default_duration(),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            GitTimeout::Extended.default_duration(),
+            Duration::from_secs(600)
+        );
+        assert_eq!(
+            GitTimeout::Network.env_var(),
+            "FARTCODE_GIT_TIMEOUT_NETWORK_SECS"
+        );
+    }
+
+    #[test]
+    fn bounded_run_returns_output_under_budget() {
+        let mut cmd = git_cmd(None);
+        cmd.arg("--version");
+        let out = output_within(cmd, Some(Duration::from_secs(30)), "--version").unwrap();
+        assert!(out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).contains("git version"));
+    }
+
+    /// The bound this whole change exists for: a child that outlives it is
+    /// killed and reported, instead of wedging the caller forever.
+    #[cfg(unix)]
+    #[test]
+    fn bounded_run_kills_an_over_budget_child() {
+        let started = std::time::Instant::now();
+        let mut cmd = Command::new("sleep");
+        cmd.arg("30");
+        let err = output_within(cmd, Some(Duration::from_millis(150)), "sleep").unwrap_err();
+        // Bounded assertion: if the kill path were broken this test would
+        // fail on the elapsed check rather than hang the suite.
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "timeout did not fire promptly: {:?}",
+            started.elapsed()
+        );
+        assert!(
+            matches!(err, Error::GitTimeout(_)),
+            "expected a typed timeout, got {err:?}"
+        );
+        assert_eq!(
+            err.to_string(),
+            "git operation timed out: git sleep exceeded 0s"
+        );
+    }
+
+    /// Output larger than a pipe buffer must not deadlock: `try_wait` never
+    /// drains, so the readers have to run on their own threads.
+    #[cfg(unix)]
+    #[test]
+    fn bounded_run_drains_more_than_a_pipe_buffer() {
+        let mut cmd = Command::new("head");
+        cmd.args(["-c", "300000", "/dev/zero"]);
+        let out = output_within(cmd, Some(Duration::from_secs(20)), "head").unwrap();
+        assert!(out.status.success());
+        assert_eq!(out.stdout.len(), 300_000);
     }
 
     #[test]
