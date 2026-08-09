@@ -132,6 +132,15 @@ pub enum Error {
     #[error("board column {id} still has {count} issue(s); move them before deleting")]
     BoardColumnHasIssues { id: String, count: i64 },
 
+    /// Deleting a column that is another column's `advance_to` target is
+    /// refused (E18-07, #66). Letting the FK's `ON DELETE SET NULL`
+    /// degrade the referrer would silently re-route `on_settle: advance`
+    /// to next-by-position, which can walk cards into an adjacent
+    /// agent step and fire an unconfirmed dispatch — the ADR-0037 item 4
+    /// spend hazard. Repoint (or clear) the referrer first.
+    #[error("column {id} is the advance target of {referrer} — repoint it first")]
+    BoardColumnIsAdvanceTarget { id: String, referrer: String },
+
     /// `step_confirm` with nothing parked (never parked, already
     /// launched, cleared by a drag, or gone stale) — E18-04 queue flow.
     #[error("no parked step for issue {0}")]

@@ -57,6 +57,9 @@ fn sql_for_tag(tag: &str) -> Option<&'static str> {
         "0007_pin_in_progress_advance" => Some(include_str!(
             "../../migrations/0007_pin_in_progress_advance.sql"
         )),
+        "0008_column_id_authoritative" => Some(include_str!(
+            "../../migrations/0008_column_id_authoritative.sql"
+        )),
         _ => None,
     }
 }

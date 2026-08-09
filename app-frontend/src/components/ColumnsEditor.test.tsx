@@ -197,15 +197,36 @@ describe("delete", () => {
     expect(row.querySelector("button.fc-col-delete")).toBeNull();
   });
 
-  it("locks a seeded agent step but not an empty user step", async () => {
+  it("no longer locks empty agent steps — seeded or not (E18-07)", async () => {
     await renderPane();
-    // Quick: user step (seedLane null), empty → an active control.
+    // Quick: user step, empty, not a target → an active control.
     const quick = expand("Quick");
     expect(quick.querySelector(".fc-col-delete-reason")).toBeNull();
     expect(quick.querySelector("button.fc-col-delete")).not.toBeNull();
-    // In Progress: seeded agent step, empty → locked with the reason.
-    expect(expand("In Progress").querySelector(".fc-col-delete-reason")).toHaveTextContent(
-      "seeded step — locked until columns become authoritative",
+    // In Progress: SEEDED agent step, empty — the pre-flip lock is gone.
+    const progress = expand("In Progress");
+    expect(progress.querySelector(".fc-col-delete-reason")).toBeNull();
+    expect(progress.querySelector("button.fc-col-delete")).not.toBeNull();
+  });
+
+  it("shows the advance-target reason on a column another column advances to", async () => {
+    await renderPane();
+    // Done is Quick's advanceTo target → disabled with the typed reason.
+    const done = expand("Done");
+    expect(done.querySelector(".fc-col-delete-reason")).toHaveTextContent(
+      "advance target of Quick — repoint it first",
+    );
+    expect(done.querySelector("button.fc-col-delete")).toBeNull();
+  });
+
+  it("occupied wins over the advance-target reason (spec priority)", async () => {
+    vi.mocked(issueList).mockResolvedValue([issue("d1", "c-done")]);
+    await renderPane();
+    const done = expand("Done");
+    await waitFor(() =>
+      expect(done.querySelector(".fc-col-delete-reason")).toHaveTextContent(
+        "1 card lives here — move it first",
+      ),
     );
   });
 

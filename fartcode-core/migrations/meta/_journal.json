@@ -57,6 +57,13 @@
       "when": 1800000000007,
       "tag": "0007_pin_in_progress_advance",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1800000000008,
+      "tag": "0008_column_id_authoritative",
+      "breakpoints": true
     }
   ]
 }

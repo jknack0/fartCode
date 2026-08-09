@@ -152,17 +152,24 @@ function InlineTextarea({
 
 /* -- delete gating -------------------------------------------------------- */
 
-/** Client-side refusal reason, in spec priority order; null = deletable. */
-function deleteReason(column: BoardColumnDto, occupancy: number): string | null {
+/** Client-side refusal reason, in spec priority order (occupied, then
+ * landing, then advance-target — one at a time); null = deletable.
+ * E18-07: seeded agent steps are no longer locked; a column that is
+ * another column's advanceTo target is (repoint the referrer first —
+ * the backend refuses it for the same spend-hazard reason). */
+function deleteReason(
+  column: BoardColumnDto,
+  occupancy: number,
+  columns: BoardColumnDto[],
+): string | null {
   if (occupancy > 0) {
     return occupancy === 1
       ? "1 card lives here — move it first"
       : `${occupancy} cards live here — move them first`;
   }
   if (column.isLanding) return "landing column — move landing first";
-  if (column.seedLane !== null && column.kind === "agent_step") {
-    return "seeded step — locked until columns become authoritative";
-  }
+  const referrer = columns.find((c) => c.advanceTo === column.id);
+  if (referrer) return `advance target of ${referrer.name} — repoint it first`;
   return null;
 }
 
@@ -205,7 +212,7 @@ function ColumnDetail({
     column.onSettle === "advance"
       ? `advance → ${column.advanceTo === null ? "next column" : settleTarget?.name ?? "next column"}`
       : "hold for a human drag";
-  const reason = deleteReason(column, occupancy);
+  const reason = deleteReason(column, occupancy, columns);
 
   return (
     <div className="fc-col-detail">
