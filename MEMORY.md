@@ -4,6 +4,30 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## UI-thread audit LANDED — #80 closed (2026-08-09)
+
+41 of 101 tauri commands moved off the macOS main thread (async +
+spawn_blocking; 49 async command fns now, was 8). All 16 git commands
+shell out (App::init wires CliGit, so the whole GitOps trait is
+std::process::Command) — they route through `off_main_thread` in
+commands/git.rs, a tested spawn_blocking wrapper. fartcode-git subprocesses
+gained a bounded wait; they had NO timeout, so an unreachable remote hung
+the app forever. Wire contracts unchanged — zero frontend edits.
+
+GUARD: `fartcode-app/tests/no_blocking_tauri_commands.rs` enforces two
+rules (async-or-SYNC_OK, AND known-blocking must actually offload — async
+alone just moves the stall to a tokio worker). Rides cargo test into CI +
+make check. Rule written into AGENTS.md §"Tauri commands and the main
+thread". To exempt a command, add it to SYNC_OK with a justification; to
+add a new offload helper, teach the guard its name (it knows spawn_blocking
+and off_main_thread).
+
+`make check` now clears fmt-check + lint; the ONLY remaining failure is the
+3 pre-existing tmux durability tests (chipped, fartcode-terminal untouched
+since 34e26ff). Known follow-up: pr_section_get / pr_section_sync are async
+but do keyring + git subprocesses inline before their first await — they
+stall a tokio worker, not the UI.
+
 ## Task view carries pipeline context (2026-08-09, 273cb68, #79 closed)
 
 E18-10: the task view had ZERO board awareness — a step settling in a hold
