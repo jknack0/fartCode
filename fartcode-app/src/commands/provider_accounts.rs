@@ -9,6 +9,20 @@
 //! CLI's own store); `provider_auth_status` probes the CLI for the live
 //! login state and `provider_auth_login` opens the interactive flow in a
 //! terminal.
+//!
+//! **UI thread (#80):** every command here blocks on something the main
+//! thread must never wait for — keyring round trips (`add`/`list`/`remove`;
+//! `list` loads one secret PER ROW to compute the mask), a PATH scan plus a
+//! child process polled for up to 5s (`provider_auth_status`), and a PTY
+//! fork (`provider_auth_login`). A non-async `#[tauri::command]` runs its
+//! body inline on the IPC thread — the macOS main thread — which stalls the
+//! NSRunLoop and freezes the window. Each therefore hands its body to
+//! `spawn_blocking` and awaits the join handle; merely marking them `async`
+//! would only move the block onto a tokio worker. The wire contract
+//! (argument names, serialized results, error strings, side-effect
+//! ordering, the keyring rollback path) is unchanged.
+//! `set_default_provider_account` and `list_providers` stay synchronous —
+//! one indexed DB write and a static registry read, no keyring, no I/O.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -66,8 +80,29 @@ fn to_dto(account: &ProviderAccount) -> ProviderAccountDto {
 /// api-key behavior (secret required). CLI-login accounts accept any
 /// `secret` (it is ignored — nothing is stored in the keyring).
 #[tauri::command]
-pub fn add_provider_account(
+pub async fn add_provider_account(
     app: State<'_, Arc<App>>,
+    provider_id: String,
+    account_id: String,
+    secret: String,
+    label: Option<String>,
+    auth_method: Option<String>,
+) -> Result<ProviderAccountDto, String> {
+    // `State` cannot cross into the blocking closure; the managed value is
+    // an `Arc<App>`, so clone the handle and move that.
+    let app = app.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        add_provider_account_blocking(&app, provider_id, account_id, secret, label, auth_method)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Body of [`add_provider_account`], run on the blocking pool — the former
+/// inline body verbatim (store secret → insert row → mask, with the
+/// keyring rollback on insert failure).
+fn add_provider_account_blocking(
+    app: &App,
     provider_id: String,
     account_id: String,
     secret: String,
@@ -119,8 +154,21 @@ pub fn add_provider_account(
 }
 
 #[tauri::command]
-pub fn list_provider_accounts(
+pub async fn list_provider_accounts(
     app: State<'_, Arc<App>>,
+    provider_id: Option<String>,
+) -> Result<Vec<ProviderAccountDto>, String> {
+    let app = app.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || list_provider_accounts_blocking(&app, provider_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Body of [`list_provider_accounts`], run on the blocking pool — one
+/// keyring `load_secret` per row (for the mask), which is exactly why this
+/// must not run on the main thread.
+fn list_provider_accounts_blocking(
+    app: &App,
     provider_id: Option<String>,
 ) -> Result<Vec<ProviderAccountDto>, String> {
     app.provider_accounts
@@ -130,10 +178,18 @@ pub fn list_provider_accounts(
 }
 
 #[tauri::command]
-pub fn remove_provider_account(app: State<'_, Arc<App>>, id: String) -> Result<(), String> {
+pub async fn remove_provider_account(app: State<'_, Arc<App>>, id: String) -> Result<(), String> {
+    let app = app.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || remove_provider_account_blocking(&app, &id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Body of [`remove_provider_account`], run on the blocking pool.
+fn remove_provider_account_blocking(app: &App, id: &str) -> Result<(), String> {
     let account = app
         .provider_accounts
-        .remove(&id)
+        .remove(id)
         .map_err(|e| e.to_string())?;
     if let Err(e) =
         fartcode_core::provider_accounts::secrets::delete_secret(&account.credential_ref)
@@ -175,7 +231,15 @@ pub struct AuthStatusDto {
 }
 
 #[tauri::command]
-pub fn provider_auth_status(provider_id: String) -> Result<AuthStatusDto, String> {
+pub async fn provider_auth_status(provider_id: String) -> Result<AuthStatusDto, String> {
+    tauri::async_runtime::spawn_blocking(move || provider_auth_status_blocking(provider_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Body of [`provider_auth_status`], run on the blocking pool: a PATH scan
+/// plus a child process polled to the 5s [`AUTH_STATUS_TIMEOUT`].
+pub(crate) fn provider_auth_status_blocking(provider_id: String) -> Result<AuthStatusDto, String> {
     let provider = fartcode_providers::get(&provider_id)
         .ok_or_else(|| format!("unknown provider: {provider_id}"))?;
     let login = provider
@@ -198,9 +262,48 @@ pub fn provider_auth_status(provider_id: String) -> Result<AuthStatusDto, String
 /// drives the OAuth handshake (browser + paste-code); the user completes
 /// it there, then `provider_auth_status` reflects the new login.
 #[tauri::command]
-pub fn provider_auth_login(
+pub async fn provider_auth_login(
     app: State<'_, Arc<App>>,
     terminals: State<'_, Arc<TerminalManager>>,
+    provider_id: String,
+    task_id: Option<String>,
+    rows: u16,
+    cols: u16,
+) -> Result<String, String> {
+    provider_auth_login_off_thread(
+        app.inner().clone(),
+        terminals.inner().clone(),
+        provider_id,
+        task_id,
+        rows,
+        cols,
+    )
+    .await
+}
+
+/// [`provider_auth_login`] with the Tauri `State` already unwrapped and
+/// generic over the runtime, so tests can drive it with
+/// `tauri::test::MockRuntime`.
+pub(crate) async fn provider_auth_login_off_thread<R: tauri::Runtime>(
+    app: Arc<App>,
+    terminals: Arc<TerminalManager<R>>,
+    provider_id: String,
+    task_id: Option<String>,
+    rows: u16,
+    cols: u16,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        provider_auth_login_blocking(&app, &terminals, provider_id, task_id, rows, cols)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Body of [`provider_auth_login`], run on the blocking pool: PATH scan,
+/// task-context DB lookup, then a PTY fork.
+fn provider_auth_login_blocking<R: tauri::Runtime>(
+    app: &App,
+    terminals: &TerminalManager<R>,
     provider_id: String,
     task_id: Option<String>,
     rows: u16,
@@ -349,6 +452,269 @@ fn parse_auth_status(stdout: &str) -> AuthStatusDto {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+    use tauri::Manager;
+
+    /// Every await here is bounded — an unbounded wait would wedge the
+    /// suite instead of failing it.
+    const TEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+    /// Drives a command future on a **single-threaded** runtime: the shape
+    /// of the IPC thread, so a body that fails to leave the thread is
+    /// observable (see the `*_yields_the_calling_thread` tests).
+    fn block_on_bounded<F: std::future::Future>(fut: F) -> F::Output {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+        rt.block_on(async move {
+            tokio::time::timeout(TEST_TIMEOUT, fut)
+                .await
+                .expect("command future timed out")
+        })
+    }
+
+    fn app() -> Arc<App> {
+        App::init(Some(":memory:")).expect("app init")
+    }
+
+    fn terminal_manager() -> Arc<TerminalManager<tauri::test::MockRuntime>> {
+        Arc::new(TerminalManager::new(
+            tauri::test::mock_app().handle().clone(),
+        ))
+    }
+
+    /// Records the order a co-scheduled task and the awaited command
+    /// complete in. On a single-threaded runtime the probe can only run
+    /// while the command is pending — `["probe", "command"]` therefore
+    /// proves the command left the calling thread (#80).
+    fn assert_yields<F, T>(make: impl FnOnce() -> F)
+    where
+        F: std::future::Future<Output = T>,
+    {
+        let order = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+        let probe_order = order.clone();
+        let command_order = order.clone();
+        block_on_bounded(async move {
+            tokio::spawn(async move { probe_order.lock().unwrap().push("probe") });
+            let _ = make().await;
+            command_order.lock().unwrap().push("command");
+        });
+        assert_eq!(
+            order.lock().unwrap().as_slice(),
+            ["probe", "command"],
+            "the command blocked its caller instead of yielding"
+        );
+    }
+
+    // ── add / list / remove ────────────────────────────────────────────
+    //
+    // These use the `claude-login` (cli-login) method on purpose: it
+    // stores NO keyring secret, so the round trip exercises the real
+    // command path without writing to the user's keychain. `to_dto`
+    // still performs its keyring read for the mask and falls back to the
+    // full mask, exactly as it does for login accounts in production.
+
+    #[test]
+    fn add_then_list_then_remove_round_trips_through_the_off_thread_path() {
+        let app = app();
+        let mock = tauri::test::mock_app();
+        mock.manage(app.clone());
+
+        let dto = block_on_bounded(add_provider_account(
+            mock.state::<Arc<App>>(),
+            "claude".into(),
+            "me@example.com".into(),
+            String::new(),
+            Some("Subscription".into()),
+            Some("claude-login".into()),
+        ))
+        .expect("add_provider_account");
+
+        assert_eq!(dto.provider_id, "claude");
+        assert_eq!(dto.account_id, "me@example.com");
+        assert_eq!(dto.label.as_deref(), Some("Subscription"));
+        assert_eq!(dto.auth_method.as_deref(), Some("claude-login"));
+        // Login accounts store no secret: the mask is the full fallback.
+        assert_eq!(dto.masked_secret, "••••");
+
+        let listed = block_on_bounded(list_provider_accounts(
+            mock.state::<Arc<App>>(),
+            Some("claude".into()),
+        ))
+        .expect("list_provider_accounts");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, dto.id);
+        assert_eq!(listed[0].masked_secret, dto.masked_secret);
+        assert_eq!(listed[0].auth_method, dto.auth_method);
+
+        // Filtering by another provider still returns nothing.
+        assert!(block_on_bounded(list_provider_accounts(
+            mock.state::<Arc<App>>(),
+            Some("codex".into()),
+        ))
+        .expect("list_provider_accounts")
+        .is_empty());
+
+        // Removal must not fail on the missing keyring entry.
+        block_on_bounded(remove_provider_account(mock.state::<Arc<App>>(), dto.id))
+            .expect("remove_provider_account");
+        assert!(
+            block_on_bounded(list_provider_accounts(mock.state::<Arc<App>>(), None))
+                .expect("list_provider_accounts")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn add_provider_account_preserves_the_error_strings() {
+        let mock = tauri::test::mock_app();
+        mock.manage(app());
+
+        let unknown_provider = block_on_bounded(add_provider_account(
+            mock.state::<Arc<App>>(),
+            "not-a-provider".into(),
+            "a".into(),
+            "s".into(),
+            None,
+            None,
+        ))
+        .expect_err("unknown provider");
+        assert_eq!(unknown_provider, "unknown provider: not-a-provider");
+
+        let unknown_method = block_on_bounded(add_provider_account(
+            mock.state::<Arc<App>>(),
+            "claude".into(),
+            "a".into(),
+            "s".into(),
+            None,
+            Some("not-a-method".into()),
+        ))
+        .expect_err("unknown auth method");
+        assert_eq!(
+            unknown_method,
+            "unknown auth method not-a-method for claude"
+        );
+    }
+
+    #[test]
+    fn remove_provider_account_preserves_the_error_string() {
+        let app = app();
+        let expected = remove_provider_account_blocking(&app, "no-such-account")
+            .expect_err("unknown account id");
+
+        let mock = tauri::test::mock_app();
+        mock.manage(app);
+        let got = block_on_bounded(remove_provider_account(
+            mock.state::<Arc<App>>(),
+            "no-such-account".into(),
+        ))
+        .expect_err("unknown account id");
+
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn list_provider_accounts_is_empty_on_a_fresh_db() {
+        let mock = tauri::test::mock_app();
+        mock.manage(app());
+        let listed = block_on_bounded(list_provider_accounts(mock.state::<Arc<App>>(), None))
+            .expect("list_provider_accounts");
+        assert!(listed.is_empty());
+    }
+
+    #[test]
+    fn add_provider_account_yields_the_calling_thread() {
+        let mock = tauri::test::mock_app();
+        mock.manage(app());
+        assert_yields(|| {
+            add_provider_account(
+                mock.state::<Arc<App>>(),
+                "claude".into(),
+                "yield@example.com".into(),
+                String::new(),
+                None,
+                Some("claude-login".into()),
+            )
+        });
+    }
+
+    #[test]
+    fn list_provider_accounts_yields_the_calling_thread() {
+        let mock = tauri::test::mock_app();
+        mock.manage(app());
+        assert_yields(|| list_provider_accounts(mock.state::<Arc<App>>(), None));
+    }
+
+    #[test]
+    fn remove_provider_account_yields_the_calling_thread() {
+        let mock = tauri::test::mock_app();
+        mock.manage(app());
+        assert_yields(|| remove_provider_account(mock.state::<Arc<App>>(), "missing".into()));
+    }
+
+    // ── auth status / login ────────────────────────────────────────────
+    //
+    // Only the pre-spawn error paths are exercised: probing a real agent
+    // would shell out to the user's installed CLI (up to the 5s
+    // AUTH_STATUS_TIMEOUT) and forking the login PTY would open an
+    // interactive OAuth flow.
+
+    #[test]
+    fn provider_auth_status_preserves_the_error_strings() {
+        let unknown = block_on_bounded(provider_auth_status("not-a-provider".into()))
+            .expect_err("unknown provider");
+        assert_eq!(unknown, "unknown provider: not-a-provider");
+        assert_eq!(
+            unknown,
+            provider_auth_status_blocking("not-a-provider".into()).unwrap_err()
+        );
+
+        // `codex` has no auth methods → no CLI login method.
+        let no_login =
+            block_on_bounded(provider_auth_status("codex".into())).expect_err("no login method");
+        assert_eq!(no_login, "codex has no CLI login method");
+    }
+
+    #[test]
+    fn provider_auth_status_yields_the_calling_thread() {
+        assert_yields(|| provider_auth_status("not-a-provider".into()));
+    }
+
+    #[test]
+    fn provider_auth_login_preserves_the_error_strings() {
+        let app = app();
+        let unknown = block_on_bounded(provider_auth_login_off_thread(
+            app.clone(),
+            terminal_manager(),
+            "not-a-provider".into(),
+            None,
+            24,
+            80,
+        ))
+        .expect_err("unknown provider");
+        assert_eq!(unknown, "unknown provider: not-a-provider");
+
+        let no_login = block_on_bounded(provider_auth_login_off_thread(
+            app,
+            terminal_manager(),
+            "codex".into(),
+            None,
+            24,
+            80,
+        ))
+        .expect_err("no login method");
+        assert_eq!(no_login, "codex has no CLI login method");
+    }
+
+    #[test]
+    fn provider_auth_login_yields_the_calling_thread() {
+        let app = app();
+        let terminals = terminal_manager();
+        assert_yields(move || {
+            provider_auth_login_off_thread(app, terminals, "not-a-provider".into(), None, 24, 80)
+        });
+    }
 
     #[test]
     fn parses_logged_out_claude_status() {
