@@ -1,8 +1,10 @@
-// Card detail (E17-02, #56 + dogfood): clicking a board card swaps the
-// sheet to this inspector — the lane column carries its dot, the agent
-// row dispatches or reattaches, and the ticket body edits commit-card
-// style (E4-06 pattern): dirty title/body behind an explicit Save, busy
-// phase, inline errors, draft retained on failure for retry.
+// Card detail (E17-02, #56 + dogfood; column-aware per E18-07): clicking a
+// board card swaps the sheet to this inspector — the header names the
+// card's COLUMN (resolved from board_columns, never a lane label table)
+// and its dot reads the live agent, the agent row dispatches or reattaches,
+// and the ticket body edits commit-card style (E4-06 pattern): dirty
+// title/body behind an explicit Save, busy phase, inline errors, draft
+// retained on failure for retry.
 
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-shell";
@@ -19,24 +21,22 @@ import {
   terminalOpenAgent,
   terminalWrite,
   type IssueDto,
-  type Lane,
   type TaskDto,
 } from "../../lib/tauri";
 import { renderMarkdown } from "../../lib/markdown";
+import {
+  columnIdForIssue,
+  columnNameForLane,
+} from "../../lib/columnConfig";
+import { useColumns } from "../../store/columns";
 import { useConversations } from "../../store/conversations";
+import { useScripts } from "../../store/scripts";
 import { useSidebar } from "../../store/sidebar";
 import { useUi } from "../../store/ui";
 import { PM_PROMPT } from "../projectChat/pmPrompt";
-import { LANE_LABEL } from "./BoardView";
+import { agentLive } from "./runState";
 
-/** Lane → linked-task status mapping used for the lane dot. */
-const LANE_DOT_STATUS: Record<Lane, string | null> = {
-  backlog: null,
-  ready: null,
-  in_progress: "in_progress",
-  in_review: "review",
-  done: "done",
-};
+const NO_COLUMNS: never[] = [];
 
 export default function CardDetail({
   projectId,
@@ -67,7 +67,13 @@ export default function CardDetail({
   const asideRef = useRef<HTMLElement | null>(null);
   const mdRef = useRef<HTMLDivElement | null>(null);
   const projectTasks = useSidebar((s) => s.tasksByProject[projectId]);
+  const columns = useColumns((s) => s.byProject[projectId] ?? NO_COLUMNS);
+  const agentByTask = useScripts((s) => s.agentByTask);
   const close = () => useUi.getState().setBoardDetailIssueId(null);
+
+  useEffect(() => {
+    void useColumns.getState().load(projectId);
+  }, [projectId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -250,9 +256,20 @@ export default function CardDetail({
     (s) => s.id !== issueId && !(issue?.blockers ?? []).some((b) => b.id === s.id),
   );
 
-  const dotStatus = issue
-    ? linkedTask?.status ?? LANE_DOT_STATUS[issue.lane]
+  // The dot reads the AGENT, not the column (ADR-0037 / the TaskHeader-dot
+  // finding): a live agent terminal pulses amber, review is the hollow
+  // needs-you ring, everything else is idle. A column never colours it.
+  const dotStatus = linkedTask
+    ? agentLive(agentByTask[linkedTask.id], linkedTask.status)
+      ? "in_progress"
+      : linkedTask.status === "review"
+        ? "needs-you"
+        : null
     : null;
+  const columnName = issue
+    ? (columns.find((c) => c.id === columnIdForIssue(issue, columns))?.name ??
+      issue.lane)
+    : "";
 
   return (
     <aside className="card-detail" data-issue-id={issueId} ref={asideRef}>
@@ -261,7 +278,7 @@ export default function CardDetail({
           <span
             className={`status-dot${dotStatus ? ` status-${dotStatus}` : ""}`}
           />
-          {LANE_LABEL[issue?.lane ?? "backlog"] ?? issue?.lane}
+          {columnName}
           {issue?.blocked && (
             <span className="card-detail-blocked-note">
               blocked by {issue.blockers.length}
@@ -419,7 +436,10 @@ export default function CardDetail({
                     >
                       {b.title}
                     </button>
-                    <em>{LANE_LABEL[b.lane] ?? b.lane}</em>
+                    {/* Blocker rows carry a lane, not a column id —
+                        resolved through the same seed_lane mapping the
+                        backend's blocked derivation uses. */}
+                    <em>{columnNameForLane(b.lane, columns)}</em>
                     <button
                       className="row-remove"
                       aria-label={`Remove blocker ${b.title}`}

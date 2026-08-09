@@ -44,6 +44,37 @@ export type FartcodeEvent =
   | { type: "issue:created"; id: string; projectId: string; title: string }
   | { type: "issue:updated"; id: string; projectId: string }
   | { type: "issue:deleted"; id: string; projectId: string }
+  // E18-04/05 step engine (fartcode-app/src/app.rs `event_to_value`).
+  // `step:launch` is a DIRECTIVE — open/focus the task's agent session;
+  // the rest are notifications. Note a command-path launch emits the event
+  // AND returns the same payload in `EnterOutcomeDto.launch`, so a
+  // consumer that acts on both must dedupe (BoardView does).
+  | {
+      type: "step:launch";
+      issueId: string;
+      projectId: string;
+      columnId: string;
+      taskId: string;
+      prompt: string;
+      provider: string;
+      model: string | null;
+      effort: string | null;
+      reattached: boolean;
+    }
+  | {
+      type: "step:queued";
+      issueId: string;
+      projectId: string;
+      columnId: string;
+      provider: string;
+      model: string | null;
+      effort: string | null;
+    }
+  | { type: "step:queue_cleared"; issueId: string; projectId: string; columnId: string }
+  /** The step settled and its column HOLDS — the card's step-done dot
+   * (v3 system rules). Derived state: nothing is stored, so it lives only
+   * for this session. */
+  | { type: "step:settled"; issueId: string; projectId: string; columnId: string; taskId: string }
   | { type: "setting:changed"; key: string };
 
 export function listProjects(): Promise<ProjectDto[]> {

@@ -1,5 +1,9 @@
-/* E17 project view: the issue board is ONE ruled surface — a plate with
-   five hairline-divided lanes — and the card detail is its inspector.
+/* E17 project view: the issue board is ONE ruled surface — a plate of N
+   hairline-divided COLUMNS (handoff v3 §8a; the count comes from
+   board_columns via the --column-count custom property, never from a
+   constant) — and the card detail is its inspector. Nothing here is keyed
+   on a column's NAME: counts_as_done dims through [data-done], the landing
+   column tags itself, and the kind subline colours by [data-tone].
    Tokens from styles.css; status hues from the canonical .status-dot. */
 
 .project-view {
@@ -44,6 +48,10 @@
 
 /* -- the board surface --------------------------------------------------- */
 
+/* The board owns no padding of its own: §8a puts the inset on the COLUMN
+   (22px top / 20px left / 14px right), so the leftmost card sits exactly
+   20px off the pane edge however many columns there are. The rows that
+   live outside the grid carry that inset themselves. */
 .board {
   position: relative; /* anchors the §5g confirm overlay */
   display: flex;
@@ -51,13 +59,12 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
-  padding: 12px 12px 16px;
-  gap: 10px;
+  padding: 0;
   overflow: hidden;
 }
 
 .board-error {
-  margin: 0;
+  margin: 12px 20px 0;
 }
 
 /* Inline "add issue" row above the frame: a quiet hairline input with a
@@ -66,6 +73,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  padding: 12px 20px 0;
 }
 
 .board-new-input {
@@ -99,9 +107,12 @@
   color: var(--text-secondary);
 }
 
-/* The frame: five lanes separated by hairlines — no outer plate (left-nav
-   redesign). Below the lane floor the frame scrolls sideways — heads and
-   lanes share the same grid floor so they never drift apart. */
+/* The frame: N columns separated by hairlines — no outer plate (left-nav
+   redesign). Below the column floor the frame scrolls sideways — heads and
+   columns share the same grid floor (--column-count, set inline from
+   board_columns) so they never drift apart. 4–9 columns is the realistic
+   range; the 150px floor is what makes the overflow scroll rather than
+   crush them. */
 .board-frame {
   display: flex;
   flex-direction: column;
@@ -111,32 +122,50 @@
   overflow-y: hidden;
 }
 
-.board-lane-heads {
+.board-lane-heads,
+.board-lanes {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  min-width: 750px;
+  grid-template-columns: repeat(var(--column-count, 1), minmax(0, 1fr));
+  min-width: calc(var(--column-count, 1) * 150px);
+}
+
+.board-lane-heads {
   flex-shrink: 0;
 }
 
+/* Header block (§8a): name row + count, then the kind subline; 10px of
+   breathing room, a hairline floor, 16px before the first card. */
 .board-lane-head {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 12px 12px;
+  flex-direction: column;
+  padding: 22px 14px 10px 20px;
   border-bottom: 1px solid rgba(255,255,255,.07);
   margin-bottom: 16px;
+}
+
+.board-lane-head:last-child {
+  padding-right: 20px;
 }
 
 .board-lane-head + .board-lane-head {
   border-left: 1px solid rgba(255,255,255,.05);
 }
 
-/* Right side of a lane head: optional add key (Backlog) + count. */
+.board-lane-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Right side of a column head: optional add key (the landing column) +
+   count. */
 .board-lane-side {
   display: flex;
   align-items: center;
   gap: 4px;
+  margin-left: auto;
 }
 
 .board-lane-name {
@@ -147,8 +176,18 @@
   white-space: nowrap;
 }
 
-.board-lane-head[data-lane="done"] .board-lane-name {
+/* counts_as_done recedes — the FLAG dims, never the name (multiple
+   terminal columns dim identically). */
+.board-lane-head[data-done] .board-lane-name {
   color: #6e6e75;
+}
+
+/* is_landing: information, not consent — mono, --meta, never green. */
+.board-lane-landing {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--meta);
 }
 
 .board-lane-count {
@@ -157,10 +196,35 @@
   color: var(--meta);
 }
 
+/* Kind subline (§8a): what this column DOES, in one mono line. Its
+   brightness is the spend signal — a confirm-free agent step reads
+   #9a9aa1, a queue-mode one --meta, everything else --meta-dim. */
+.board-lane-kind,
+.board-strip-sub {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--meta-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-lane-kind {
+  margin-top: 4px;
+}
+
+.board-lane-kind[data-tone="queue"],
+.board-strip-sub[data-tone="queue"] {
+  color: var(--meta);
+}
+
+.board-lane-kind[data-tone="run"],
+.board-strip-sub[data-tone="run"] {
+  color: #9a9aa1;
+}
+
 .board-lanes {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  min-width: 750px;
   flex: 1;
   min-height: 0;
 }
@@ -175,14 +239,24 @@
   border-left: 1px solid rgba(255,255,255,.05);
 }
 
+/* Cards in a terminal column recede as a body — the same flag that dims
+   the header, never a name test. */
+.board-lane[data-done] .board-card {
+  opacity: 0.5;
+}
+
 .board-lane-cards {
   display: flex;
   flex-direction: column;
   gap: 18px; /* spec: 18px between cards */
   width: 100%;
   min-width: 0;
-  padding: 4px 10px 8px 14px;
+  padding: 0 14px 16px 20px;
   overflow-y: auto;
+}
+
+.board-lane:last-child .board-lane-cards {
+  padding-right: 20px;
 }
 
 /* Keeps an empty lane a full drop target. */
@@ -286,6 +360,13 @@
 .board-card .board-run-dot.run-queued {
   background: transparent;
   border: 1px dashed #6e6e75;
+}
+
+/* Step done, column holds (v3): the SAME accent-filled 7px dot as a passed
+   check — filled, so it never reads as the hollow needs-you ring. It is
+   the state's whole announcement; there is no meta word for it. */
+.board-card .board-run-dot.run-step-done {
+  background: var(--accent);
 }
 
 .board-card-body {
@@ -409,6 +490,110 @@
 .board-card-action button:hover {
   color: #a4a4ab;
   background: none;
+}
+
+/* The step-done hint's trailing half ("· drag on") is instruction, not a
+   control — it stays at the key-hint tone while the "↵ read" half is the
+   clickable part. */
+.board-card-hint-tail {
+  color: var(--text-key);
+}
+
+/* -- §8b narrow: one column + the mono strip ------------------------------ */
+
+.board-narrow {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* The 44px right-edge fade says "there is more board" without a scrollbar,
+   an arrow, or a count — and the strip NEVER caps or truncates, however
+   many columns the project has. */
+.board-strip-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.board-strip-wrap::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 44px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--background));
+}
+
+.board-strip {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  padding: 22px 22px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.board-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.board-strip-entry {
+  flex-shrink: 0;
+  padding: 0 0 3px;
+  border: none;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--meta);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.board-strip-entry:hover {
+  background: none;
+  color: var(--text-secondary);
+}
+
+/* A column with a live agent wears the working amber — the same colour the
+   card dots use, so the strip reads as a status line. */
+.board-strip-entry[data-working] {
+  color: var(--status-in-progress);
+}
+
+.board-strip-entry[data-active] {
+  color: var(--foreground);
+  border-bottom-color: var(--accent);
+}
+
+.board-strip-count {
+  color: inherit;
+}
+
+/* The header's spend rule survives narrow: the focused column's subline
+   sits directly under the strip. */
+.board-strip-sub {
+  flex-shrink: 0;
+  padding: 12px 22px 0;
+}
+
+.board-narrow .board-frame {
+  margin-top: 12px;
+}
+
+.board-narrow-foot {
+  flex-shrink: 0;
+  padding: 8px 22px 12px;
+  border-top: 1px solid var(--hairline);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-key);
 }
 
 /* Drop target: a 1px accent line between cards, never a ghost box. */
