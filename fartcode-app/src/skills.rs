@@ -37,55 +37,54 @@
 use std::path::Path;
 
 use fartcode_core::issues::Issue;
+use fartcode_core::projects::ProjectStore;
 use fartcode_core::skills;
 
 use crate::app::App;
 
 /// Scaffolds `.claude/skills/feature-log/` + the `AGENTS.md` pointer into a
-/// task's worktree, if the project consented.
+/// task's worktree, if the project consented and the scaffold is not
+/// already recorded as current.
 ///
-/// Called from `dispatch::provision_issue_task`, beside the dossier's own
-/// birth — the one provisioning helper both the legacy board dispatch and
-/// the step engine share. Running on every provision (rather than once per
-/// project) is what makes a [`skills::FEATURE_LOG_VERSION`] bump self-heal:
-/// the next feature branch reseeds the stale scaffold, and a repo already
-/// carrying the current version is a stat and two reads.
+/// **The only seeding entry point.** Called from
+/// `dispatch::provision_issue_task` (the shared provisioning tail) and from
+/// `step_engine::launch_step`'s non-reattach branch — the second matters
+/// because a card whose worktree already exists never re-provisions, so
+/// without it a [`skills::FEATURE_LOG_VERSION`] bump would never reach a
+/// feature already in flight.
+///
+/// Three gates, in increasing cost, all of them cheap:
+///
+/// 1. **Consent** — the same fail-closed gate the dossier uses.
+/// 2. **`feature_log_seeded_version`** — the app's memory of what it
+///    already wrote here. This is what makes the removal instructions
+///    printed inside the scaffold TRUE: without it, a user who deletes the
+///    files gets them back on the next card, forever, and the sentence
+///    "delete this directory to remove the convention" is a lie that costs
+///    them a diff in every future pull request. A version bump makes the
+///    comparison fail again, so a real format change still heals.
+/// 3. The filesystem inspection in [`skills::seed`] itself.
 ///
 /// Best-effort by contract, exactly like the dossier: every failure is a
 /// `tracing::warn!` and nothing else. A read-only repo must not fail a
 /// dispatch.
 pub fn seed_for_task(app: &App, project_id: &str, task_id: &str) {
-    if !consented_to_seed(app, project_id) {
+    if !crate::dossiers::consented(app, project_id) {
+        tracing::debug!(
+            project_id,
+            "feature dossiers off for this project — not seeding the skill"
+        );
+        return;
+    }
+    if seeded_version(app, project_id).is_some_and(|v| v >= skills::FEATURE_LOG_VERSION) {
+        // Already done at this version. If the files are gone, the user
+        // removed them and we respect that.
         return;
     }
     let Some(worktree) = crate::dossiers::task_worktree(app, task_id) else {
         return;
     };
-    seed_into(&worktree);
-}
-
-/// [`seed_for_task`] with the worktree already resolved — the seam the
-/// tests drive, and the shape the caller wants when it just provisioned.
-pub fn seed_for_worktree(app: &App, project_id: &str, worktree: &Path) {
-    if !consented_to_seed(app, project_id) {
-        return;
-    }
-    seed_into(worktree);
-}
-
-fn consented_to_seed(app: &App, project_id: &str) -> bool {
-    if crate::dossiers::consented(app, project_id) {
-        return true;
-    }
-    tracing::debug!(
-        project_id,
-        "feature dossiers off for this project — not seeding the skill"
-    );
-    false
-}
-
-fn seed_into(worktree: &Path) {
-    match skills::seed(worktree) {
+    match skills::seed(&worktree) {
         Ok(report) if report.wrote() => {
             tracing::info!(
                 worktree = %worktree.display(),
@@ -94,6 +93,10 @@ fn seed_into(worktree: &Path) {
                 version = skills::FEATURE_LOG_VERSION,
                 "feature-log convention seeded"
             );
+            // Recorded ONLY after a write actually landed. A refusal or a
+            // decline (the paths are the user's) must not be remembered as
+            // "done" — the next launch should look again.
+            record_seeded_version(app, project_id, skills::FEATURE_LOG_VERSION);
         }
         // Up to date, or the paths belong to someone else. Both are
         // successful outcomes and neither is worth a line at info.
@@ -101,13 +104,47 @@ fn seed_into(worktree: &Path) {
             worktree = %worktree.display(),
             skill = ?report.skill,
             pointer = ?report.pointer,
-            "feature-log convention already in place"
+            "feature-log convention not written"
         ),
         Err(e) => tracing::warn!(
             worktree = %worktree.display(),
             error = %e,
             "seeding the feature-log convention failed"
         ),
+    }
+}
+
+/// The scaffold version this project was last successfully seeded at.
+fn seeded_version(app: &App, project_id: &str) -> Option<u32> {
+    let project = app.projects.get(project_id).ok().flatten()?;
+    app.settings
+        .get_project_settings(project_id, Path::new(&project.path))
+        .ok()?
+        .feature_log_seeded_version
+}
+
+/// Records a successful seed. Read-modify-write, because
+/// `update_project_settings` is full-replace — sending a partial object
+/// would clear every field we did not name.
+fn record_seeded_version(app: &App, project_id: &str, version: u32) {
+    let Ok(Some(project)) = app.projects.get(project_id) else {
+        return;
+    };
+    let repo = Path::new(&project.path);
+    let mut settings = match app.settings.get_project_settings(project_id, repo) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(project_id, error = %e, "cannot read settings to record the seed");
+            return;
+        }
+    };
+    settings.feature_log_seeded_version = Some(version);
+    if let Err(e) = app
+        .settings
+        .update_project_settings(project_id, repo, &settings)
+    {
+        // Losing this only costs one redundant no-op seed next launch.
+        tracing::warn!(project_id, error = %e, "recording the seeded scaffold version failed");
     }
 }
 

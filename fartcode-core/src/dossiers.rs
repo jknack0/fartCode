@@ -554,8 +554,12 @@ fn fingerprint(path: &Path) -> Result<(u64, Option<std::time::SystemTime>), Erro
 
 /// Writes via a uniquely-named temp file in the SAME directory + rename,
 /// so the replacement is atomic on the target filesystem and two
-/// concurrent writers can never share a temp path. A failed rename cleans
-/// up after itself rather than littering the user's repo.
+/// concurrent writers can never share a temp path. **Every** failure path
+/// cleans up after itself rather than littering the user's repo — the write
+/// as well as the rename (a partial write left a `.tmp` corpse behind
+/// before the E19-02 fix round, and `crate::skills` reads directory
+/// contents to decide ownership, so debris there is not merely untidy: it
+/// makes our own scaffold look like somebody else's).
 ///
 /// Crate-visible since E19-02 (#71): `crate::skills` writes into the same
 /// repositories under the same contract, and a second implementation of
@@ -569,13 +573,31 @@ pub(crate) fn atomic_write(target: &Path, content: &str) -> Result<(), Error> {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("dossier.md");
-    let tmp = dir.join(format!(".{name}.{}.tmp", uuid::Uuid::new_v4().simple()));
-    std::fs::write(&tmp, content)?;
+    let tmp = dir.join(temp_name(name));
+    if let Err(e) = std::fs::write(&tmp, content) {
+        // A partially written temp file is still a file: remove it, or a
+        // disk-full write poisons the directory's ownership check forever.
+        let _ = std::fs::remove_file(&tmp);
+        return Err(Error::Io(e));
+    }
     if let Err(e) = std::fs::rename(&tmp, target) {
         let _ = std::fs::remove_file(&tmp);
         return Err(Error::Io(e));
     }
     Ok(())
+}
+
+/// The temp filename [`atomic_write`] uses for `name`. Hidden (leading dot)
+/// and `.tmp`-suffixed so [`is_temp_name`] can recognize it.
+fn temp_name(name: &str) -> String {
+    format!(".{name}.{}.tmp", uuid::Uuid::new_v4().simple())
+}
+
+/// True when `name` looks like one of OUR temp files. The one definition,
+/// shared with [`temp_name`], so a debris file can never be mistaken for a
+/// user's document (or vice versa).
+pub(crate) fn is_temp_name(name: &str) -> bool {
+    name.starts_with('.') && name.ends_with(".tmp")
 }
 
 /// Joins a repo-relative dossier path onto a worktree root. The path is

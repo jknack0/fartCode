@@ -366,6 +366,25 @@ pub struct BaseProjectSettings {
     /// to write into a checkout is the local user's, not something a
     /// teammate's `.fartCode.json` should decide for them.
     pub feature_dossiers: Option<bool>,
+    /// The [`crate::skills::FEATURE_LOG_VERSION`] whose scaffold was last
+    /// successfully written into this project (E19-02, #71).
+    ///
+    /// **This is what makes deleting the scaffold stick.** Seeding runs on
+    /// every step launch, so without a memory of "we already did this" the
+    /// files would resurrect on the next card — and the removal
+    /// instructions printed inside them ("delete this directory to remove
+    /// the convention") would be a lie that costs the user a line in every
+    /// future pull request. `Some(v) >= FEATURE_LOG_VERSION` means don't
+    /// look and don't write; a version bump makes the comparison fail
+    /// again, so a genuine format change still self-heals.
+    ///
+    /// Written only after a write actually succeeded — a refusal (no
+    /// consent) or a decline (the paths belong to the user) records
+    /// nothing, so neither is mistaken for "done".
+    ///
+    /// Base, not shareable, for the same reason as `feature_dossiers`: it
+    /// describes what happened to this machine's checkout.
+    pub feature_log_seeded_version: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
@@ -429,6 +448,10 @@ pub struct ProjectSettings {
     /// [`BaseProjectSettings::feature_dossiers`] for the three states and
     /// the interim unset behavior.
     pub feature_dossiers: Option<bool>,
+    /// Last feature-log scaffold version written into this project — see
+    /// [`BaseProjectSettings::feature_log_seeded_version`]. App-managed
+    /// bookkeeping, not a user-facing switch.
+    pub feature_log_seeded_version: Option<u32>,
     // -- shareable (.fartCode.json-synced) --
     pub preserve_patterns: Option<Vec<String>>,
     pub shell_setup: Option<String>,
@@ -450,6 +473,7 @@ impl ProjectSettings {
             task_startup_command: self.task_startup_command.clone(),
             workspace_provider: self.workspace_provider.clone(),
             feature_dossiers: self.feature_dossiers,
+            feature_log_seeded_version: self.feature_log_seeded_version,
         }
     }
 

@@ -220,6 +220,7 @@ impl DbSettingsStore {
             task_startup_command: base.task_startup_command,
             workspace_provider: base.workspace_provider,
             feature_dossiers: base.feature_dossiers,
+            feature_log_seeded_version: base.feature_log_seeded_version,
             preserve_patterns: shareable.preserve_patterns,
             shell_setup: shareable.shell_setup,
             scripts: shareable.scripts,
