@@ -767,6 +767,14 @@ fn launch_step(
     let (task, issue, prompt, reattached) = match existing_task {
         Some(task) if reattach_ok => (TaskDto::from(&task), issue, String::new(), true),
         Some(task) => {
+            // E19-02 fix round (#71): a second step reuses the existing
+            // worktree, so `provision_issue_task` — the other seeding site
+            // — never runs. Without this call a FEATURE_LOG_VERSION bump
+            // would never reach a feature already in flight, and the prompt
+            // would cite a convention version the repo does not carry. The
+            // seed is gated on a settings read, so the common case costs
+            // one query.
+            crate::skills::seed_for_task(app, &issue.project_id, &task.id);
             let prompt = step_prompt_for(app, column, &issue);
             (TaskDto::from(&task), issue, prompt, false)
         }
