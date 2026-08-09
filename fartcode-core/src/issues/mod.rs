@@ -126,6 +126,13 @@ pub struct Issue {
     pub model: Option<String>,
     pub prd_path: Option<String>,
     pub prd_section: Option<String>,
+    /// Repo-relative path of the feature dossier (E19-01, #70; ADR-0038
+    /// item 1), e.g. `docs/features/oauth-login.md`. Written when the
+    /// dossier is born with the worktree at the card's first `agent_step`
+    /// entry. `None` is the ordinary state for a card that was never
+    /// dispatched, whose project declined dossiers, or whose creation
+    /// write failed — no behavior keys off it being set.
+    pub dossier_path: Option<String>,
     /// Task spawned by board dispatch (E17-03). Survives lane moves;
     /// cleared when the task is deleted.
     pub linked_task_id: Option<String>,
@@ -163,6 +170,10 @@ pub struct NewIssue {
     pub prd_path: Option<String>,
     pub prd_section: Option<String>,
     pub external_ref: Option<String>,
+    /// Pre-set dossier path (E19-01). Every user-facing entry path passes
+    /// `None` — the dossier is born with the worktree, not with the card.
+    /// Present so a future importer can adopt an existing dossier.
+    pub dossier_path: Option<String>,
 }
 
 /// Patch for [`IssueStore::update`]: `None` leaves the field alone;
@@ -177,6 +188,11 @@ pub struct IssuePatch {
     pub model: Option<Option<String>>,
     pub prd_path: Option<Option<String>>,
     pub prd_section: Option<Option<String>>,
+    /// E19-01: app-managed, not user-editable — the dossier lifecycle owns
+    /// it (birth with the worktree). Deliberately absent from the
+    /// `issue_update` wire request; the patch carries it so the one writer
+    /// goes through the same emit-`IssueUpdated` path as every other field.
+    pub dossier_path: Option<Option<String>>,
 }
 
 /// Builds the dispatch prompt packet (E17-03, #57; ADR-0032) — issue
@@ -249,8 +265,8 @@ pub struct IssueStore {
 /// Columns in `issue_from_row` order; the final `blocked` slot is the
 /// EXISTS subquery appended by the list/get SELECTs.
 const COLUMNS: &str = "id, project_id, title, body, acceptance, lane, position, \
-     provider, model, prd_path, prd_section, linked_task_id, external_ref, \
-     column_id, created_at, updated_at";
+     provider, model, prd_path, prd_section, dossier_path, linked_task_id, \
+     external_ref, column_id, created_at, updated_at";
 
 /// THE definition of column membership on the read side: `board_columns c`
 /// is the column of issue row `b` — a SINGLE join on the authoritative
@@ -329,7 +345,7 @@ fn renumber_column(
 fn issue_from_row(row: &rusqlite::Row) -> rusqlite::Result<Issue> {
     let lane: String = row.get(5)?;
     let acceptance_cell: Option<String> = row.get(4)?;
-    let blocked: i64 = row.get(16)?;
+    let blocked: i64 = row.get(17)?;
     Ok(Issue {
         id: row.get(0)?,
         project_id: row.get(1)?,
@@ -347,11 +363,12 @@ fn issue_from_row(row: &rusqlite::Row) -> rusqlite::Result<Issue> {
         model: row.get(8)?,
         prd_path: row.get(9)?,
         prd_section: row.get(10)?,
-        linked_task_id: row.get(11)?,
-        external_ref: row.get(12)?,
-        column_id: row.get(13)?,
-        created_at: row.get(14)?,
-        updated_at: row.get(15)?,
+        dossier_path: row.get(11)?,
+        linked_task_id: row.get(12)?,
+        external_ref: row.get(13)?,
+        column_id: row.get(14)?,
+        created_at: row.get(15)?,
+        updated_at: row.get(16)?,
         blocked: blocked != 0,
         blockers: Vec::new(), // attached by the caller (second query)
     })
@@ -529,12 +546,12 @@ impl IssueStore {
                     "INSERT INTO issues
                          (id, project_id, title, body, acceptance, lane, position,
                           provider, model, prd_path, prd_section, external_ref,
-                          column_id)
+                          column_id, dossier_path)
                      VALUES (
                          ?1, ?2, ?3, ?4, ?5, ?6,
                          (SELECT COALESCE(MAX(position) + 1, 0) FROM issues
                            WHERE project_id = ?2 AND column_id = ?12),
-                         ?7, ?8, ?9, ?10, ?11, ?12
+                         ?7, ?8, ?9, ?10, ?11, ?12, ?13
                      )",
                     rusqlite::params![
                         id,
@@ -549,6 +566,7 @@ impl IssueStore {
                         new.prd_section,
                         new.external_ref,
                         column_id,
+                        new.dossier_path,
                     ],
                 )?;
             }
@@ -638,6 +656,9 @@ impl IssueStore {
         if let Some(prd_section) = patch.prd_section {
             issue.prd_section = prd_section;
         }
+        if let Some(dossier_path) = patch.dossier_path {
+            issue.dossier_path = dossier_path;
+        }
         let acceptance = serialize_versioned(&AcceptanceCriteria {
             items: issue.acceptance.clone(),
         })?;
@@ -646,7 +667,7 @@ impl IssueStore {
             conn.execute(
                 "UPDATE issues SET title = ?2, body = ?3, acceptance = ?4,
                      provider = ?5, model = ?6, prd_path = ?7, prd_section = ?8,
-                     updated_at = datetime('now')
+                     dossier_path = ?9, updated_at = datetime('now')
                   WHERE id = ?1",
                 rusqlite::params![
                     id,
@@ -657,6 +678,7 @@ impl IssueStore {
                     issue.model,
                     issue.prd_path,
                     issue.prd_section,
+                    issue.dossier_path,
                 ],
             )?;
         }
@@ -1019,6 +1041,7 @@ mod tests {
             prd_path: None,
             prd_section: None,
             external_ref: None,
+            dossier_path: None,
         }
     }
 
@@ -1073,6 +1096,83 @@ mod tests {
             .unwrap();
         assert_eq!(fetched.column_id.as_deref(), Some(ready.id.as_str()));
         assert!(fetched.created_at.is_some());
+        // E19-01: a card is born WITHOUT a dossier — the file is created
+        // with the worktree, not with the row.
+        assert_eq!(fetched.dossier_path, None);
+    }
+
+    /// E19-01 (#70): `dossier_path` is a plain nullable field on the read
+    /// and write paths — settable, clearable, and NULL by default. Every
+    /// consumer must tolerate NULL; nothing derives behavior from it.
+    #[test]
+    fn dossier_path_round_trips_and_clears() {
+        let store = fixture();
+        let created = store.create(new_issue("Token storage")).unwrap();
+        assert_eq!(created.dossier_path, None);
+
+        let set = store
+            .update(
+                &created.id,
+                IssuePatch {
+                    dossier_path: Some(Some("docs/features/token-storage.md".into())),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            set.dossier_path.as_deref(),
+            Some("docs/features/token-storage.md")
+        );
+        assert_eq!(
+            store.get(&created.id).unwrap().unwrap().dossier_path,
+            set.dossier_path
+        );
+
+        // An unrelated patch leaves it alone…
+        let renamed = store
+            .update(
+                &created.id,
+                IssuePatch {
+                    title: Some("Token storage v2".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            renamed.dossier_path.as_deref(),
+            Some("docs/features/token-storage.md")
+        );
+
+        // …and `Some(None)` clears it, like every other nullable field.
+        let cleared = store
+            .update(
+                &created.id,
+                IssuePatch {
+                    dossier_path: Some(None),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(cleared.dossier_path, None);
+    }
+
+    /// A card can carry a dossier_path from birth (the importer hook on
+    /// `NewIssue`), and the list read path returns it like any other field.
+    #[test]
+    fn dossier_path_survives_create_and_list() {
+        let store = fixture();
+        store
+            .create(NewIssue {
+                dossier_path: Some("docs/features/adopted.md".into()),
+                ..new_issue("Adopted")
+            })
+            .unwrap();
+        let listed = store.list_for_project("p1").unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            listed[0].dossier_path.as_deref(),
+            Some("docs/features/adopted.md")
+        );
     }
 
     #[test]
@@ -1323,6 +1423,7 @@ mod tests {
         let imported = store
             .create(NewIssue {
                 external_ref: Some("https://github.com/o/r/issues/42".into()),
+                dossier_path: None,
                 ..new_issue("#42 Fix the flaky test")
             })
             .unwrap();
@@ -1332,6 +1433,7 @@ mod tests {
         let again = store
             .create(NewIssue {
                 external_ref: Some("https://github.com/o/r/issues/42".into()),
+                dossier_path: None,
                 ..new_issue("#42 Fix the flaky test (again)")
             })
             .unwrap();

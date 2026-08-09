@@ -4,6 +4,46 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## #70 feature dossiers: file lifecycle LANDED (2026-08-09) — E19-01
+
+ADR-0038 items 1–2, backend only. Migration 0009 adds
+`issues.dossier_path` (nullable, NULL everywhere on upgrade). The dossier
+is born in `dispatch::provision_issue_task` — the ONE helper board
+dispatch and the step engine's first `agent_step` entry share — AFTER the
+worktree exists and written INSIDE it, so it rides the feature branch.
+Being there is what makes "first step entry" the single birth moment: a
+card with a live linked task never reaches the helper, so a second step
+column cannot mint a second file.
+- `fartcode-core/src/dossiers.rs` owns content + file ops (slug, header,
+  append); `fartcode-app/src/dossiers.rs` owns lifecycle (consent,
+  worktree resolution, `dossier_path`, the bus subscriber).
+- SLUG reuses `generate_task_name(Some(title), None, false)` — the exact
+  call `create_task_params` makes for the branch name. No second
+  slugifier. Unsluggable title → the issue id.
+- CONSENT: `BaseProjectSettings.feature_dossiers: Option<bool>` (base,
+  NOT shareable — consent to write into a checkout is local).
+  `Some(false)` refuses; **`None` (never asked) WRITES** — interim until
+  #74's card, which must write `Some(_)` on both answers. Unreadable
+  settings → refuse.
+- PROVENANCE is derived, not stored: `external_ref` → import, else
+  `prd_path` → proposal, else manual. Known imprecision: a PRD-less
+  proposal reads as manual. A real column is the fix if anything but the
+  header ever wants it.
+- APPENDER (`TimelineAppender`) subscribes to StepLaunch (skips
+  reattach), StepSettled, IssueUpdated, PrUpdated; inserts under
+  `## Timeline` by scanning to the next `## ` heading, so agent sections
+  (#71) are never touched. Column moves need an in-memory last-column map
+  (IssueUpdated carries no column) seeded from the DB at boot. PR
+  open/merge dedupe via a `once_key` substring check against the file —
+  stateless and restart-safe. Missing dossier/worktree/file → append
+  nothing (post-teardown is unrecorded, by ADR).
+- Creation failure NEVER fails dispatch: logs, leaves `dossier_path`
+  NULL.
+Suites: core lib 229, app lib 91 + 13 new integration, frontend 180.
+Fixed in passing: `tests/migrations.rs` and `tests/db_integration.rs`
+migration COUNTS had been stale since #66 added 0008 (both binaries red
+on clean main); now 10.
+
 ## #68 templated confirms + park rehydration LANDED (2026-08-09, 63090ba + 508d00b) — #68 closed
 
 Most of §8c had landed with the render round; this closed the three real

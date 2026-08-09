@@ -124,6 +124,9 @@ fn apply_inner(
             prd_path: proposal.prd.as_ref().map(|p| p.path.clone()),
             prd_section: None,
             external_ref: None,
+            // E19-01: the dossier is born with the worktree, not with the
+            // card — an approved proposal creates no files.
+            dossier_path: None,
         })?);
     }
 
@@ -315,6 +318,7 @@ mod tests {
                 prd_path: None,
                 prd_section: None,
                 external_ref: None,
+                dossier_path: None,
             })
             .unwrap();
         let p = parse_proposal(

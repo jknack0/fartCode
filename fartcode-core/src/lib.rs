@@ -6,6 +6,7 @@
 pub mod conversations;
 pub mod db;
 pub mod dependencies;
+pub mod dossiers;
 pub mod error;
 pub mod events;
 pub mod files;

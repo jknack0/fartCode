@@ -1162,6 +1162,12 @@ export interface IssueDto {
   model: string | null;
   prdPath: string | null;
   prdSection: string | null;
+  /** Repo-relative path of the feature dossier (ADR-0038 item 1), e.g.
+   * `docs/features/oauth-login.md`. Set when the dossier is born with the
+   * worktree at the card's first agent-step entry; null on cards that were
+   * never dispatched, projects that declined dossiers, or a failed write.
+   * Read-only from the frontend — the dossier lifecycle owns it. */
+  dossierPath: string | null;
   linkedTaskId: string | null;
   /** Source URL when imported from an external tracker (GitHub #import). */
   externalRef: string | null;

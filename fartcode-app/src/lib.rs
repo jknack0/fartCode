@@ -8,6 +8,7 @@ pub mod acp_runtime;
 pub mod app;
 pub mod commands;
 pub mod dispatch;
+pub mod dossiers;
 mod indexer;
 pub mod step_engine;
 pub mod terminals;
@@ -71,6 +72,10 @@ pub fn run() {
                 app_state.tasks.clone(),
                 app_state.event_bus.clone(),
             );
+            // E19-01: feature-dossier Timeline appender (ADR-0038 item 2) —
+            // seeds its column map from the DB, then appends breadcrumbs
+            // off the runtime worker for the app's lifetime.
+            dossiers::spawn_dossier_timeline(app_state.clone());
             // E4-01: workspace file+git watches (boot backfill + provision/
             // delete subscription).
             watchers::spawn_workspace_watchers(

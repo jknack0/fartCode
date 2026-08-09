@@ -156,6 +156,7 @@ function issue(over: Partial<IssueDto> = {}): IssueDto {
     model: null,
     prdPath: null,
     prdSection: null,
+    dossierPath: null,
     linkedTaskId: "t1",
     externalRef: null,
     columnId: "c-implement",

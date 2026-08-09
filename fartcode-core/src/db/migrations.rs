@@ -60,6 +60,9 @@ fn sql_for_tag(tag: &str) -> Option<&'static str> {
         "0008_column_id_authoritative" => Some(include_str!(
             "../../migrations/0008_column_id_authoritative.sql"
         )),
+        "0009_issue_dossier_path" => {
+            Some(include_str!("../../migrations/0009_issue_dossier_path.sql"))
+        }
         _ => None,
     }
 }

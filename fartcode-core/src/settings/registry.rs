@@ -336,6 +336,31 @@ pub struct BaseProjectSettings {
     /// preference, so deliberately NOT in the shareable subset.
     pub task_startup_command: Option<String>,
     pub workspace_provider: Option<WorkspaceProvider>,
+    /// Feature-dossier consent (E19-01, #70; ADR-0038 item 3). Writing
+    /// `docs/features/<slug>.md` into someone's repo is never silent, so
+    /// this is a per-project opt-in asked at first dispatch (the consent
+    /// card is #74) and reversible from project settings in both
+    /// directions.
+    ///
+    /// Three states, and the third is the point:
+    /// - `Some(true)`  — write dossiers.
+    /// - `Some(false)` — REFUSE. The backend writes nothing and
+    ///   `dossier_path` stays NULL; declining still dispatches
+    ///   (ADR-0038 item 3: "declining runs the step without memory").
+    /// - `None`        — NOT YET ASKED. Interim behavior until #74 lands:
+    ///   **write**. Rationale, stated so it can be argued with: the
+    ///   consent card ships before this is user-visible, so the only
+    ///   population that hits the unset state is dogfood; and since
+    ///   declining still dispatches, the failure mode of writing is one
+    ///   unwanted markdown file on a feature branch — recoverable, and
+    ///   visible in the diff — versus a feature that silently never works
+    ///   for anyone whose consent row predates the card. #74 must write
+    ///   `Some(_)` on both answers so this default stops mattering.
+    ///
+    /// DB-backed (base), deliberately NOT in the shareable subset: consent
+    /// to write into a checkout is the local user's, not something a
+    /// teammate's `.fartCode.json` should decide for them.
+    pub feature_dossiers: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
@@ -395,6 +420,10 @@ pub struct ProjectSettings {
     /// (E2-13, #52).
     pub task_startup_command: Option<String>,
     pub workspace_provider: Option<WorkspaceProvider>,
+    /// Feature-dossier consent (E19-01) — see
+    /// [`BaseProjectSettings::feature_dossiers`] for the three states and
+    /// the interim unset behavior.
+    pub feature_dossiers: Option<bool>,
     // -- shareable (.fartCode.json-synced) --
     pub preserve_patterns: Option<Vec<String>>,
     pub shell_setup: Option<String>,
@@ -415,6 +444,7 @@ impl ProjectSettings {
             auto_run_run_script_on_task_creation: self.auto_run_run_script_on_task_creation,
             task_startup_command: self.task_startup_command.clone(),
             workspace_provider: self.workspace_provider.clone(),
+            feature_dossiers: self.feature_dossiers,
         }
     }
 
