@@ -122,14 +122,20 @@ export function groupByColumn(
   return byColumn;
 }
 
-/** Display name for a lane-addressed reference (blocker rows carry a lane,
- * not a column id) — resolved through the same `seed_lane` mapping the
- * backend's blocked derivation uses. Falls back to the raw lane. */
-export function columnNameForLane(
-  lane: Lane,
+/** Display name for a blocker row. Prefers the ref's resolved column id —
+ * a lane can only ever name a SEEDED column, so a blocker parked in Quick
+ * used to be labelled with whatever column its stale lane pointed at, and
+ * the same panel would name two different columns for one card. The lane
+ * is the fallback for a ref whose column resolved to nothing. */
+export function blockerColumnName(
+  blocker: { lane: Lane; columnId: string | null },
   columns: BoardColumnDto[],
 ): string {
-  return columns.find((c) => c.seedLane === lane)?.name ?? lane;
+  if (blocker.columnId) {
+    const named = columns.find((c) => c.id === blocker.columnId);
+    if (named) return named.name;
+  }
+  return columns.find((c) => c.seedLane === blocker.lane)?.name ?? blocker.lane;
 }
 
 /** The column new work lands in (GitHub import, PM apply, manual add) —

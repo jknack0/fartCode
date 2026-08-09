@@ -1138,6 +1138,11 @@ export interface BlockerRefDto {
   id: string;
   title: string;
   lane: Lane;
+  /** The blocker's effective column (mirror first, seeded lane as the
+   * fallback) — `lane` cannot name a non-seeded column, so this is the
+   * only thing that can label the row with the column the card is
+   * actually in. null when its lane maps to no column at all. */
+  columnId: string | null;
   /** True when the blocker's column carries counts_as_done (E18-03,
    * ADR-0037 item 6) — key "is it finished?" off this, not the lane. */
   countsAsDone: boolean;
