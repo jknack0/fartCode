@@ -1,17 +1,25 @@
 //! Project board issues (E17-01, #55; ARCHITECTURE.md §13, ADR-0032).
 //!
-//! Local-first issue store backing the project board: five lanes
-//! (backlog → ready → in_progress → in_review → done), blocked-by edges
-//! between issues, and a linked-task pointer the dispatch engine (E17-03)
-//! fills when a card spawns an implementation agent.
+//! Local-first issue store backing the project board: configurable
+//! pipeline columns (ADR-0037), blocked-by edges between issues, and a
+//! linked-task pointer the dispatch engine (E17-03) fills when a card
+//! spawns an implementation agent.
+//!
+//! **THE AUTHORITY FLIP (E18-07, #66):** `issues.column_id` is the
+//! authoritative record of a card's board placement — non-NULL on every
+//! row (migration 0008 backfill) and written by every move/entry path.
+//! `issues.lane` survives only as a derived display mirror: it is synced
+//! from a seeded column's `seed_lane` on entry and left at its last value
+//! for non-seeded columns (no column ↔ lane mapping exists there). Nothing
+//! decides behavior off the lane string anymore.
 //!
 //! Invariants enforced here:
 //! - **Blocked status is derived, never stored** (ADR-0032; flag-keyed by
 //!   E18-03/ADR-0037 item 6): an issue is blocked iff any direct blocker
-//!   sits outside a `counts_as_done` column — the blocker's column resolved
-//!   through the `seed_lane` mapping while lane stays authoritative. A
-//!   blocker landing in a counts-as-done column (seeded Done, or any later
-//!   terminal column) unblocks its dependents with no writes.
+//!   sits outside a `counts_as_done` column — the blocker's column being
+//!   its `column_id`, a single join. A blocker landing in a counts-as-done
+//!   column (seeded Done, or any later terminal column) unblocks its
+//!   dependents with no writes.
 //! - **Cycles are rejected at edge creation** — a `blocked by` edge that
 //!   would close a loop (including a self-edge) fails with
 //!   [`Error::IssueDependencyCycle`]. Cross-project edges are rejected:
@@ -22,8 +30,8 @@
 //!
 //! Schema: migration 0002.
 
-/// Configurable pipeline columns (E18, ADR-0037) — spike behind the seeded
-/// default; `lane` above stays authoritative.
+/// Configurable pipeline columns (E18, ADR-0037) — authoritative for
+/// board placement since the E18-07 flip (#66).
 pub mod columns;
 
 use std::collections::HashMap;
@@ -36,9 +44,9 @@ use crate::db::{parse_versioned, serialize_versioned, Db, Versioned};
 use crate::events::{EventBus, InternalEvent};
 use crate::Error;
 
-/// Board lanes (§13). Text values are the stored representation; board
-/// column order is the `CASE` in `list_for_project` (text sort is NOT lane
-/// order).
+/// Board lanes (§13). Text values are the stored representation. Since
+/// the E18-07 authority flip the lane is a derived display mirror of the
+/// card's seeded column (see the module docs) — no behavior keys off it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Lane {
@@ -97,11 +105,9 @@ pub struct BlockerRef {
     /// ADR-0037 item 6) — the flag every "is it finished?" consumer keys
     /// off instead of the `'done'` lane string.
     pub counts_as_done: bool,
-    /// The blocker's effective column. `lane` cannot name a non-seeded
-    /// column, so a blocker parked in Quick used to be reported as being
-    /// in the column its stale lane pointed at — the same panel naming two
-    /// different columns for one card. `None` only when the card's lane
-    /// maps to no column at all.
+    /// The blocker's column (authoritative since E18-07). `None` only in
+    /// out-of-contract data (a pre-0008 row that never migrated) — kept
+    /// optional for wire-shape stability.
     pub column_id: Option<String>,
 }
 
@@ -126,10 +132,11 @@ pub struct Issue {
     /// Source URL when imported from an external tracker (GitHub issue
     /// import — dedupe key + provenance badge).
     pub external_ref: Option<String>,
-    /// Mirror pointer to the card's board column (E18-04): written by
-    /// [`IssueStore::enter_column`] (which lane-addressed moves route
-    /// through) and the 0006 backfill. Lane stays authoritative until the
-    /// E18-07 flip; `None` on cards that have never been moved/entered.
+    /// The card's board column — AUTHORITATIVE since the E18-07 flip
+    /// (#66): written by every entry/move path and backfilled non-NULL by
+    /// migration 0008. Stays `Option` for wire-shape stability
+    /// (`IssueDto.columnId` is `string | null` in TS); `None` only in
+    /// out-of-contract data.
     pub column_id: Option<String>,
     /// Derived at read time (ADR-0032): any direct blocker not in a
     /// counts-as-done column.
@@ -145,9 +152,11 @@ pub struct NewIssue {
     pub title: String,
     pub body: Option<String>,
     pub acceptance: Vec<String>,
-    /// Overrides the landing target. `None` (every user-facing entry
-    /// path — import, proposal apply, manual add) lands the card on the
-    /// project's `is_landing` column (E18-06).
+    /// Overrides the landing target with the lane's seeded column. `None`
+    /// (every user-facing entry path — import, proposal apply, manual
+    /// add) lands the card on the project's `is_landing` column (E18-06).
+    /// Since E18-07 an override whose seeded column was deleted is a
+    /// typed error — every new card must carry a real column.
     pub lane: Option<Lane>,
     pub provider: Option<String>,
     pub model: Option<String>,
@@ -244,23 +253,18 @@ const COLUMNS: &str = "id, project_id, title, body, acceptance, lane, position, 
      column_id, created_at, updated_at";
 
 /// THE definition of column membership on the read side: `board_columns c`
-/// is the effective column of issue row `b`.
+/// is the column of issue row `b` — a SINGLE join on the authoritative
+/// `column_id` (E18-07, #66). The pre-flip `seed_lane = b.lane` fallback
+/// arm existed only for mirrorless rows; migration 0008 backfilled those
+/// away, so it is gone.
 ///
-/// Mirror FIRST, seeded lane as the fallback for a card that has never
-/// moved. Lane alone cannot express a non-seeded column — `enter_column`
-/// leaves `lane` untouched for Quick and user-created columns — so a
-/// lane-only join answered for the column the card used to be in. That was
-/// invisible while the board rendered five fixed lanes and became wrong on
-/// screen the moment it rendered every column: dragging a finished card
-/// out of Done into Quick left it resolving to Done, so its dependents
-/// stayed unblocked and their agents were told the work had landed.
-///
-/// `issues.column_id` is `ON DELETE SET NULL` (migration 0006), so a
-/// mirror is either valid or absent, never dangling. A card whose lane
-/// maps to no column at all matches nothing and therefore counts as
-/// UNFINISHED — failing toward blocked, the safe direction.
-const BLOCKER_COLUMN_MATCH: &str = "c.project_id = b.project_id \
-     AND (c.id = b.column_id OR (b.column_id IS NULL AND c.seed_lane = b.lane))";
+/// `issues.column_id` is `ON DELETE SET NULL` (migration 0006), so the
+/// pointer is either valid or absent, never dangling — and the delete
+/// guard refuses to remove an occupied column, so it cannot go absent in
+/// practice. An out-of-contract row with no column matches nothing and
+/// therefore counts as UNFINISHED — failing toward blocked, the safe
+/// direction.
+const BLOCKER_COLUMN_MATCH: &str = "c.id = b.column_id";
 
 /// Derived-blocked subquery (E18-03, #77; ADR-0037 item 6): true when any
 /// direct blocker is NOT in a `counts_as_done` column. Membership comes
@@ -277,18 +281,6 @@ fn blocked_sql() -> String {
     )
 }
 
-/// SQL expression for the effective column id of issue row `<alias>` —
-/// the write-side twin of [`BLOCKER_COLUMN_MATCH`], used to group a
-/// column's cards for renumbering.
-fn effective_column_expr(alias: &str) -> String {
-    format!(
-        "COALESCE({alias}.column_id, \
-          (SELECT c2.id FROM board_columns c2 \
-            WHERE c2.project_id = {alias}.project_id \
-              AND c2.seed_lane = {alias}.lane))"
-    )
-}
-
 /// Renumbers one column's cards to a dense 0..n-1, optionally placing
 /// `moved_id` at index `at` (`None` = append; pass `moved_id: None` to
 /// simply compact a column a card just left).
@@ -301,8 +293,9 @@ fn effective_column_expr(alias: &str) -> String {
 /// while the board renders per COLUMN, so two cards in a non-seeded column
 /// could both hold position 0 in a lane neither of them appears in, with
 /// `created_at` (second resolution) breaking the tie unpredictably.
-/// Renumbering the destination group — resolved exactly the way the board
-/// resolves membership — is what makes a drop land where it was dropped.
+/// Renumbering the destination group — grouped by the authoritative
+/// `column_id`, exactly how the board resolves membership — is what makes
+/// a drop land where it was dropped.
 fn renumber_column(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -311,12 +304,11 @@ fn renumber_column(
     at: Option<i64>,
 ) -> Result<(), Error> {
     let mut ids: Vec<String> = {
-        let mut stmt = conn.prepare(&format!(
+        let mut stmt = conn.prepare(
             "SELECT i.id FROM issues i \
-              WHERE i.project_id = ?1 AND {expr} = ?2 \
+              WHERE i.project_id = ?1 AND i.column_id = ?2 \
               ORDER BY i.position, i.created_at, i.id",
-            expr = effective_column_expr("i"),
-        ))?;
+        )?;
         let rows = stmt.query_map(rusqlite::params![project_id, column_id], |row| row.get(0))?;
         rows.collect::<Result<Vec<_>, _>>()?
     };
@@ -332,17 +324,6 @@ fn renumber_column(
         )?;
     }
     Ok(())
-}
-
-/// The issue's effective column — mirror first, seeded lane otherwise.
-fn effective_column_of(
-    conn: &rusqlite::Connection,
-    issue: &Issue,
-) -> Result<Option<String>, Error> {
-    match &issue.column_id {
-        Some(column_id) => Ok(Some(column_id.clone())),
-        None => seeded_column_for_lane(conn, &issue.project_id, issue.lane),
-    }
 }
 
 fn issue_from_row(row: &rusqlite::Row) -> rusqlite::Result<Issue> {
@@ -377,8 +358,10 @@ fn issue_from_row(row: &rusqlite::Row) -> rusqlite::Result<Issue> {
 }
 
 /// The seeded column mirroring `lane` in this project, if one exists
-/// (a user may have deleted it). Shared by the lane-addressed move
-/// routing and new-card entry resolution.
+/// (a user may have deleted it — seeded steps are deletable since the
+/// E18-07 flip). Shared by the lane-addressed move routing and new-card
+/// entry resolution; since E18-07 an unresolvable lane is a typed error
+/// at both call sites, never a NULL column write.
 fn seeded_column_for_lane(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -396,20 +379,29 @@ fn seeded_column_for_lane(
 /// Board target for a NEW card (E18-06, #65): every entry path lands on
 /// the project's `is_landing` column instead of hardcoding Backlog.
 ///
-/// An explicit lane override maps to that lane's seeded column; with no
-/// override the landing column decides — its `seed_lane` gives the lane,
-/// and a NON-seeded landing column falls back to [`Lane::Backlog`]
-/// because lane cannot represent it (interim until the E18-07 authority
-/// flip; the mirror still points at the real landing column). A project
-/// with no board at all (no columns) keeps the legacy Backlog default
-/// with a NULL mirror.
+/// An explicit lane override maps to that lane's seeded column (a typed
+/// error when it was deleted — since the E18-07 flip a card cannot be
+/// created without a real column); with no override the landing column
+/// decides — its `seed_lane` gives the derived display lane, and a
+/// NON-seeded landing column falls back to [`Lane::Backlog`] because lane
+/// cannot represent it (display-only; `column_id` is what places the
+/// card). A project with no board at all cannot accept cards: 0006/0008
+/// seeded and backfilled every real project, so that state is
+/// out-of-contract and errors.
 fn resolve_entry_target(
     conn: &rusqlite::Connection,
     project_id: &str,
     lane: Option<Lane>,
-) -> Result<(Lane, Option<String>), Error> {
+) -> Result<(Lane, String), Error> {
     if let Some(lane) = lane {
-        return Ok((lane, seeded_column_for_lane(conn, project_id, lane)?));
+        let column_id = seeded_column_for_lane(conn, project_id, lane)?.ok_or_else(|| {
+            Error::InvalidIssueInput(format!(
+                "no column of project {project_id} mirrors lane '{}' (its seeded \
+                 column was deleted) — target a column instead",
+                lane.as_str()
+            ))
+        })?;
+        return Ok((lane, column_id));
     }
     let landing: Option<(String, Option<String>)> = conn
         .query_row(
@@ -426,9 +418,12 @@ fn resolve_entry_target(
                 .map(Lane::parse)
                 .transpose()?
                 .unwrap_or(Lane::Backlog);
-            Ok((lane, Some(column_id)))
+            Ok((lane, column_id))
         }
-        None => Ok((Lane::Backlog, None)),
+        None => Err(Error::InvalidIssueInput(format!(
+            "project {project_id} has no landing column — its board was never \
+             seeded, so it cannot accept cards"
+        ))),
     }
 }
 
@@ -490,8 +485,9 @@ impl IssueStore {
     /// GitHub import, PM proposal apply, and manual add all arrive here,
     /// so moving the `is_landing` flag moves every entry path with it.
     /// `new.lane` overrides the landing target (internal/legacy callers).
-    /// The card carries its column mirror from birth. Appended to the end
-    /// of the resolved lane. Emits `IssueCreated`.
+    /// The card carries its column from birth (non-NULL, enforced by
+    /// `resolve_entry_target` — E18-07). Appended to the end of the
+    /// resolved COLUMN. Emits `IssueCreated`.
     pub fn create(&self, new: NewIssue) -> Result<Issue, Error> {
         let title = new.title.trim().to_string();
         if title.is_empty() {
@@ -537,7 +533,7 @@ impl IssueStore {
                      VALUES (
                          ?1, ?2, ?3, ?4, ?5, ?6,
                          (SELECT COALESCE(MAX(position) + 1, 0) FROM issues
-                           WHERE project_id = ?2 AND lane = ?6),
+                           WHERE project_id = ?2 AND column_id = ?12),
                          ?7, ?8, ?9, ?10, ?11, ?12
                      )",
                     rusqlite::params![
@@ -591,18 +587,18 @@ impl IssueStore {
         Ok(Some(issue))
     }
 
-    /// All issues for a project, ordered by lane rank then position
-    /// (board render order).
+    /// All issues for a project, ordered by COLUMN position then card
+    /// position (board render order). E18-07: the lane-rank `CASE` died
+    /// with the flip — order comes from column config (ADR-0037 item 1);
+    /// on a seeded board the two orders are identical.
     pub fn list_for_project(&self, project_id: &str) -> Result<Vec<Issue>, Error> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT {COLUMNS}, {blocked} FROM issues
               WHERE project_id = ?1
-              ORDER BY CASE lane
-                           WHEN 'backlog' THEN 0 WHEN 'ready' THEN 1
-                           WHEN 'in_progress' THEN 2 WHEN 'in_review' THEN 3
-                           WHEN 'done' THEN 4 ELSE 5
-                       END, position, created_at",
+              ORDER BY (SELECT c.position FROM board_columns c
+                         WHERE c.id = issues.column_id),
+                       position, created_at",
             blocked = blocked_sql()
         ))?;
         let mut issues = stmt
@@ -672,59 +668,38 @@ impl IssueStore {
             .ok_or_else(|| Error::Internal(format!("issue vanished after update: {id}")))
     }
 
-    /// Moves an issue to a lane. `position: None` appends to the end of the
-    /// target lane. Any lane transition is allowed — blocked-dispatch
-    /// confirmation is a UI concern (ADR-0032) and derived blocked state
-    /// needs no maintenance writes. Emits `IssueUpdated`.
-    ///
-    /// E18-04: when the target lane maps to a seeded column, the move
-    /// routes through [`Self::enter_column`] — one code path, and the
-    /// mirror pointer stays maintained. When the lane has no seeded column
-    /// (the user deleted it), the legacy lane-only write runs and the
-    /// mirror is cleared: no column can represent that lane.
+    /// Moves an issue to a lane — the LEGACY, lane-addressed move
+    /// (`issue_move` wire compat). Since the E18-07 flip it is a thin
+    /// adapter over [`Self::enter_column`]: the lane resolves to its
+    /// seeded column and the column primitive does the move. A lane whose
+    /// seeded column was deleted is a typed error — the pre-flip fallback
+    /// (lane-only write with `column_id = NULL`) is gone; no path writes
+    /// a NULL column anymore. `position: None` appends to the end of the
+    /// target column. Any transition is allowed — blocked-dispatch
+    /// confirmation is a UI concern (ADR-0032). Emits `IssueUpdated`.
     pub fn move_to(&self, id: &str, lane: Lane, position: Option<i64>) -> Result<Issue, Error> {
         let issue = self
             .get(id)?
             .ok_or_else(|| Error::IssueNotFound(id.into()))?;
         // Same-lane REORDER (fix round, finding 13): position only — the
-        // mirror is NOT touched. A card resident in a non-seeded column
-        // (Quick) still renders in its stale lane on the legacy board;
-        // reordering it there must not clobber the column residence.
+        // card's column residence is NOT touched. A card resident in a
+        // non-seeded column (Quick) still renders there; reordering must
+        // renumber the column it is displayed in, with `position` as the
+        // destination index AFTER the card is lifted out.
         if issue.lane == lane {
             {
                 let conn = self.conn()?;
-                // Renumber the card's effective COLUMN, not its lane: this
-                // is the board's within-column reorder, and `position` is
-                // the destination index AFTER the card is lifted out. A
-                // card resident in a non-seeded column reorders among the
-                // cards it is displayed with, not among its stale lane.
-                match effective_column_of(&conn, &issue)? {
-                    Some(column_id) => {
-                        renumber_column(&conn, &issue.project_id, &column_id, Some(id), position)?;
-                        conn.execute(
-                            "UPDATE issues SET updated_at = datetime('now') WHERE id = ?1",
-                            rusqlite::params![id],
-                        )?;
-                    }
-                    // No column can represent this lane (the user deleted
-                    // the seeded one) — legacy absolute write.
-                    None => {
-                        let position = match position {
-                            Some(p) => p,
-                            None => conn.query_row(
-                                "SELECT COALESCE(MAX(position) + 1, 0) FROM issues
-                                  WHERE project_id = ?1 AND lane = ?2",
-                                rusqlite::params![issue.project_id, lane.as_str()],
-                                |row| row.get(0),
-                            )?,
-                        };
-                        conn.execute(
-                            "UPDATE issues SET position = ?2, updated_at = datetime('now')
-                              WHERE id = ?1",
-                            rusqlite::params![id, position],
-                        )?;
-                    }
-                }
+                let column_id = issue.column_id.clone().ok_or_else(|| {
+                    Error::Internal(format!(
+                        "issue {id} has no column — out of contract since the \
+                         E18-07 flip (migration 0008 backfills every row)"
+                    ))
+                })?;
+                renumber_column(&conn, &issue.project_id, &column_id, Some(id), position)?;
+                conn.execute(
+                    "UPDATE issues SET updated_at = datetime('now') WHERE id = ?1",
+                    rusqlite::params![id],
+                )?;
             }
             self.event_bus.send(InternalEvent::IssueUpdated {
                 id: id.into(),
@@ -738,47 +713,28 @@ impl IssueStore {
             let conn = self.conn()?;
             seeded_column_for_lane(&conn, &issue.project_id, lane)?
         };
-        if let Some(column_id) = seeded_column {
-            return self.enter_column(id, &column_id, position);
+        match seeded_column {
+            Some(column_id) => self.enter_column(id, &column_id, position),
+            None => Err(Error::InvalidIssueInput(format!(
+                "no column of project {} mirrors lane '{}' (its seeded column \
+                 was deleted) — move by column id instead",
+                issue.project_id,
+                lane.as_str()
+            ))),
         }
-        {
-            let conn = self.conn()?;
-            let position = match position {
-                Some(p) => p,
-                None => conn.query_row(
-                    "SELECT COALESCE(MAX(position) + 1, 0) FROM issues
-                      WHERE project_id = ?1 AND lane = ?2",
-                    rusqlite::params![issue.project_id, lane.as_str()],
-                    |row| row.get(0),
-                )?,
-            };
-            conn.execute(
-                "UPDATE issues SET lane = ?2, position = ?3, column_id = NULL,
-                     updated_at = datetime('now')
-                  WHERE id = ?1",
-                rusqlite::params![id, lane.as_str(), position],
-            )?;
-        }
-        self.event_bus.send(InternalEvent::IssueUpdated {
-            id: id.into(),
-            project_id: issue.project_id.clone(),
-        });
-        self.get(id)?
-            .ok_or_else(|| Error::Internal(format!("issue vanished after move: {id}")))
     }
 
-    /// The step engine's move (E18-04, #63): points the card's mirror at
-    /// `column_id` and, when the column mirrors a seeded lane, syncs the
-    /// authoritative lane through the REVERSE seed_lane mapping. Entering
-    /// a non-seeded column (Quick, user-created) leaves the lane
-    /// UNCHANGED — interim until the E18-07 authority flip; the legacy
-    /// lane board cannot render non-seeded columns, so the stale lane is
-    /// invisible there.
+    /// THE move primitive (E18-04, #63; authoritative since E18-07, #66):
+    /// points the card's `column_id` at `column_id` and, when the column
+    /// mirrors a seeded lane, syncs the DERIVED display lane through the
+    /// REVERSE seed_lane mapping. Entering a non-seeded column (Quick,
+    /// user-created) leaves the lane at its last value — the flip's
+    /// convention: no lane can represent such a column, and nothing keys
+    /// off the string anymore.
     ///
-    /// `position: None` appends to the end of the synced lane; when the
-    /// lane does not move and no position is given, position is left
-    /// alone. Cross-project entries are rejected. Emits `IssueUpdated`
-    /// (exactly one — the same event a lane move fires).
+    /// `position: None` appends to the end of the target column.
+    /// Cross-project entries are rejected. Emits `IssueUpdated` (exactly
+    /// one — the same event a lane move fires).
     pub fn enter_column(
         &self,
         id: &str,
@@ -804,7 +760,7 @@ impl IssueStore {
                     issue.project_id
                 )));
             }
-            let previous_column = effective_column_of(&conn, &issue)?;
+            let previous_column = issue.column_id.clone();
             match seed_lane.as_deref().map(Lane::parse).transpose()? {
                 Some(lane) => {
                     conn.execute(
@@ -1383,19 +1339,44 @@ mod tests {
         assert_eq!(again.column_id.as_deref(), Some(triage.id.as_str()));
     }
 
-    /// A project with no board at all (columns never seeded) keeps the
-    /// legacy Backlog default and a NULL mirror — no entry path breaks.
+    /// E18-07: a project with no board at all (out of contract — every
+    /// real project is seeded at create or by migration 0006) can no
+    /// longer accept cards: the pre-flip Backlog-with-NULL-mirror
+    /// fallback would violate the non-NULL column_id invariant.
     #[test]
-    fn create_without_a_board_falls_back_to_backlog() {
+    fn create_without_a_board_is_a_typed_error() {
         let store = fixture();
         {
             let conn = store.conn().unwrap();
             conn.execute("DELETE FROM board_columns WHERE project_id = 'p1'", [])
                 .unwrap();
         }
-        let card = store.create(new_issue("a")).unwrap();
-        assert_eq!(card.lane, Lane::Backlog);
-        assert!(card.column_id.is_none());
+        let err = store.create(new_issue("a")).unwrap_err();
+        assert!(matches!(err, Error::InvalidIssueInput(_)));
+        assert!(err.to_string().contains("no landing column"));
+    }
+
+    /// E18-07: an explicit lane override whose seeded column was deleted
+    /// is a typed error — no entry path may produce a NULL column_id.
+    #[test]
+    fn create_with_a_deleted_seeded_lane_is_a_typed_error() {
+        let store = fixture();
+        let col_store = columns::ColumnStore::new(store.db());
+        let ready = col_store
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .find(|c| c.seed_lane.as_deref() == Some("ready"))
+            .unwrap();
+        col_store.delete(&ready.id).unwrap();
+        let err = store
+            .create(NewIssue {
+                lane: Some(Lane::Ready),
+                ..new_issue("a")
+            })
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidIssueInput(_)));
+        assert!(err.to_string().contains("mirrors lane 'ready'"));
     }
 
     /// E18-04: the enter primitive writes the mirror always and syncs the
@@ -1439,9 +1420,9 @@ mod tests {
     }
 
     /// GOLDEN (E18-04 parity): lane-addressed moves route through the
-    /// enter primitive with identical lane/position/event behavior — the
-    /// only new effect is the maintained mirror. The fallback (seeded
-    /// column deleted) keeps the legacy lane write and clears the mirror.
+    /// enter primitive with identical lane/position/event behavior. Since
+    /// E18-07 a lane whose seeded column was deleted is a TYPED ERROR —
+    /// the legacy `column_id = NULL` fallback write is gone.
     #[test]
     fn move_to_routes_through_the_enter_primitive() {
         let store = fixture();
@@ -1484,9 +1465,8 @@ mod tests {
             .unwrap();
         assert_eq!(front.column_id.as_deref(), Some(in_progress.id.as_str()));
 
-        // Fallback: with the Ready column deleted, a move to lane ready
-        // still works (legacy write) and the mirror clears — no column can
-        // represent that lane.
+        // E18-07: with the Ready column deleted, a move to lane ready is
+        // a typed error — no NULL-column write, the card stays put.
         let ready = col_store
             .list_for_project("p1")
             .unwrap()
@@ -1494,9 +1474,15 @@ mod tests {
             .find(|c| c.seed_lane.as_deref() == Some("ready"))
             .unwrap();
         col_store.delete(&ready.id).unwrap();
-        let moved = store.move_to(&a.id, Lane::Ready, None).unwrap();
-        assert_eq!(moved.lane, Lane::Ready);
-        assert!(moved.column_id.is_none());
+        let err = store.move_to(&a.id, Lane::Ready, None).unwrap_err();
+        assert!(matches!(err, Error::InvalidIssueInput(_)));
+        assert!(err.to_string().contains("mirrors lane 'ready'"));
+        let unchanged = store.get(&a.id).unwrap().unwrap();
+        assert_eq!(unchanged.lane, Lane::InProgress);
+        assert_eq!(
+            unchanged.column_id.as_deref(),
+            Some(in_progress.id.as_str())
+        );
     }
 
     /// Fix round (finding 13): a same-lane reorder is position-only — it
@@ -1615,11 +1601,10 @@ mod tests {
         assert!(!a_read.blockers[0].counts_as_done);
 
         // A blocker whose column cannot be resolved AT ALL counts as
-        // UNFINISHED — fail toward blocked. Membership is mirror-first, so
-        // orphaning it takes clearing BOTH pointers: unmap the flagged
-        // column's seed_lane and drop the card's mirror. (Nulling the
-        // seed_lane alone no longer orphans anything, which is the point
-        // of the fix — the card really is in that column.)
+        // UNFINISHED — fail toward blocked. Membership is the single
+        // column_id join (E18-07): nulling the column's seed_lane changes
+        // nothing (the card really is in that column); only dropping the
+        // card's column_id (out-of-contract data) orphans it.
         store.move_to(&b.id, Lane::InReview, None).unwrap();
         assert!(!store.get(&a.id).unwrap().unwrap().blocked); // flagged + mapped
                                                               // Each `conn()` is a temporary — holding the guard across a
@@ -1681,6 +1666,49 @@ mod tests {
             Some(quick.id.as_str()),
             "the blocker row names the column the card is really in"
         );
+    }
+
+    /// E18-07 (#66): the single-join blocked derivation resolves
+    /// non-seeded columns purely by column_id — a blocker parked in Quick
+    /// blocks its dependents, and flagging Quick `counts_as_done`
+    /// unblocks them, lane string never consulted.
+    #[test]
+    fn single_join_blocked_derivation_in_a_non_seeded_column() {
+        let store = fixture();
+        let col_store = columns::ColumnStore::new(store.db());
+        let quick = col_store
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name == "Quick")
+            .unwrap();
+        let a = store.create(new_issue("a")).unwrap();
+        let b = store.create(new_issue("b")).unwrap();
+        store.add_dependency(&a.id, &b.id).unwrap();
+
+        store.enter_column(&b.id, &quick.id, None).unwrap();
+        let read = store.get(&a.id).unwrap().unwrap();
+        assert!(read.blocked, "a blocker in Quick is unfinished");
+        assert_eq!(
+            read.blockers[0].column_id.as_deref(),
+            Some(quick.id.as_str())
+        );
+
+        col_store
+            .update(
+                &quick.id,
+                columns::ColumnPatch {
+                    counts_as_done: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let read = store.get(&a.id).unwrap().unwrap();
+        assert!(
+            !read.blocked,
+            "counts_as_done on Quick finishes the blocker"
+        );
+        assert!(read.blockers[0].counts_as_done);
     }
 
     /// Fix round (finding 9): a drop lands where it was dropped. Position

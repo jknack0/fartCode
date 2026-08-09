@@ -517,10 +517,9 @@ fn enter_column_inner(
         .get(column_id)
         .map_err(String::from)?
         .ok_or_else(|| String::from(Error::BoardColumnNotFound(column_id.into())))?;
-    // Effective previous column uses the SAME mirror-else-seed_lane
-    // resolution settle uses (fix round, finding 11) — a mirrorless
-    // legacy card re-entering its own column must reattach, never
-    // respawn (ADR-0032 item 3).
+    // Previous column via the SAME resolution settle uses (the
+    // authoritative column_id since E18-07) — a card re-entering its own
+    // column must reattach, never respawn (ADR-0032 item 3).
     let prev_column_id = current_column(app, &issue).map(|c| c.id);
     // Captured BEFORE any epoch reset: an undelivered chained launch for
     // the target column must be re-emitted (finding 10), even though a
@@ -832,23 +831,18 @@ pub fn settle_issues_for_task(app: &App, task_id: &str, session: Option<&str>) -
     settled
 }
 
-/// The issue's current column: the mirror pointer when set (and sane),
-/// else the seeded column mirroring the issue's lane — legacy cards moved
-/// before the mirror existed must still settle (the seeded In Progress
-/// auto-flip predates `column_id`).
+/// The issue's current column: the authoritative `column_id` (E18-07,
+/// #66 — migration 0008 backfilled every row, so the pre-flip seed_lane
+/// fallback is gone). `None` only for out-of-contract rows, which fail
+/// toward INERT: no settle, no launch.
 fn current_column(app: &App, issue: &Issue) -> Option<BoardColumn> {
-    if let Some(column_id) = &issue.column_id {
-        if let Ok(Some(column)) = app.columns.get(column_id) {
-            if column.project_id == issue.project_id {
-                return Some(column);
-            }
-        }
+    let column_id = issue.column_id.as_ref()?;
+    let column = app.columns.get(column_id).ok()??;
+    if column.project_id == issue.project_id {
+        Some(column)
+    } else {
+        None
     }
-    app.columns
-        .list_for_project(&issue.project_id)
-        .ok()?
-        .into_iter()
-        .find(|c| c.seed_lane.as_deref() == Some(issue.lane.as_str()))
 }
 
 /// The next column by board position (None at the end of the board).
@@ -987,23 +981,6 @@ mod tests {
             .unwrap()
     }
 
-    /// A pre-E18 legacy row: sits in a lane with a NULL mirror. (E18-06
-    /// create writes the mirror from birth, so the legacy shape is
-    /// constructed by clearing it.)
-    fn legacy_mirrorless_issue(app: &App, title: &str, lane: Lane) -> Issue {
-        let issue = new_issue_in(app, title, Some(lane));
-        app.db
-            .conn()
-            .lock()
-            .unwrap()
-            .execute(
-                "UPDATE issues SET column_id = NULL WHERE id = ?1",
-                [&issue.id],
-            )
-            .unwrap();
-        app.issues.get(&issue.id).unwrap().unwrap()
-    }
-
     fn column(app: &App, name: &str) -> BoardColumn {
         ColumnStore::new(app.db.clone())
             .list_for_project("p1")
@@ -1140,24 +1117,30 @@ mod tests {
         ));
     }
 
-    /// Fix round, finding 11: a mirrorless legacy card (created in a lane,
-    /// mirror NULL) re-entering ITS OWN column reattaches via the same
-    /// seed_lane fallback settle uses — never a full-packet respawn.
+    /// E18-07: an out-of-contract row with NO column (pre-0008 shape,
+    /// unreachable post-migration) fails INERT on settle — no flip, no
+    /// launch — instead of resolving through the deleted lane fallback.
     #[test]
-    fn mirrorless_reentry_reattaches_via_lane_fallback() {
+    fn columnless_row_settles_nothing() {
         let app = fixture();
-        let issue = legacy_mirrorless_issue(&app, "legacy", Lane::InProgress);
-        assert!(issue.column_id.is_none());
+        let issue = new_issue_in(&app, "orphan", Some(Lane::InProgress));
+        app.db
+            .conn()
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE issues SET column_id = NULL WHERE id = ?1",
+                [&issue.id],
+            )
+            .unwrap();
         with_task(&app, "t1");
         app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
-
-        let in_progress = column(&app, "In Progress");
-        let outcome = enter_column_from_command(&app, &issue.id, &in_progress.id, None).unwrap();
-        assert_eq!(outcome.step, "reattached");
-        let launch = outcome.launch.unwrap();
-        assert!(launch.reattached);
-        assert_eq!(launch.prompt, "");
-        assert_eq!(task_count(&app), 1);
+        assert_eq!(settle_issues_for_task(&app, "t1", Some("pty:x")), 0);
+        assert_eq!(
+            app.issues.get(&issue.id).unwrap().unwrap().lane,
+            Lane::InProgress,
+            "no lane-fallback flip"
+        );
     }
 
     #[test]
@@ -1475,9 +1458,8 @@ mod tests {
 
     /// GOLDEN (E18-05 parity): the seeded In Progress column reproduces
     /// the E17-03 auto-flip exactly — In Progress → In Review on settle,
-    /// cards dragged elsewhere stay put — including for legacy cards with
-    /// no mirror pointer and (registry-empty, as after a restart)
-    /// dispatch-launched agents.
+    /// cards dragged elsewhere stay put — including (registry-empty, as
+    /// after a restart) dispatch-launched agents.
     #[test]
     fn settle_reproduces_the_in_progress_auto_flip() {
         let app = fixture();
@@ -1504,15 +1486,6 @@ mod tests {
         // Duplicate trigger (other hook, same or other identity): the
         // card left In Progress, so nothing settles — E17 idempotence.
         assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:conv1")), 0);
-
-        // Legacy mirrorless card (created in the lane, never moved):
-        // the seed_lane fallback still settles it.
-        let c = legacy_mirrorless_issue(&app, "legacy", Lane::InProgress);
-        assert!(c.column_id.is_none());
-        with_task(&app, "t2");
-        app.issues.set_linked_task(&c.id, Some("t2")).unwrap();
-        assert_eq!(settle_issues_for_task(&app, "t2", Some("pty:term2")), 1);
-        assert_eq!(app.issues.get(&c.id).unwrap().unwrap().lane, Lane::InReview);
     }
 
     /// Quick → Done end-to-end: run on entry, advance_to Done on settle.

@@ -1,7 +1,7 @@
 //! Board column commands (E18-02, ADR-0037) — thin CRUD over
-//! [`ColumnStore`] for the configurable pipeline. Spike behind the seeded
-//! default: nothing here touches lanes, dispatch, or flip — the board still
-//! runs on `issues.lane`.
+//! [`ColumnStore`] for the configurable pipeline. Since the E18-07 flip
+//! (#66) columns are authoritative for board placement; `issues.lane` is
+//! display-only.
 
 use std::sync::Arc;
 
@@ -198,10 +198,11 @@ pub fn column_update(
     Ok(updated)
 }
 
-/// Rejected while the column is occupied (occupancy derives from the
-/// authoritative lane for seeded columns, the mirror pointer otherwise)
-/// and for the landing column (move `isLanding` first). Remaining
-/// positions compact to 0..n-1.
+/// Rejected while the column is occupied (occupancy is strictly by the
+/// authoritative `column_id` — E18-07), for the landing column (move
+/// `isLanding` first), and for a column that is another column's
+/// `advance_to` target (repoint it first). Remaining positions compact
+/// to 0..n-1.
 #[tauri::command]
 pub fn column_delete(app: State<'_, Arc<App>>, column_id: String) -> Result<(), String> {
     app.columns.delete(&column_id).map_err(String::from)

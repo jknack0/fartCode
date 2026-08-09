@@ -17,7 +17,7 @@ use std::sync::Arc;
 use tauri::Manager as _;
 
 use fartcode_core::conversations::ConversationStore;
-use fartcode_core::issues::{build_dispatch_prompt, Issue, Lane};
+use fartcode_core::issues::{build_dispatch_prompt, Issue};
 use fartcode_core::settings::DEFAULT_AGENT;
 use fartcode_core::tasks::operations::TaskConfigParams;
 use fartcode_core::tasks::{LinkedIssue, TaskDto, TaskStore};
@@ -43,6 +43,12 @@ pub struct DispatchOutcome {
 
 /// Drag-into-In-Progress: create + link + move, or reattach to the live
 /// linked task. Testable without Tauri State.
+///
+/// E18-07 (#66): the move target is COLUMN CONFIG, not a lane string —
+/// the project's seeded In Progress column, resolved up front so a board
+/// whose seeded step was deleted (legal since the flip) fails typed and
+/// early, before a worktree is provisioned. The board's real path is
+/// `issue_enter_column`; this legacy command keeps its wire contract.
 pub fn issue_dispatch_core(app: &App, issue_id: &str) -> Result<DispatchOutcome, String> {
     let issue = app
         .issues
@@ -50,7 +56,7 @@ pub fn issue_dispatch_core(app: &App, issue_id: &str) -> Result<DispatchOutcome,
         .map_err(String::from)?
         .ok_or_else(|| format!("issue not found: {issue_id}"))?;
 
-    // Reattach: the linked task still exists → no spawn, no lane change.
+    // Reattach: the linked task still exists → no spawn, no move.
     if let Some(task_id) = &issue.linked_task_id {
         if let Some(task) = app.tasks.get(task_id).map_err(String::from)? {
             return Ok(DispatchOutcome {
@@ -62,6 +68,20 @@ pub fn issue_dispatch_core(app: &App, issue_id: &str) -> Result<DispatchOutcome,
             });
         }
     }
+
+    let dispatch_column = app
+        .columns
+        .list_for_project(&issue.project_id)
+        .map_err(String::from)?
+        .into_iter()
+        .find(|c| c.seed_lane.as_deref() == Some("in_progress"))
+        .ok_or_else(|| {
+            format!(
+                "project {} has no seeded In Progress column (it was deleted) — \
+                 dispatch by moving the card onto an agent-step column instead",
+                issue.project_id
+            )
+        })?;
 
     let provider = match &issue.provider {
         Some(p) => p.clone(),
@@ -81,7 +101,7 @@ pub fn issue_dispatch_core(app: &App, issue_id: &str) -> Result<DispatchOutcome,
     let (task, _linked) = provision_issue_task(app, &issue)?;
     let issue = app
         .issues
-        .move_to(&issue.id, Lane::InProgress, None)
+        .enter_column(&issue.id, &dispatch_column.id, None)
         .map_err(String::from)?;
 
     Ok(DispatchOutcome {

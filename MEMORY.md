@@ -4,6 +4,31 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## #66 AUTHORITY FLIP LANDED (2026-08-09) — column_id owns placement
+
+E18-07: `issues.column_id` is authoritative end-to-end; `lane` is a
+derived display mirror (synced from seed_lane on seeded-column entry,
+frozen otherwise). Migration 0008 (append-only) backfills every
+mirrorless row (seeded-lane match, else the landing column); every write
+path now enforces a non-NULL column. Consequences that bite:
+- `move_to` is a wire-compat adapter over `enter_column`; a lane whose
+  seeded column was deleted is a TYPED error (the `column_id = NULL`
+  fallback write is dead). Same for create's lane override / a project
+  with no landing column.
+- BLOCKED_SQL is the single join `c.id = b.column_id`; renumbering and
+  board order come from column position (the lane-rank CASE died).
+- Delete guard: occupancy strictly by column_id; the temporary
+  seeded-agent-step lock is LIFTED; deleting an `advance_to` target is
+  REFUSED with `Error::BoardColumnIsAdvanceTarget` naming the referrer
+  (decided: refuse, never FK-degrade — next-by-position rerouting is the
+  ADR-0037 item 4 unconfirmed-dispatch spend hazard). Frontend delete
+  reasons: occupied → landing → advance-target, one at a time.
+- `issue_dispatch` resolves the seeded In Progress column from config up
+  front (typed error if deleted, before provisioning a worktree).
+- Wire shapes unchanged: IssueDto.columnId stays `string | null`;
+  columnIdForIssue stays as defensive display resolution.
+Suites: core 215, app 87, frontend 167 (all green, workspace gate too).
+
 ## #67 Columns editor LANDED (2026-08-09, 64821b5 + abbca79) — #67 closed
 
 The column CRUD commands have their first UI callers; the configurable

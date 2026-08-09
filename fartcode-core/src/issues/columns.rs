@@ -7,13 +7,11 @@
 //! settle (`on_settle`) behavior with an optional `advance_to` target
 //! column (NULL = next column).
 //!
-//! **Spike, behind the seeded default:** `issues.lane` stays authoritative
-//! for dispatch/flip/blocked/board order; `issues.column_id` is a mirrored
-//! pointer set by the 0006 backfill and not yet maintained by any
-//! production write path. Nothing here changes existing lane behavior.
-//! Each of the five legacy seeded columns records the lane it mirrors in
-//! `seed_lane`, so occupancy questions are answered by the authoritative
-//! lane rather than the unmaintained mirror.
+//! **Authoritative since the E18-07 flip (#66):** `issues.column_id` owns
+//! board placement — every write path maintains it and migration 0008
+//! backfilled every row. `issues.lane` is a derived display mirror of a
+//! seeded column's `seed_lane`; nothing here (or anywhere) keys behavior
+//! off it.
 //!
 //! Invariants enforced here:
 //! - **Exactly one `is_landing` column per project.** Creating/updating a
@@ -23,13 +21,14 @@
 //! - **Positions are compact** (0..n-1 in board order) after every delete
 //!   and reorder; create appends at the end.
 //! - **Deleting an occupied column fails** with
-//!   [`Error::BoardColumnHasIssues`]. Occupancy of a seeded column
-//!   (`seed_lane` set) is derived from the authoritative lane; occupancy
-//!   of any other column falls back to the `column_id` mirror, the only
-//!   signal a non-lane column has.
+//!   [`Error::BoardColumnHasIssues`]. Occupancy is strictly by
+//!   `column_id` — the authoritative pointer (E18-07).
 //! - **`advance_to` must target a column in the same project** and never
-//!   the column itself. The FK's `ON DELETE SET NULL` degrades a deleted
-//!   target back to "next column".
+//!   the column itself. Deleting a column that is another column's
+//!   `advance_to` target is REFUSED with
+//!   [`Error::BoardColumnIsAdvanceTarget`] — repoint the referrer first
+//!   (E18-07; letting the FK null the pointer would silently re-route the
+//!   advance to next-by-position, the ADR-0037 item 4 spend hazard).
 //!
 //! Schema: migration 0006 (which also seeds existing projects and
 //! backfills `issues.column_id`). New projects are seeded by
@@ -175,8 +174,9 @@ pub struct BoardColumn {
     /// The legacy lane this seeded column mirrors
     /// (`backlog|ready|in_progress|in_review|done`); `None` on Quick and
     /// user-created columns. Read-only: set by the seed paths, never by
-    /// create/update. Drives the occupancy guard while lane stays
-    /// authoritative.
+    /// create/update. Since E18-07 it only drives the DERIVED display
+    /// lane sync (enter_column's reverse mapping) and lane-addressed
+    /// wire-compat routing.
     pub seed_lane: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
@@ -752,17 +752,18 @@ impl ColumnStore {
     }
 
     /// Deletes a column and compacts the remaining positions to 0..n-1.
-    /// Rejected when the column is occupied ([`Error::BoardColumnHasIssues`])
-    /// or when it is the landing column (move the flag first — the board
-    /// always has exactly one).
+    /// Rejected when the column is occupied ([`Error::BoardColumnHasIssues`]),
+    /// when it is the landing column (move the flag first — the board
+    /// always has exactly one), or when it is another column's
+    /// `advance_to` target ([`Error::BoardColumnIsAdvanceTarget`] —
+    /// repoint the referrer first).
     ///
-    /// Occupancy derives from the AUTHORITATIVE signal per column:
-    /// Occupancy is UNAMBIGUOUS — exactly one column owns each card:
-    /// - a card with a mirror (`column_id`, maintained on every entry
-    ///   path since E18-04/06) belongs to THAT column and to no other,
-    ///   whatever its interim lane says;
-    /// - a mirrorless card (pre-E18 row) belongs to the seeded column
-    ///   mirroring its `lane`, if one exists.
+    /// E18-07 (#66): occupancy is strictly `column_id = ?` — the pointer
+    /// is authoritative and non-NULL on every row, so the pre-flip
+    /// seed_lane fallback arm is gone, and with it the temporary
+    /// seeded-agent-step delete lock: an EMPTY seeded step deletes like
+    /// any other column (lane-addressed paths now error on a deleted
+    /// seeded column instead of dispatching into the void).
     pub fn delete(&self, id: &str) -> Result<(), Error> {
         let column = self
             .get(id)?
@@ -773,39 +774,36 @@ impl ColumnStore {
                  column before deleting it"
             )));
         }
-        // TEMPORARY (E18-04 fix round): a seeded agent_step column (In
-        // Progress) carries dispatch/settle semantics the legacy
-        // lane-addressed paths still depend on — deleting it leaves
-        // issue_dispatch launching into a lane whose settle half has gone
-        // silent (no column to resolve). The restriction lifts at the
-        // E18-07 authority flip, when lanes stop being addressable.
-        if column.seed_lane.is_some() && column.kind == ColumnKind::AgentStep {
-            return Err(Error::InvalidBoardColumnInput(format!(
-                "column {id} is a seeded agent step; it cannot be deleted \
-                 until columns become authoritative (E18-07)"
-            )));
-        }
         let conn = self.conn()?;
-        // EXACTLY ONE column owns each card (fix round): the mirror wins
-        // when set — `column_id`'s FK is `ON DELETE SET NULL`, so a
-        // non-NULL value always names a live column — and the lane
-        // mapping covers only mirrorless (pre-E18) rows. Counting both
-        // unconditionally double-booked cards resident in a NON-SEEDED
-        // column (e.g. a landing Triage), whose interim lane fallback is
-        // Backlog: the seeded Backlog column then looked occupied by
-        // cards the board draws elsewhere and could never be deleted.
         let issue_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM issues
-              WHERE project_id = ?3
-                AND (column_id = ?1
-                     OR (column_id IS NULL AND ?2 IS NOT NULL AND lane = ?2))",
-            rusqlite::params![id, column.seed_lane, column.project_id],
+            "SELECT COUNT(*) FROM issues WHERE column_id = ?1",
+            rusqlite::params![id],
             |row| row.get(0),
         )?;
         if issue_count > 0 {
             return Err(Error::BoardColumnHasIssues {
                 id: id.into(),
                 count: issue_count,
+            });
+        }
+        // DECIDED (E18-07, #66): deleting an `advance_to` target is
+        // refused, never degraded. The FK's `ON DELETE SET NULL` would
+        // silently re-route `on_settle: advance` to next-by-position,
+        // which can walk cards into an adjacent agent step and fire an
+        // unconfirmed dispatch — the ADR-0037 item 4 spend hazard.
+        let referrer: Option<String> = conn
+            .query_row(
+                "SELECT name FROM board_columns
+                  WHERE advance_to = ?1
+                  ORDER BY position LIMIT 1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(referrer) = referrer {
+            return Err(Error::BoardColumnIsAdvanceTarget {
+                id: id.into(),
+                referrer,
             });
         }
         let tx = conn.unchecked_transaction()?;
@@ -1218,6 +1216,98 @@ mod tests {
         );
     }
 
+    /// E18-07 migration 0008 (#66): a pre-flip database with mirrorless
+    /// rows backfills TOTALLY — the lane's seeded column when it exists,
+    /// the project's landing column when the seeded column was deleted
+    /// (mirroring the frontend's columnIdForIssue display resolution).
+    /// No NULL column_id survives; rows already carrying a mirror are
+    /// untouched.
+    #[test]
+    fn migration_0008_backfills_every_mirrorless_row() {
+        const PRIOR: &[&str] = &[
+            include_str!("../../migrations/0000_initial.sql"),
+            include_str!("../../migrations/0001_line_comments.sql"),
+            include_str!("../../migrations/0002_issues.sql"),
+            include_str!("../../migrations/0003_issue_external_ref.sql"),
+            include_str!("../../migrations/0004_provider_auth_method.sql"),
+            include_str!("../../migrations/0005_pull_requests.sql"),
+            include_str!("../../migrations/0006_board_columns.sql"),
+            include_str!("../../migrations/0007_pin_in_progress_advance.sql"),
+        ];
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        let apply = |sql: &str| {
+            for statement in sql.split("--> statement-breakpoint") {
+                let statement = statement.trim();
+                if !statement.is_empty() {
+                    conn.execute_batch(statement).unwrap();
+                }
+            }
+        };
+        // Project exists before 0006 so the seed covers it.
+        apply(PRIOR[0]);
+        apply(PRIOR[1]);
+        apply(PRIOR[2]);
+        apply(PRIOR[3]);
+        apply(PRIOR[4]);
+        apply(PRIOR[5]);
+        conn.execute_batch(
+            "INSERT INTO projects (id, name, path) VALUES ('p1', 'proj', '/tmp/p');",
+        )
+        .unwrap();
+        apply(PRIOR[6]);
+        apply(PRIOR[7]);
+        // Pre-flip states, constructed post-0006 (its backfill already
+        // ran): mirrorless rows in various lanes — including one whose
+        // seeded column gets DELETED — plus one row already mirrored.
+        let done_id: String = conn
+            .query_row(
+                "SELECT id FROM board_columns WHERE project_id = 'p1' AND seed_lane = 'done'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        conn.execute_batch(&format!(
+            "INSERT INTO issues (id, project_id, title, lane) VALUES
+                ('i1', 'p1', 'a', 'backlog'),
+                ('i2', 'p1', 'b', 'in_progress'),
+                ('i3', 'p1', 'c', 'ready');
+             INSERT INTO issues (id, project_id, title, lane, column_id) VALUES
+                ('i4', 'p1', 'd', 'backlog', '{done_id}');
+             DELETE FROM board_columns
+              WHERE project_id = 'p1' AND seed_lane = 'ready';"
+        ))
+        .unwrap();
+
+        apply(include_str!(
+            "../../migrations/0008_column_id_authoritative.sql"
+        ));
+
+        let nulls: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM issues WHERE column_id IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(nulls, 0, "no NULL column_id survives the backfill");
+        let column_name = |issue: &str| -> String {
+            conn.query_row(
+                "SELECT c.name FROM issues i JOIN board_columns c ON c.id = i.column_id
+                  WHERE i.id = ?1",
+                [issue],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(column_name("i1"), "Backlog"); // seeded-lane match
+        assert_eq!(column_name("i2"), "In Progress"); // seeded-lane match
+                                                      // The ready-laned row's seeded column is gone → landing column.
+        assert_eq!(column_name("i3"), "Backlog");
+        // An already-mirrored row is untouched, whatever its lane says.
+        assert_eq!(column_name("i4"), "Done");
+    }
+
     #[test]
     fn create_appends_validates_and_round_trips_step_config() {
         let store = seeded_fixture();
@@ -1348,8 +1438,10 @@ mod tests {
             .unwrap();
         assert!(cleared.advance_to.is_none());
 
-        // Deleting a target column degrades referrers to next-column (FK
-        // ON DELETE SET NULL), never dangles.
+        // E18-07 (#66): deleting a referrer's target is REFUSED with the
+        // typed error naming the referrer — never FK-degraded to
+        // next-column (the ADR-0037 item 4 spend hazard). Repointing the
+        // referrer unlocks the delete.
         let target = store.create(new_column("Target")).unwrap();
         let pointer = store
             .create(NewColumn {
@@ -1357,13 +1449,53 @@ mod tests {
                 ..new_column("Pointer")
             })
             .unwrap();
+        let err = store.delete(&target.id).unwrap_err();
+        assert!(matches!(err, Error::BoardColumnIsAdvanceTarget { .. }));
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "column {} is the advance target of Pointer — repoint it first",
+                target.id
+            )
+        );
+        store
+            .update(
+                &pointer.id,
+                ColumnPatch {
+                    advance_to: Some(None),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         store.delete(&target.id).unwrap();
-        assert!(store
-            .get(&pointer.id)
-            .unwrap()
-            .unwrap()
-            .advance_to
-            .is_none());
+        assert!(store.get(&target.id).unwrap().is_none());
+    }
+
+    /// E18-07 (#66): the seeded board's own advance pins are protected —
+    /// Done is Quick's target, In Review is In Progress's.
+    #[test]
+    fn seeded_advance_targets_cannot_be_deleted_until_repointed() {
+        let store = seeded_fixture();
+        let columns = store.list_for_project("p1").unwrap();
+        let (quick, in_review, done) = (columns[2].clone(), columns[4].clone(), columns[5].clone());
+
+        let err = store.delete(&done.id).unwrap_err();
+        assert!(matches!(err, Error::BoardColumnIsAdvanceTarget { .. }));
+        assert!(err.to_string().contains("advance target of Quick"));
+        let err = store.delete(&in_review.id).unwrap_err();
+        assert!(err.to_string().contains("advance target of In Progress"));
+
+        // Clearing Quick's pin frees Done.
+        store
+            .update(
+                &quick.id,
+                ColumnPatch {
+                    advance_to: Some(None),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        store.delete(&done.id).unwrap();
     }
 
     #[test]
@@ -1557,59 +1689,37 @@ mod tests {
             .contains("\"version\":1"));
     }
 
+    /// E18-07 (#66): occupancy is strictly by the authoritative
+    /// `column_id` — a stale display lane never blocks a delete, and an
+    /// occupied pointer always does.
     #[test]
-    fn delete_guard_derives_from_the_authoritative_lane() {
+    fn delete_guard_occupancy_is_strictly_by_column_id() {
         let store = seeded_fixture();
         let issues = issue_store(&store);
         let ready = store.list_for_project("p1").unwrap()[1].clone();
         assert_eq!(ready.seed_lane.as_deref(), Some("ready"));
 
-        // Reproduced scenario (a): an issue whose mirror is NULL sits in
-        // Ready — deleting Ready must BLOCK, because occupancy derives
-        // from the authoritative LANE, not the mirror. (Since E18-06
-        // create writes the mirror from birth, the NULL-mirror state is
-        // constructed here — it is the pre-E18 legacy row shape.) The old
-        // column_id-count guard false-allowed this.
-        let fresh = issues
+        // A card resident in Ready (column_id set) blocks the delete.
+        let card = issues
             .create(NewIssue {
                 lane: Some(Lane::Ready),
-                ..new_issue("fresh")
+                ..new_issue("card")
             })
             .unwrap();
-        store
-            .conn()
-            .unwrap()
-            .execute(
-                "UPDATE issues SET column_id = NULL WHERE id = ?1",
-                [&fresh.id],
-            )
-            .unwrap();
-        let mirror: Option<String> = store
-            .conn()
-            .unwrap()
-            .query_row(
-                "SELECT column_id FROM issues WHERE id = ?1",
-                [&fresh.id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(mirror.is_none(), "precondition: the mirror is NULL");
+        assert_eq!(card.column_id.as_deref(), Some(ready.id.as_str()));
         assert!(matches!(
             store.delete(&ready.id),
             Err(Error::BoardColumnHasIssues { ref id, count: 1 }) if *id == ready.id
         ));
 
-        // Scenario (b): a card whose MIRROR names another column never
-        // counts for a lane's column — here a card resident in Quick
-        // (non-seeded, so its interim lane stays backlog) plus the drained
-        // (a) card. Ready is genuinely empty and deletes.
-        issues.move_to(&fresh.id, Lane::Done, None).unwrap(); // drain (a)
-        let in_quick = issues.create(new_issue("in quick")).unwrap();
+        // Move the card into Quick (non-seeded): its DISPLAY lane stays
+        // 'ready' but the pointer moved — Ready is empty by the only
+        // signal that counts and deletes cleanly.
         let quick_id = store.list_for_project("p1").unwrap()[2].id.clone();
-        issues.enter_column(&in_quick.id, &quick_id, None).unwrap();
-        let parked = issues.get(&in_quick.id).unwrap().unwrap();
+        issues.enter_column(&card.id, &quick_id, None).unwrap();
+        let parked = issues.get(&card.id).unwrap().unwrap();
         assert_eq!(parked.column_id.as_deref(), Some(quick_id.as_str()));
-        assert_eq!(parked.lane, Lane::Backlog); // interim stale lane
+        assert_eq!(parked.lane, Lane::Ready); // stale display lane
         store.delete(&ready.id).unwrap();
         let after = store.list_for_project("p1").unwrap();
         let names: Vec<&str> = after.iter().map(|c| c.name.as_str()).collect();
@@ -1884,21 +1994,24 @@ mod tests {
         ));
     }
 
-    /// Fix round (findings 2/3): the seeded In Progress column cannot be
-    /// deleted while lanes are addressable — dispatch would keep
-    /// launching into the lane with the settle half gone silent. Lifts at
-    /// E18-07.
+    /// E18-07 (#66): the TEMPORARY seeded-agent-step delete lock is
+    /// LIFTED — an empty seeded step deletes like any other column
+    /// (lane-addressed paths now fail typed on a deleted seeded column
+    /// instead of dispatching into the void).
     #[test]
-    fn seeded_agent_step_columns_cannot_be_deleted() {
+    fn seeded_agent_step_columns_are_deletable_when_empty() {
         let store = seeded_fixture();
         let in_progress = store.list_for_project("p1").unwrap()[3].clone();
         assert_eq!(in_progress.seed_lane.as_deref(), Some("in_progress"));
-        let err = store.delete(&in_progress.id).unwrap_err();
-        assert!(matches!(err, Error::InvalidBoardColumnInput(_)));
-        assert!(err.to_string().contains("E18-07"));
-        // Quick is an agent step but NOT seeded (seed_lane NULL): still
-        // deletable — nothing lane-addressed can reach it.
-        let quick = store.list_for_project("p1").unwrap()[2].clone();
+        assert_eq!(in_progress.kind, ColumnKind::AgentStep);
+        store.delete(&in_progress.id).unwrap();
+        // Quick (non-seeded step) stays deletable too.
+        let quick = store
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name == "Quick")
+            .unwrap();
         store.delete(&quick.id).unwrap();
     }
 
