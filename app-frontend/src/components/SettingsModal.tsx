@@ -201,24 +201,36 @@ export default function SettingsModal({
           >
             Keys
           </button>
-          {projects.map((p) => (
-            <Fragment key={p.id}>
-              <button
-                className={`fc-set-nav-row${section === `project:${p.id}` ? " active" : ""}`}
-                onClick={() => setSection(`project:${p.id}`)}
-              >
-                {p.name}
-              </button>
-              <button
-                className={`fc-set-nav-row child${
-                  section === `project:${p.id}:columns` ? " active" : ""
-                }`}
-                onClick={() => setSection(`project:${p.id}:columns`)}
-              >
-                Columns
-              </button>
-            </Fragment>
-          ))}
+          {projects.map((p) => {
+            // Children render only under the expanded (active) project — the
+            // frame shows one project open at a time. Future siblings
+            // (Memory, …) slot into this list.
+            const expanded =
+              section === `project:${p.id}` || section.startsWith(`project:${p.id}:`);
+            const children = [{ suffix: "columns", label: "Columns" }];
+            return (
+              <Fragment key={p.id}>
+                <button
+                  className={`fc-set-nav-row${section === `project:${p.id}` ? " active" : ""}`}
+                  onClick={() => setSection(`project:${p.id}`)}
+                >
+                  {p.name}
+                </button>
+                {expanded &&
+                  children.map((c) => (
+                    <button
+                      key={c.suffix}
+                      className={`fc-set-nav-row child${
+                        section === `project:${p.id}:${c.suffix}` ? " active" : ""
+                      }`}
+                      onClick={() => setSection(`project:${p.id}:${c.suffix}`)}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+              </Fragment>
+            );
+          })}
         </nav>
         <div className="fc-set-pane">
           <div className="fc-set-pane-head">

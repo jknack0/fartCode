@@ -15,6 +15,7 @@ import {
   columnReorder,
   columnUpdate,
   issueList,
+  onFartcodeEvent,
   type BoardColumnDto,
   type ColumnKind,
   type IssueDto,
@@ -407,7 +408,13 @@ function ColumnDetail({
 
       <Row
         label="tools"
-        value={column.stepTools ? column.stepTools.join(" · ") : "—"}
+        value={
+          column.stepTools === null
+            ? "—"
+            : column.stepTools.length === 0
+              ? "none"
+              : column.stepTools.join(" · ")
+        }
         open={openField === "tools"}
         onClick={() => toggle("tools")}
       >
@@ -416,11 +423,21 @@ function ColumnDetail({
           placeholder={"Read\nEdit\nBash — empty allows every tool"}
           onCancel={close}
           onSave={(v) => {
+            // One tool per line — entries may contain spaces ("write plan.md").
             const tools = v
-              .split(/\s+/)
+              .split(/\r?\n/)
               .map((x) => x.trim())
               .filter(Boolean);
-            patch({ stepTools: tools.length > 0 ? tools : null });
+            // No-change blur must not patch: an empty textarea over a stored
+            // [] would otherwise flip an allow-nothing list into unrestricted
+            // (null), and every open-then-click-away would spuriously write.
+            const same =
+              column.stepTools === null
+                ? tools.length === 0
+                : tools.length === column.stepTools.length &&
+                  tools.every((t, i) => t === column.stepTools![i]);
+            if (same) close();
+            else patch({ stepTools: tools.length > 0 ? tools : null });
           }}
         />
       </Row>
@@ -434,7 +451,12 @@ function ColumnDetail({
             rows={8}
             placeholder="empty = the built-in dispatch packet"
             onCancel={close}
-            onSave={(v) => patch({ stepPrompt: v.trim() ? v : null })}
+            onSave={(v) => {
+              // No-change blur closes without a spurious write-and-reload.
+              const next = v.trim() ? v : null;
+              if (next !== column.stepPrompt) patch({ stepPrompt: next });
+              else close();
+            }}
           />
         ) : (
           <button
@@ -488,7 +510,12 @@ export function ColumnsPane({ projectId }: { projectId: string }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [openField, setOpenField] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
-  const [overId, setOverId] = useState<string | null>(null);
+  // Drop target + which edge the indicator (and the insert) lands on.
+  const [over, setOver] = useState<{ id: string; before: boolean } | null>(null);
+  // One in-flight guard for every mutation: while a write+reload round-trip
+  // is pending the store is stale, so a second click would compute its patch
+  // (or its reorder list) from pre-mutation state. No queue — just ignore.
+  const [busy, setBusy] = useState(false);
 
   const columns = useMemo(() => sortColumns(columnsRaw ?? []), [columnsRaw]);
   const defaultAgent = defaultAgentName(deps);
@@ -504,70 +531,126 @@ export function ColumnsPane({ projectId }: { projectId: string }) {
     if (useDependencies.getState().deps.length === 0) void loadDeps(false);
   }, [loadDeps]);
 
-  // Occupancy refreshes when the pane opens — the same resolution the
-  // board uses, so the delete reason never disagrees with it.
+  // Occupancy refreshes when the pane opens AND while it sits open — the
+  // step engine moves cards in the background, so a mount-time snapshot
+  // would let delete enable on stale data. Same event set BoardView
+  // subscribes to (BoardView.tsx), same groupByColumn resolution, so the
+  // delete reason never disagrees with the board.
   useEffect(() => {
     let alive = true;
+    const refetch = () =>
+      issueList(projectId)
+        .then((list) => {
+          if (alive) setIssues(list);
+        })
+        .catch((e) => {
+          if (alive) setError(String(e));
+        });
     setIssues([]);
-    issueList(projectId)
-      .then((list) => {
-        if (alive) setIssues(list);
-      })
-      .catch((e) => {
-        if (alive) setError(String(e));
-      });
+    void refetch();
+    const unlisten = onFartcodeEvent((ev) => {
+      if (
+        (ev.type === "issue:created" ||
+          ev.type === "issue:updated" ||
+          ev.type === "issue:deleted" ||
+          ev.type === "step:launch" ||
+          ev.type === "step:settled") &&
+        ev.projectId === projectId
+      ) {
+        void refetch();
+      }
+    });
     return () => {
       alive = false;
+      void unlisten.then((off) => off());
     };
   }, [projectId]);
 
   const occupancy = useMemo(() => groupByColumn(issues, columns), [issues, columns]);
 
+  /** Occupancy tracks edits: displayed counts refetch with every mutation. */
+  const refetchIssues = () =>
+    issueList(projectId)
+      .then(setIssues)
+      .catch((e) => setError(String(e)));
+
   /** Every successful mutation reloads the store so an open board follows. */
   const mutate = async (fn: () => Promise<unknown>): Promise<boolean> => {
+    if (busy) return false;
+    setBusy(true);
     setError(null);
     try {
       await fn();
       await useColumns.getState().reload(projectId);
+      await refetchIssues();
       return true;
     } catch (e) {
       setError(String(e));
       return false;
+    } finally {
+      setBusy(false);
     }
   };
 
   const patchFor = (columnId: string) => (p: Parameters<typeof columnUpdate>[1]) => {
+    if (busy) return;
     setOpenField(null);
     void mutate(() => columnUpdate(columnId, p));
   };
 
   const addColumn = async () => {
+    if (busy) return;
+    setBusy(true);
     setError(null);
     try {
       const created = await columnCreate({ projectId, name: "New column", kind: "shelf" });
       await useColumns.getState().reload(projectId);
+      await refetchIssues();
       setExpandedId(created.id);
       setOpenField("name");
     } catch (e) {
       setError(String(e));
+    } finally {
+      setBusy(false);
     }
   };
 
-  const deleteColumn = (columnId: string) => {
-    void mutate(() => columnDelete(columnId)).then((ok) => {
-      if (ok && expandedId === columnId) setExpandedId(null);
-    });
+  const deleteColumn = async (columnId: string) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      // Re-check occupancy on FRESH data before touching the backend — the
+      // step engine may have moved a card here since the button rendered.
+      // If now occupied, abort: the refreshed issues re-render the disabled
+      // reason instead of surfacing the raw backend refusal.
+      const fresh = await issueList(projectId);
+      setIssues(fresh);
+      const occupied = (groupByColumn(fresh, columns).get(columnId)?.length ?? 0) > 0;
+      if (occupied) return;
+      await columnDelete(columnId);
+      await useColumns.getState().reload(projectId);
+      // Collapse the deleted row only — the user may have expanded another
+      // row mid-flight (never compare against the click-time snapshot).
+      setExpandedId((cur) => (cur === columnId ? null : cur));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const dropOn = (target: BoardColumnDto, e: React.DragEvent) => {
+    if (busy) return;
     if (!dragId || dragId === target.id) {
       setDragId(null);
-      setOverId(null);
+      setOver(null);
       return;
     }
     e.preventDefault();
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const before = e.clientY < rect.top + rect.height / 2;
+    // The indicator already told the user which edge this drop lands on —
+    // reuse the flag it was drawn from instead of recomputing.
+    const before = over?.id === target.id ? over.before : false;
     const without = columns.filter((c) => c.id !== dragId);
     const dragged = columns.find((c) => c.id === dragId);
     if (!dragged) return;
@@ -575,7 +658,7 @@ export function ColumnsPane({ projectId }: { projectId: string }) {
     const insertAt = before ? at : at + 1;
     const next = [...without.slice(0, insertAt), dragged, ...without.slice(insertAt)];
     setDragId(null);
-    setOverId(null);
+    setOver(null);
     const ids = next.map((c) => c.id);
     // Optimistic: reposition locally, then write through and reload.
     useColumns.setState((s) => ({
@@ -610,15 +693,31 @@ export function ColumnsPane({ projectId }: { projectId: string }) {
           return (
             <div
               key={column.id}
+              aria-busy={busy}
               className={`fc-col-row-wrap${open ? " open" : ""}${
-                overId === column.id && dragId !== column.id ? " drop" : ""
+                over?.id === column.id && dragId !== column.id
+                  ? over.before
+                    ? " drop-before"
+                    : " drop-after"
+                  : ""
               }`}
               onDragOver={(e) => {
-                if (!dragId || dragId === column.id) return;
+                if (busy || !dragId || dragId === column.id) return;
                 e.preventDefault();
-                setOverId(column.id);
+                // Midpoint of the header row, not the wrapper — an expanded
+                // detail would otherwise skew the edge math.
+                const header =
+                  (e.currentTarget as HTMLElement).querySelector(".fc-col-row") ??
+                  (e.currentTarget as HTMLElement);
+                const rect = header.getBoundingClientRect();
+                const before = e.clientY < rect.top + rect.height / 2;
+                setOver((o) =>
+                  o?.id === column.id && o.before === before
+                    ? o
+                    : { id: column.id, before },
+                );
               }}
-              onDragLeave={() => setOverId((o) => (o === column.id ? null : o))}
+              onDragLeave={() => setOver((o) => (o?.id === column.id ? null : o))}
               onDrop={(e) => dropOn(column, e)}
             >
               <button
@@ -635,6 +734,12 @@ export function ColumnsPane({ projectId }: { projectId: string }) {
                   draggable
                   onClick={(e) => e.stopPropagation()}
                   onDragStart={(e) => {
+                    if (busy) {
+                      // A drag begun during a write would reorder from a
+                      // stale id list (reorder-vs-create race) — suppress.
+                      e.preventDefault();
+                      return;
+                    }
                     e.stopPropagation();
                     e.dataTransfer?.setData("text/fartCode-column", column.id);
                     if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
@@ -642,7 +747,7 @@ export function ColumnsPane({ projectId }: { projectId: string }) {
                   }}
                   onDragEnd={() => {
                     setDragId(null);
-                    setOverId(null);
+                    setOver(null);
                   }}
                 >
                   ⋮⋮
@@ -664,7 +769,7 @@ export function ColumnsPane({ projectId }: { projectId: string }) {
                   openField={openField}
                   setOpenField={setOpenField}
                   patch={patchFor(column.id)}
-                  onDelete={() => deleteColumn(column.id)}
+                  onDelete={() => void deleteColumn(column.id)}
                 />
               )}
             </div>

@@ -32,8 +32,9 @@ import {
   columnReorder,
   columnUpdate,
   issueList,
+  onFartcodeEvent,
 } from "../lib/tauri";
-import type { BoardColumnDto, IssueDto } from "../lib/tauri";
+import type { BoardColumnDto, FartcodeEvent, IssueDto } from "../lib/tauri";
 import { columnConfigSummary, columnSublineTone } from "../lib/columnConfig";
 import { useColumns } from "../store/columns";
 import { useDependencies } from "../store/dependencies";
@@ -226,6 +227,33 @@ describe("delete", () => {
     // Every successful mutation reloads the store for the open board.
     await waitFor(() => expect(columnList).toHaveBeenCalledTimes(2));
   });
+
+  it("uses the SINGULAR reason when exactly one card lives here", async () => {
+    vi.mocked(issueList).mockResolvedValue([issue("solo", "c-user")]);
+    await renderPane();
+    const row = expand("Later");
+    await waitFor(() =>
+      expect(row.querySelector(".fc-col-delete-reason")).toHaveTextContent(
+        "1 card lives here — move it first",
+      ),
+    );
+    expect(row.querySelector("button.fc-col-delete")).toBeNull();
+  });
+
+  it("re-checks occupancy on FRESH data and aborts when a card just arrived", async () => {
+    await renderPane();
+    const row = expand("Later");
+    // The step engine settles a card into Later after the button rendered —
+    // the pre-delete refetch must catch it and never call the backend.
+    vi.mocked(issueList).mockResolvedValue([issue("sneaky", "c-user")]);
+    fireEvent.click(row.querySelector("button.fc-col-delete")!);
+    await waitFor(() =>
+      expect(row.querySelector(".fc-col-delete-reason")).toHaveTextContent(
+        "1 card lives here — move it first",
+      ),
+    );
+    expect(columnDelete).not.toHaveBeenCalled();
+  });
 });
 
 describe("add column", () => {
@@ -233,11 +261,14 @@ describe("add column", () => {
     vi.mocked(columnCreate).mockResolvedValue(
       column({ id: "c-new", name: "New column", position: 6 }),
     );
-    vi.mocked(columnList).mockResolvedValue([
-      ...COLUMNS,
-      column({ id: "c-new", name: "New column", position: 6 }),
-    ]);
+    // Sequenced on purpose: the initial load must NOT contain the new row —
+    // it only exists after the post-create reload, so a pane that skipped
+    // that reload fails here.
+    vi.mocked(columnList)
+      .mockResolvedValueOnce(COLUMNS)
+      .mockResolvedValue([...COLUMNS, column({ id: "c-new", name: "New column", position: 6 })]);
     await renderPane();
+    expect(screen.queryByText("New column", { selector: ".fc-col-name" })).toBeNull();
     fireEvent.click(screen.getByText("+ add column"));
     await waitFor(() =>
       expect(columnCreate).toHaveBeenCalledWith({
@@ -246,7 +277,9 @@ describe("add column", () => {
         kind: "shelf",
       }),
     );
-    // The new row arrives expanded with the rename editor focused.
+    // The reload happened, and the new row arrives expanded with the rename
+    // editor focused.
+    await waitFor(() => expect(columnList).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(rowFor("New column").className).toContain("open"));
     const input = rowFor("New column").querySelector<HTMLInputElement>(".fc-set-editor input")!;
     expect(input.value).toBe("New column");
@@ -280,6 +313,67 @@ describe("field patches", () => {
     expect(Object.keys(patch)).toEqual(["advanceTo"]);
     expect(patch.advanceTo).toBeNull();
   });
+
+  it("splits tools on newlines only — a space-containing entry survives", async () => {
+    await renderPane();
+    const row = expand("Quick");
+    fireEvent.click(within(row).getByText("tools").closest("button")!);
+    const ta = row.querySelector("textarea")!;
+    fireEvent.change(ta, { target: { value: "Read\nwrite plan.md\n\n Bash \n" } });
+    fireEvent.blur(ta);
+    await waitFor(() =>
+      expect(columnUpdate).toHaveBeenCalledWith("c-quick", {
+        stepTools: ["Read", "write plan.md", "Bash"],
+      }),
+    );
+  });
+
+  it("renders [] as none and never patches an unchanged tools editor away", async () => {
+    // stepTools [] is a real wire state (empty allowlist; corrupt cells
+    // parse fail-closed as []). Open + blur must NOT flip it to null.
+    vi.mocked(columnList).mockResolvedValue(
+      COLUMNS.map((c) => (c.id === "c-quick" ? { ...c, stepTools: [] as string[] } : c)),
+    );
+    await renderPane();
+    const row = expand("Quick");
+    const toolsRow = within(row).getByText("tools").closest("button")!;
+    expect(toolsRow.querySelector(".fc-set-value")).toHaveTextContent("none");
+    fireEvent.click(toolsRow);
+    fireEvent.blur(row.querySelector("textarea")!);
+    // The editor closed without a write.
+    await waitFor(() => expect(row.querySelector("textarea")).toBeNull());
+    expect(columnUpdate).not.toHaveBeenCalled();
+  });
+
+  it("does not patch when the prompt editor closes unchanged", async () => {
+    await renderPane();
+    const row = expand("Ready");
+    fireEvent.click(row.querySelector(".fc-col-prompt")!);
+    fireEvent.blur(row.querySelector(".fc-col-prompt-wrap textarea")!);
+    await waitFor(() => expect(row.querySelector(".fc-col-prompt-wrap textarea")).toBeNull());
+    expect(columnUpdate).not.toHaveBeenCalled();
+  });
+
+  it("ignores a second counts-as-done click while the first is in flight", async () => {
+    let release!: (v: BoardColumnDto) => void;
+    vi.mocked(columnUpdate).mockImplementation(
+      () =>
+        new Promise<BoardColumnDto>((res) => {
+          release = res;
+        }),
+    );
+    await renderPane();
+    const row = expand("Ready");
+    const btn = within(row).getByText("counts as done").closest("button")!;
+    fireEvent.click(btn);
+    // Rows advertise the in-flight window; the second click computes from
+    // the stale store and must be ignored, not sent.
+    expect(rowFor("Ready").getAttribute("aria-busy")).toBe("true");
+    fireEvent.click(btn);
+    expect(columnUpdate).toHaveBeenCalledTimes(1);
+    release(column({ id: "c-ready", name: "Ready", position: 1, countsAsDone: true }));
+    await waitFor(() => expect(rowFor("Ready").getAttribute("aria-busy")).toBe("false"));
+  });
 });
 
 describe("reorder", () => {
@@ -303,6 +397,100 @@ describe("reorder", () => {
         "c-user",
       ]),
     );
+  });
+
+  it("tracks the pointer half: indicator edge and insert side agree", async () => {
+    await renderPane();
+    // The header row is what onDragOver measures — give it a real rect
+    // (top 100, height 40 → midpoint 120).
+    const mockRect = (wrap: HTMLElement) => {
+      (wrap.querySelector(".fc-col-row") as HTMLElement).getBoundingClientRect = () =>
+        ({
+          top: 100,
+          bottom: 140,
+          height: 40,
+          left: 0,
+          right: 200,
+          width: 200,
+          x: 0,
+          y: 100,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    };
+    const startDrag = () =>
+      fireEvent.dragStart(rowFor("Ready").querySelector(".fc-col-handle")!, {
+        dataTransfer: { setData: () => {}, effectAllowed: "" },
+      });
+    // jsdom has no DragEvent, and testing-library's plain-Event fallback
+    // drops clientY — dispatch MouseEvents of the drag type instead.
+    const dragOverAt = (el: HTMLElement, clientY: number) =>
+      fireEvent(el, new MouseEvent("dragover", { bubbles: true, cancelable: true, clientY }));
+    const dropAt = (el: HTMLElement, clientY: number) =>
+      fireEvent(el, new MouseEvent("drop", { bubbles: true, cancelable: true, clientY }));
+
+    // Upper half (105 < 120): the accent line sits on the TOP edge and the
+    // dragged row inserts BEFORE the target.
+    startDrag();
+    let wrap = rowFor("Done");
+    mockRect(wrap);
+    dragOverAt(wrap, 105);
+    expect(wrap.className).toContain("drop-before");
+    dropAt(wrap, 105);
+    await waitFor(() =>
+      expect(columnReorder).toHaveBeenLastCalledWith("p1", [
+        "c-backlog",
+        "c-quick",
+        "c-progress",
+        "c-ready",
+        "c-done",
+        "c-user",
+      ]),
+    );
+    // Wait out the in-flight window (drags are suppressed while busy).
+    await waitFor(() => expect(rowFor("Done").getAttribute("aria-busy")).toBe("false"));
+
+    // Lower half (135 > 120): BOTTOM edge, inserts AFTER.
+    startDrag();
+    wrap = rowFor("Done");
+    mockRect(wrap);
+    dragOverAt(wrap, 135);
+    expect(wrap.className).toContain("drop-after");
+    expect(wrap.className).not.toContain("drop-before");
+    dropAt(wrap, 135);
+    await waitFor(() =>
+      expect(columnReorder).toHaveBeenLastCalledWith("p1", [
+        "c-backlog",
+        "c-quick",
+        "c-progress",
+        "c-done",
+        "c-ready",
+        "c-user",
+      ]),
+    );
+  });
+});
+
+describe("occupancy", () => {
+  it("refetches when the step engine or issue CRUD fires for this project", async () => {
+    let emit: ((ev: FartcodeEvent) => void) | null = null;
+    vi.mocked(onFartcodeEvent).mockImplementation((cb) => {
+      emit = cb;
+      return Promise.resolve(() => {});
+    });
+    await renderPane();
+    const calls = vi.mocked(issueList).mock.calls.length;
+    emit!({
+      type: "step:settled",
+      issueId: "a",
+      projectId: "p1",
+      columnId: "c-done",
+      taskId: "t1",
+    });
+    await waitFor(() => expect(issueList).toHaveBeenCalledTimes(calls + 1));
+    // Another project's churn does not refetch this pane.
+    emit!({ type: "issue:updated", id: "x", projectId: "other" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(issueList).toHaveBeenCalledTimes(calls + 1);
   });
 });
 
