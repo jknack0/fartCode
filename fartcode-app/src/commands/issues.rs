@@ -84,6 +84,7 @@ pub fn issue_create(
             prd_path: request.prd_path,
             prd_section: request.prd_section,
             external_ref: None,
+            dossier_path: None,
         })
         .map_err(String::from)
 }
@@ -114,6 +115,10 @@ pub fn issue_update(
                 model: patch.model,
                 prd_path: patch.prd_path,
                 prd_section: patch.prd_section,
+                // E19-01: app-managed. The dossier lifecycle owns this
+                // field (birth with the worktree); the edit surface must
+                // not be able to repoint a card at an arbitrary file.
+                dossier_path: None,
             },
         )
         .map_err(String::from)
@@ -313,6 +318,7 @@ pub fn issue_import_github(
             prd_path: None,
             prd_section: None,
             external_ref: Some(request.url), // dedupe key only — never surfaced
+            dossier_path: None,
         })
         .map_err(String::from)
 }
@@ -361,6 +367,7 @@ mod tests {
                 prd_path: None,
                 prd_section: None,
                 external_ref: None,
+                dossier_path: None,
             })
             .unwrap()
     }

@@ -147,6 +147,15 @@ pub fn issue_dispatch_core(app: &App, issue_id: &str) -> Result<DispatchOutcome,
 /// create the task (worktree + issue-derived name + `linked_issue` local
 /// variant, created by the user gesture), then link it to the issue.
 /// Returns the created task and the re-read (linked) issue.
+///
+/// E19-01 (#70; ADR-0038 item 1): this is also where the feature dossier is
+/// born — AFTER the worktree exists, written INSIDE it, so the file starts
+/// life on the feature branch. Being here rather than in either caller is
+/// what makes "the card's first `agent_step` entry" the single birth
+/// moment: a card that already has a live linked task never reaches this
+/// function, so a second step column cannot mint a second dossier.
+/// Creation is best-effort by contract — a failure leaves `dossier_path`
+/// NULL and the dispatch untouched.
 pub(crate) fn provision_issue_task(app: &App, issue: &Issue) -> Result<(TaskDto, Issue), String> {
     let params = create_task_params(
         app,
@@ -179,6 +188,18 @@ pub(crate) fn provision_issue_task(app: &App, issue: &Issue) -> Result<(TaskDto,
         .issues
         .set_linked_task(&issue.id, Some(&created.task.id))
         .map_err(String::from)?;
+
+    // Born with the worktree (ADR-0038 item 1). Returns None on every
+    // refusal/failure; the re-read below then simply carries a NULL
+    // dossier_path and the dispatch proceeds.
+    let linked = match crate::dossiers::create_for_task(app, &linked, &created.task.id) {
+        Some(_) => app
+            .issues
+            .get(&issue.id)
+            .map_err(String::from)?
+            .unwrap_or(linked),
+        None => linked,
+    };
     Ok((TaskDto::from(&created.task), linked))
 }
 

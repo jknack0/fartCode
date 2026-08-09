@@ -117,6 +117,7 @@ mod tests {
                 prd_path: None,
                 prd_section: None,
                 external_ref: None,
+                dossier_path: None,
             })
             .unwrap()
     }

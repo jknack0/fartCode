@@ -335,6 +335,60 @@ fn test_task_startup_command_round_trip_and_not_shareable() {
     assert_eq!(settings.task_startup_command.as_deref(), Some("omp --task"));
 }
 
+/// E19-01 (#70; ADR-0038 item 3): the feature-dossier consent switch is a
+/// THREE-state per-project base field. Unset must stay distinguishable from
+/// an explicit `false` — that is the whole point of the consent card (#74),
+/// which flips it in both directions and must be able to tell "declined"
+/// from "never asked".
+#[test]
+fn test_feature_dossiers_consent_is_tri_state_and_not_shareable() {
+    let fx = Fixture::new();
+
+    let settings = fx
+        .settings
+        .get_project_settings(&fx.project_id, &fx.repo)
+        .unwrap();
+    assert_eq!(settings.feature_dossiers, None, "never asked by default");
+
+    for value in [Some(true), Some(false)] {
+        fx.settings
+            .update_project_settings(
+                &fx.project_id,
+                &fx.repo,
+                &ProjectSettings {
+                    feature_dossiers: value,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let settings = fx
+            .settings
+            .get_project_settings(&fx.project_id, &fx.repo)
+            .unwrap();
+        assert_eq!(settings.feature_dossiers, value);
+    }
+
+    // Consent to write into THIS checkout is local: it must never ride
+    // `.fartCode.json` into a teammate's clone.
+    fx.settings
+        .update_project_settings(
+            &fx.project_id,
+            &fx.repo,
+            &ProjectSettings {
+                feature_dossiers: Some(true),
+                shell_setup: Some("source .envrc".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(fx.settings.share_with_team(&fx.project_id).unwrap());
+    let config = read_json(&fx.fartcode_json());
+    assert!(
+        !config.as_object().unwrap().contains_key("featureDossiers"),
+        "consent is a local decision and must not be shared"
+    );
+}
+
 #[test]
 fn test_ade_json_filtered_from_preserve_patterns() {
     let fx = Fixture::new();

@@ -32,7 +32,10 @@ fn test_full_migration_chain_applies_from_scratch() {
             Ok((row.get(0)?, row.get::<_, String>(1)?.len()))
         })
         .unwrap();
-    assert_eq!(count, 8, "expected all journal migrations applied");
+    // 0000–0009. (Was asserting 8 against a 9-entry journal since #66 added
+    // 0008 without bumping it — this binary has been red on main; corrected
+    // here rather than left broken under a new migration.)
+    assert_eq!(count, 10, "expected all journal migrations applied");
     assert_eq!(hash_len, 64, "sha256 hex must be 64 chars");
 
     // FTS tables exist and the kv gates are set to the expected versions.
@@ -125,7 +128,7 @@ fn test_migrations_reinit_is_noop() {
         .unwrap()
         .query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(count, 8);
+    assert_eq!(count, 10);
     drop(db);
 
     let db2 = SqliteDb::init(Some(db_path.to_str().unwrap())).unwrap();
@@ -135,5 +138,64 @@ fn test_migrations_reinit_is_noop() {
         .unwrap()
         .query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(count2, 8, "re-init must not re-apply migrations");
+    assert_eq!(count2, 10, "re-init must not re-apply migrations");
+}
+
+/// E19-01 (#70): migration 0009 adds `issues.dossier_path` as a plain
+/// nullable column. The test that matters is the UPGRADE, not the fresh
+/// chain: a DB whose rows predate the column must survive it, keep its data,
+/// and read the new field as NULL — nothing anywhere may assume non-NULL.
+#[test]
+fn test_dossier_path_upgrade_leaves_existing_rows_intact() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("test.db");
+
+    // Stand up a DB, then rewind it to the pre-0009 shape: drop the column
+    // and forget the journal entry, so re-init has to apply 0009 for real
+    // against rows that already exist.
+    {
+        let db = SqliteDb::init(Some(db_path.to_str().unwrap())).unwrap();
+        let conn = db.conn().lock().unwrap();
+        conn.execute(
+            "INSERT INTO projects (id, name, path) VALUES ('p1', 'proj', '/tmp/proj')",
+            [],
+        )
+        .unwrap();
+        fartcode_core::issues::columns::seed_default_columns(&conn, "p1").unwrap();
+        conn.execute(
+            "INSERT INTO issues (id, project_id, title, lane, position)
+             VALUES ('iss_old', 'p1', 'predates the column', 'backlog', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute("ALTER TABLE issues DROP COLUMN dossier_path", [])
+            .unwrap();
+        conn.execute(
+            "DELETE FROM migrations WHERE created_at = 1800000000009",
+            [],
+        )
+        .unwrap();
+    }
+
+    let db = SqliteDb::init(Some(db_path.to_str().unwrap())).unwrap();
+    let conn = db.conn().lock().unwrap();
+    let (title, dossier): (String, Option<String>) = conn
+        .query_row(
+            "SELECT title, dossier_path FROM issues WHERE id = 'iss_old'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(title, "predates the column", "existing data untouched");
+    assert_eq!(dossier, None, "backfilled to NULL, and NULL is legal");
+
+    // And the read path (the shared SELECT column list) handles the NULL.
+    drop(conn);
+    let store = fartcode_core::issues::IssueStore::new(
+        db.clone(),
+        std::sync::Arc::new(fartcode_core::events::BroadcastEventBus::new(8)),
+    );
+    let issue = store.get("iss_old").unwrap().unwrap();
+    assert_eq!(issue.dossier_path, None);
+    assert_eq!(issue.title, "predates the column");
 }

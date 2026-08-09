@@ -85,6 +85,7 @@ function issue(id: string, columnId: string, position: number): IssueDto {
     model: null,
     prdPath: null,
     prdSection: null,
+    dossierPath: null,
     linkedTaskId: null,
     externalRef: null,
     columnId,
