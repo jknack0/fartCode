@@ -3,6 +3,7 @@
 //! projects and tasks. This module owns the write path
 //! (upsert/delete/backfill) and the query path.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::db::Db;
@@ -109,11 +110,36 @@ pub struct Document {
 /// and `_` is a `LIKE` wildcard, so `LIKE 'iss_…'` would quietly match ids
 /// this group does not own.
 ///
-/// Returns the number of rows written.
+/// Returns the number of DISTINCT ids written — not `docs.len()`. Two docs
+/// sharing an id are one row (the second replaces the first), so a caller
+/// that expected N rows and got N-1 is looking at a silently swallowed
+/// document; returning the honest count makes that auditable instead of
+/// absorbing it.
 pub fn replace_group(
     db: &Arc<dyn Db>,
     item_type: &str,
     prefix: &str,
+    docs: &[Document],
+) -> Result<usize, Error> {
+    write_group(db, item_type, Some(prefix), docs)
+}
+
+/// [`replace_group`] without the prune: writes `docs` and leaves every
+/// other row alone.
+///
+/// For callers whose source could not be fully read — E19-03 reindexing a
+/// dossier whose parse ended inside an unclosed fence, where "no more
+/// sections" is an artifact of one stray line rather than evidence that the
+/// sections were deleted. Same rule the app applies to an unreadable file:
+/// never delete a list you could not confirm is gone.
+pub fn upsert_group(db: &Arc<dyn Db>, item_type: &str, docs: &[Document]) -> Result<usize, Error> {
+    write_group(db, item_type, None, docs)
+}
+
+fn write_group(
+    db: &Arc<dyn Db>,
+    item_type: &str,
+    prune_prefix: Option<&str>,
     docs: &[Document],
 ) -> Result<usize, Error> {
     let conn = db
@@ -121,6 +147,7 @@ pub fn replace_group(
         .lock()
         .map_err(|_| Error::Internal("db connection mutex poisoned".into()))?;
     let tx = conn.unchecked_transaction()?;
+    let mut written: HashSet<&str> = HashSet::with_capacity(docs.len());
     for doc in docs {
         upsert_row(
             &tx,
@@ -131,16 +158,19 @@ pub fn replace_group(
             &doc.title,
             &[doc.keywords.as_str()],
         )?;
+        written.insert(doc.item_id.as_str());
     }
-    // Whatever carried the prefix before and is not in `docs` now is a
-    // source that vanished.
-    let stale: Vec<String> = ids_with_prefix(&tx, item_type, prefix)?
-        .into_iter()
-        .filter(|id| !docs.iter().any(|d| &d.item_id == id))
-        .collect();
-    delete_ids(&tx, item_type, &stale)?;
+    if let Some(prefix) = prune_prefix {
+        // Whatever carried the prefix before and is not in `docs` now is a
+        // source that vanished.
+        let stale: Vec<String> = ids_with_prefix(&tx, item_type, prefix)?
+            .into_iter()
+            .filter(|id| !written.contains(id.as_str()))
+            .collect();
+        delete_ids(&tx, item_type, &stale)?;
+    }
     tx.commit()?;
-    Ok(docs.len())
+    Ok(written.len())
 }
 
 /// Removes every `item_type` row whose `item_id` starts with `prefix`
@@ -235,6 +265,20 @@ pub fn delete(db: &Arc<dyn Db>, item_type: &str, item_id: &str) -> Result<(), Er
 /// matches substrings (unquoted input is tokenized per-trigram already, but
 /// quoted phrases match more precisely).
 pub fn query(db: &Arc<dyn Db>, q: &str, limit: usize) -> Result<Vec<SearchResult>, Error> {
+    query_excluding(db, q, limit, &[])
+}
+
+/// [`query`] with item types held back.
+///
+/// The exclusion is in SQL, not a post-filter, because `LIMIT` is applied
+/// by SQLite: filtering afterwards would let hidden rows consume palette
+/// slots and silently shorten the visible result list.
+pub fn query_excluding(
+    db: &Arc<dyn Db>,
+    q: &str,
+    limit: usize,
+    exclude_types: &[&str],
+) -> Result<Vec<SearchResult>, Error> {
     let q = q.trim();
     if q.is_empty() {
         return Ok(Vec::new());
@@ -244,11 +288,27 @@ pub fn query(db: &Arc<dyn Db>, q: &str, limit: usize) -> Result<Vec<SearchResult
         .conn()
         .lock()
         .map_err(|_| Error::Internal("db connection mutex poisoned".into()))?;
-    let mut stmt = conn.prepare(
+    // Placeholders are generated, never interpolated values — the item
+    // types themselves stay bound parameters.
+    let holes = (0..exclude_types.len())
+        .map(|i| format!("?{}", i + 3))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let filter = if exclude_types.is_empty() {
+        String::new()
+    } else {
+        format!(" AND item_type NOT IN ({holes})")
+    };
+    let mut stmt = conn.prepare(&format!(
         "SELECT item_type, item_id, project_id, task_id, title FROM search_index
-         WHERE search_index MATCH ?1 ORDER BY rank LIMIT ?2",
-    )?;
-    let rows = stmt.query_map(rusqlite::params![quoted, limit as i64], |row| {
+         WHERE search_index MATCH ?1{filter} ORDER BY rank LIMIT ?2"
+    ))?;
+    let limit = limit as i64;
+    let mut params: Vec<&dyn rusqlite::ToSql> = vec![&quoted, &limit];
+    for t in exclude_types {
+        params.push(t);
+    }
+    let rows = stmt.query_map(params.as_slice(), |row| {
         Ok(SearchResult {
             item_type: row.get(0)?,
             item_id: row.get(1)?,
@@ -381,5 +441,97 @@ mod tests {
         .unwrap();
         assert_eq!(query(&db, "acme", 10).unwrap().len(), 1);
         assert_eq!(query(&db, "fix", 10).unwrap().len(), 1, "task title");
+    }
+
+    /// `item_type` was a full-text column, so typing an item type matched
+    /// every row of that type through its own type name.
+    #[test]
+    fn the_item_type_column_is_not_full_text_searchable() {
+        let db = db();
+        upsert(&db, "project", "p1", None, None, "acme-web", &["acme-web"]).unwrap();
+        upsert(&db, "task", "t1", Some("p1"), None, "fix navbar", &["fix"]).unwrap();
+        assert!(
+            query(&db, "project", 10).unwrap().is_empty(),
+            "the type name is metadata, not searchable text"
+        );
+        assert!(query(&db, "task", 10).unwrap().is_empty());
+        assert_eq!(query(&db, "navbar", 10).unwrap().len(), 1, "still indexed");
+    }
+
+    /// The exclusion has to happen in SQL: a post-filter would let hidden
+    /// rows eat the LIMIT and silently shorten the visible list.
+    #[test]
+    fn query_excluding_holds_a_type_back_before_the_limit_applies() {
+        let db = db();
+        for i in 0..5 {
+            upsert(
+                &db,
+                "feature",
+                &format!("f{i}"),
+                None,
+                None,
+                "navbar section",
+                &["navbar"],
+            )
+            .unwrap();
+        }
+        upsert(
+            &db,
+            "task",
+            "t1",
+            Some("p1"),
+            None,
+            "navbar task",
+            &["navbar"],
+        )
+        .unwrap();
+
+        let hits = query_excluding(&db, "navbar", 3, &["feature"]).unwrap();
+        assert_eq!(hits.len(), 1, "the task survived a limit of 3: {hits:?}");
+        assert_eq!(hits[0].item_type, "task");
+        // Unfiltered, everything is still there.
+        assert_eq!(query(&db, "navbar", 10).unwrap().len(), 6);
+    }
+
+    #[test]
+    fn upsert_group_writes_without_pruning_and_reports_distinct_ids() {
+        let db = db();
+        let doc = |id: &str, title: &str| Document {
+            item_id: id.into(),
+            project_id: Some("p1".into()),
+            task_id: None,
+            title: title.into(),
+            keywords: title.into(),
+        };
+        assert_eq!(
+            replace_group(
+                &db,
+                "feature",
+                "i1#",
+                &[doc("i1#a", "alpha"), doc("i1#b", "bravo")]
+            )
+            .unwrap(),
+            2
+        );
+        // Same id twice is ONE row, and the count says so.
+        assert_eq!(
+            upsert_group(
+                &db,
+                "feature",
+                &[doc("i1#c", "charlie"), doc("i1#c", "charlie")]
+            )
+            .unwrap(),
+            1,
+            "distinct ids, not docs.len()"
+        );
+        // No prune: `a` and `b` are untouched even though they are absent.
+        assert_eq!(query(&db, "alpha", 10).unwrap().len(), 1);
+        assert_eq!(query(&db, "charlie", 10).unwrap().len(), 1);
+        // …whereas replace_group does prune.
+        assert_eq!(
+            replace_group(&db, "feature", "i1#", &[doc("i1#a", "alpha")]).unwrap(),
+            1
+        );
+        assert!(query(&db, "charlie", 10).unwrap().is_empty());
     }
 }

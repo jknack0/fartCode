@@ -19,7 +19,14 @@ use crate::db::connection::{kv_get_raw, kv_set_raw};
 use crate::Error;
 
 /// Names of the kv version gates (must match what later tickets read).
-pub const SEARCH_INDEX_VERSION: &str = "3";
+/// Bumped to 4 by E19-03: `item_type` became UNINDEXED. It had been a
+/// full-text column, so typing "task" matched every task row through its
+/// own type name — noise that only grew as item types multiplied. Nothing
+/// reads it as searchable text (the palette uses it for the hint and the
+/// navigation branch, both after the row is in hand), and
+/// `ensure_fts_tables` rebuilds on a version mismatch with `backfill`
+/// repopulating, so the change costs one rebuild.
+pub const SEARCH_INDEX_VERSION: &str = "4";
 pub const FILE_INDEX_VERSION: &str = "4";
 
 #[derive(Deserialize)]
@@ -173,7 +180,7 @@ pub fn ensure_fts_tables(conn: &rusqlite::Connection) -> Result<(), Error> {
         conn.execute_batch(
             "DROP TABLE IF EXISTS search_index;
              CREATE VIRTUAL TABLE search_index USING fts5(
-                 item_type,
+                 item_type UNINDEXED,
                  item_id UNINDEXED,
                  project_id UNINDEXED,
                  task_id UNINDEXED,

@@ -10,7 +10,7 @@ pub mod commands;
 pub mod dispatch;
 pub mod dossier_index;
 pub mod dossiers;
-mod indexer;
+pub mod indexer;
 pub mod skills;
 pub mod step_engine;
 pub mod terminals;

@@ -2,6 +2,7 @@
 //! fartcode-core --test migrations`). Runs the full embedded migration chain from
 //! scratch and verifies the FTS version-gated bootstrap.
 
+use fartcode_core::db::migrations::{FILE_INDEX_VERSION, SEARCH_INDEX_VERSION};
 use fartcode_core::db::schema::{DOMAIN_TABLES, FTS_TABLES};
 use fartcode_core::db::{Db, SqliteDb};
 
@@ -56,8 +57,11 @@ fn test_full_migration_chain_applies_from_scratch() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(fts_version, "3");
-    assert_eq!(file_index_version, "4");
+    // Against the constants, not literals: the gate's job is "matches the
+    // current schema", and a version bump (E19-03 made `item_type`
+    // UNINDEXED) is a deliberate change, not a test failure.
+    assert_eq!(fts_version, SEARCH_INDEX_VERSION);
+    assert_eq!(file_index_version, FILE_INDEX_VERSION);
 }
 
 #[test]
@@ -113,7 +117,10 @@ fn test_fts_version_gate_rebuilds_index() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(fts_version, "3", "gate must be bumped back to current");
+    assert_eq!(
+        fts_version, SEARCH_INDEX_VERSION,
+        "gate must be bumped back to current"
+    );
 }
 
 #[test]

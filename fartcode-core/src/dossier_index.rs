@@ -104,18 +104,36 @@ pub fn issue_id_of(item_id: &str) -> Option<&str> {
 /// Pure: no filesystem, no DB. `content` is the dossier file as read from
 /// whichever copy the caller resolved.
 pub fn documents(issue_id: &str, project_id: &str, content: &str) -> Vec<Document> {
-    let mut seen: Vec<String> = Vec::new();
+    documents_checked(issue_id, project_id, content).0
+}
+
+/// [`documents`] plus the parse's unclosed-fence flag (see
+/// [`dossiers::sections_checked`]). `true` means sections below a stray
+/// fence were swallowed, so ABSENCE IS NOT EVIDENCE OF DELETION and the
+/// caller must not prune.
+pub fn documents_checked(issue_id: &str, project_id: &str, content: &str) -> (Vec<Document>, bool) {
+    let (sections, ended_open) = dossiers::sections_checked(content);
+    // Ids are deduped on the EMITTED id, not on the heading: the ordinal
+    // suffix uses the same separator as the id itself, so a literal
+    // `## Notes#2` section collides with the second `## Notes`. Bumping
+    // until the id is free costs nothing and makes the collision
+    // impossible rather than merely unlikely — the alternative is one
+    // section silently overwriting another and never being searchable.
+    let mut used: HashSet<String> = HashSet::new();
     let mut out = Vec::new();
-    for section in dossiers::sections(content) {
+    for section in sections {
         if section.heading.is_empty() || dossiers::is_app_section(&section.heading) {
             continue;
         }
-        // Ordinal counts EARLIER indexed sections carrying this heading, so
-        // the numbering a reindex computes depends on the file alone.
-        let ordinal = seen.iter().filter(|h| **h == section.heading).count();
-        seen.push(section.heading.clone());
+        let mut ordinal = 0;
+        let mut id = item_id(issue_id, &section.heading, ordinal);
+        while used.contains(&id) {
+            ordinal += 1;
+            id = item_id(issue_id, &section.heading, ordinal);
+        }
+        used.insert(id.clone());
         out.push(Document {
-            item_id: item_id(issue_id, &section.heading, ordinal),
+            item_id: id,
             project_id: Some(project_id.to_string()),
             // The dossier outlives the task (ADR-0038 item 4: "issue rows
             // persist after the task is gone"), and the hit opens the card
@@ -126,22 +144,40 @@ pub fn documents(issue_id: &str, project_id: &str, content: &str) -> Vec<Documen
             title: section.heading,
         });
     }
-    out
+    (out, ended_open)
 }
 
-/// Replaces this card's `feature` rows with what `content` says — the
+/// Brings this card's `feature` rows in line with what `content` says — the
 /// incremental-safe reindex.
 ///
 /// Idempotent (the deterministic rowid makes each write a replace) and
 /// self-pruning (a section deleted from the file loses its row). Returns
-/// the number of rows the dossier now has.
+/// the number of distinct rows written.
+///
+/// **The prune is skipped when the parse ended inside an unclosed fence.**
+/// A single stray ```` ``` ```` line makes every heading below it invisible,
+/// and pruning on that would delete rows for sections that are still in the
+/// file — permanently, since the file keeps parsing the same way. The
+/// contract is that only sections REMOVED FROM THE FILE lose rows, so an
+/// unparseable tail is treated exactly like an unreadable file: write what
+/// was understood, delete nothing.
 pub fn reindex(
     db: &Arc<dyn Db>,
     issue_id: &str,
     project_id: &str,
     content: &str,
 ) -> Result<usize, Error> {
-    let docs = documents(issue_id, project_id, content);
+    let (docs, ended_open) = documents_checked(issue_id, project_id, content);
+    if ended_open {
+        tracing::warn!(
+            issue = issue_id,
+            sections = docs.len(),
+            "dossier parse ended inside an unclosed code fence — indexing what \
+             parsed and keeping existing rows rather than pruning sections the \
+             fence hid"
+        );
+        return search::upsert_group(db, ITEM_TYPE, &docs);
+    }
     search::replace_group(db, ITEM_TYPE, &item_prefix(issue_id), &docs)
 }
 
@@ -159,15 +195,20 @@ pub fn forget_project(db: &Arc<dyn Db>, project_id: &str) -> Result<usize, Error
     search::delete_by_project(db, ITEM_TYPE, project_id)
 }
 
-/// Heading + body, deduped and capped, for the `keywords` column.
+/// Heading + body, normalized and capped, for the `keywords` column.
 ///
 /// The trigram tokenizer already matches substrings, so this needs no
-/// stemming — it needs to be SMALL. Words are lowercased (the tokenizer is
-/// case-insensitive, so a second casing is pure bloat), stripped of
-/// leading/trailing punctuation, and deduped, which collapses the
-/// repetition prose is full of.
+/// stemming. Words are lowercased (the tokenizer is case-insensitive, so a
+/// second casing is pure bloat) and stripped of leading/trailing
+/// punctuation, but kept IN ORDER and NOT deduped: a word set cannot match
+/// a phrase. Deduping turned `keywords` into a first-occurrence bag, so
+/// searching a verbatim quote from the section ("the token refresh token")
+/// silently missed as soon as any word in it had appeared earlier.
+///
+/// The size ceiling is [`MAX_KEYWORD_BYTES`] alone. Truncating a very long
+/// section is a loss a user can reason about ("the end of a huge section is
+/// not indexed"); breaking phrases everywhere is not.
 fn keywords(heading: &str, body: &str) -> String {
-    let mut seen: HashSet<String> = HashSet::new();
     let mut out = String::new();
     for word in heading.split_whitespace().chain(body.split_whitespace()) {
         let word = word.trim_matches(|c: char| !c.is_alphanumeric());
@@ -175,9 +216,6 @@ fn keywords(heading: &str, body: &str) -> String {
             continue;
         }
         let word = word.to_lowercase();
-        if !seen.insert(word.clone()) {
-            continue;
-        }
         if out.len() + word.len() + 1 > MAX_KEYWORD_BYTES {
             break;
         }
@@ -257,6 +295,77 @@ mod tests {
     fn a_file_with_no_sections_indexes_nothing() {
         assert!(documents(ISSUE, PROJECT, "# Just a title\n\nprose\n").is_empty());
         assert!(documents(ISSUE, PROJECT, "").is_empty());
+    }
+
+    /// Keywords used to be a deduped word SET, which silently made any
+    /// phrase containing a repeated word unfindable.
+    #[test]
+    fn keywords_keep_repeated_words_so_phrases_still_match() {
+        let db = db();
+        let file = "## Plan — 2026-08-09\n\nThe refresh token is not the access token.\n";
+        reindex(&db, ISSUE, PROJECT, file).unwrap();
+        assert_eq!(
+            search::query(&db, "not the access token", 10)
+                .unwrap()
+                .len(),
+            1,
+            "a verbatim phrase from the section must match"
+        );
+    }
+
+    /// The ordinal suffix uses the same separator as the id itself, so a
+    /// literal `## Notes#2` section collided with the second `## Notes` —
+    /// one of them silently overwrote the other and was gone for good,
+    /// while `reindex` still reported three.
+    #[test]
+    fn an_ordinal_suffix_cannot_collide_with_a_literal_heading() {
+        let db = db();
+        let file = "## Notes\n\nalpha\n\n## Notes\n\nbravo\n\n## Notes#2\n\ncharlie\n";
+        let docs = documents(ISSUE, PROJECT, file);
+        let ids: HashSet<&str> = docs.iter().map(|d| d.item_id.as_str()).collect();
+        assert_eq!(ids.len(), 3, "three sections, three ids: {docs:?}");
+
+        assert_eq!(reindex(&db, ISSUE, PROJECT, file).unwrap(), 3);
+        assert_eq!(count(&db), 3, "no section overwrote another");
+        for needle in ["alpha", "bravo", "charlie"] {
+            assert_eq!(
+                search::query(&db, needle, 10).unwrap().len(),
+                1,
+                "{needle} is unsearchable"
+            );
+        }
+    }
+
+    /// Binding contract: only sections REMOVED FROM THE FILE lose rows. An
+    /// unclosed fence hides every heading below it, and pruning on that
+    /// deleted rows for sections still present — permanently, since the
+    /// file keeps parsing the same way.
+    #[test]
+    fn an_unclosed_fence_never_prunes_the_sections_it_hid() {
+        let db = db();
+        reindex(&db, ISSUE, PROJECT, &dossier()).unwrap();
+        assert_eq!(count(&db), 2);
+
+        let broken = dossier().replace(
+            "Chose PKCE over the implicit flow;",
+            "Chose PKCE.\n\n```text\nthread 'main' panicked\n",
+        );
+        let (docs, ended_open) = documents_checked(ISSUE, PROJECT, &broken);
+        assert!(ended_open, "the parse ended inside a fence");
+        assert_eq!(docs.len(), 1, "the Implement section was swallowed");
+
+        reindex(&db, ISSUE, PROJECT, &broken).unwrap();
+        assert_eq!(count(&db), 2, "the hidden section keeps its row");
+        // The hidden section is still findable UNDER ITS OWN HEADING. (The
+        // swallowed text also became part of the Plan section's body, so
+        // matching on the word alone would prove nothing.)
+        let hits = search::query(&db, "interceptor", 10).unwrap();
+        assert!(
+            hits.iter().any(|h| h.title == "Implement — 2026-08-09"),
+            "a section still in the file lost its row: {hits:?}"
+        );
+        // The section that DID parse is refreshed, so this is not a no-op.
+        assert_eq!(search::query(&db, "panicked", 10).unwrap().len(), 1);
     }
 
     // -- hostile input ----------------------------------------------------

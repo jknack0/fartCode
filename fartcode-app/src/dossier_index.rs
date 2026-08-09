@@ -26,9 +26,10 @@
 //! point here returns `()` and logs — a reindex must not fail a settle or a
 //! pull.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use fartcode_core::dossier_index as core_index;
+use fartcode_core::dossiers;
 use fartcode_core::events::InternalEvent;
 use fartcode_core::issues::Issue;
 use fartcode_core::projects::ProjectStore;
@@ -110,21 +111,54 @@ pub fn reindex_issue(app: &App, issue: &Issue) {
     }
 }
 
-/// The dossier copy to index: the live worktree's first, else the project
-/// checkout's. `None` when the file exists in neither.
+/// The dossier copy to index: whichever of the worktree and project-checkout
+/// copies is THIS CARD'S and was modified most recently. `None` when neither
+/// qualifies.
+///
+/// **Ownership, not existence.** `docs/features/` is a common hand-written
+/// convention, so a file sitting at the card's slug path in the main
+/// checkout is not evidence that it is the card's dossier — it may be a
+/// stranger's document that merely shares the name, and indexing it would
+/// turn someone's prose into ⌘K hits that open an unrelated card. E19-01
+/// already settled this for the write path and left the primitive behind:
+/// [`dossiers::inspect`] recognizes a file as ours only when it carries the
+/// dossier marker AND this card's `- card:` line. Applied to BOTH
+/// candidates — a re-provisioned worktree can inherit a foreign file at the
+/// stored path just as easily as the checkout can.
+///
+/// **Freshness, not precedence.** Preferring the worktree whenever it exists
+/// went wrong right after a merge: the branch lands, `project_git_pull`
+/// restamps the newer copy in the checkout, and a still-live worktree keeps
+/// the index pinned to its own staler file. Comparing mtimes picks the copy
+/// that actually has the latest sections; the worktree wins ties and any
+/// case where metadata cannot be read, since that is where an agent is
+/// actively writing.
 fn dossier_source(app: &App, issue: &Issue, rel: &str) -> Option<PathBuf> {
     let live = issue
         .linked_task_id
         .as_deref()
         .and_then(|task_id| task_worktree(app, task_id))
         .map(|root| join_rel(root, rel))
-        .filter(|p| p.is_file());
-    if live.is_some() {
-        return live;
+        .filter(|p| dossiers::inspect(p, &issue.id) == dossiers::Occupant::OurDossier);
+    let landed = app
+        .projects
+        .get(&issue.project_id)
+        .ok()
+        .flatten()
+        .map(|project| join_rel(project.path, rel))
+        .filter(|p| dossiers::inspect(p, &issue.id) == dossiers::Occupant::OurDossier);
+
+    match (live, landed) {
+        (Some(live), Some(landed)) => match (modified(&live), modified(&landed)) {
+            (Some(a), Some(b)) if b > a => Some(landed),
+            _ => Some(live),
+        },
+        (live, landed) => live.or(landed),
     }
-    let project = app.projects.get(&issue.project_id).ok().flatten()?;
-    let landed = join_rel(project.path, rel);
-    landed.is_file().then_some(landed)
+}
+
+fn modified(path: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).ok()?.modified().ok()
 }
 
 /// `dossier_path` is a REPO path — always forward slashes, app-generated
