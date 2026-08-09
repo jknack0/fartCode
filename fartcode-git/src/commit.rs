@@ -13,7 +13,7 @@ use fartcode_core::git::GitOps;
 use fartcode_core::Error;
 use serde::Serialize;
 
-use crate::{git_cmd, git_stdout_ok, CliGit};
+use crate::{git_cmd, git_stdout_ok, output_bounded, CliGit, GitTimeout};
 
 /// Open-PR lookup for one branch (the commit card's PR-open guard).
 ///
@@ -124,7 +124,9 @@ pub fn commit(worktree: &Path, message: &str) -> Result<String, Error> {
     if message.trim().is_empty() {
         return Err(Error::Git("commit message is empty".into()));
     }
-    run(worktree, &["commit", "-m", message])?;
+    // Extended: `git commit` runs the repo's pre-commit/commit-msg hooks,
+    // whose runtime belongs to the user, not to us.
+    run_timed(worktree, &["commit", "-m", message], GitTimeout::Extended)?;
     let hash = run(worktree, &["rev-parse", "HEAD"])?;
     Ok(hash.trim().to_string())
 }
@@ -157,9 +159,13 @@ pub fn push(worktree: &Path, push_remote: &str) -> Result<PushOutcome, Error> {
         .is_some_and(|raw| !String::from_utf8_lossy(&raw).trim().is_empty());
 
     let output = if has_upstream {
-        run(worktree, &["push"])?
+        run_timed(worktree, &["push"], GitTimeout::Network)?
     } else {
-        run(worktree, &["push", "-u", push_remote, &branch])?
+        run_timed(
+            worktree,
+            &["push", "-u", push_remote, &branch],
+            GitTimeout::Network,
+        )?
     };
 
     Ok(PushOutcome {
@@ -254,12 +260,19 @@ fn github_compare_url(remote_url: &str, branch: &str) -> Option<String> {
 
 /// Runs git in `worktree` capturing BOTH streams: remotes print PR URLs to
 /// stderr on push, and commit hints land there too. Non-zero exit is
-/// `Error::Git` carrying stderr.
+/// `Error::Git` carrying stderr. Local class — see [`run_timed`] for the
+/// calls that are not local.
 fn run(worktree: &Path, args: &[&str]) -> Result<String, Error> {
-    let output = git_cmd(Some(worktree))
-        .args(args)
-        .output()
-        .map_err(|e| Error::Git(format!("failed to spawn git: {e}")))?;
+    run_timed(worktree, args, GitTimeout::Local)
+}
+
+/// [`run`] with an explicit timeout class (#80): `push` talks to a remote,
+/// `commit` runs the repo's own hooks, `rev-parse` is pure disk.
+fn run_timed(worktree: &Path, args: &[&str], class: GitTimeout) -> Result<String, Error> {
+    let mut cmd = git_cmd(Some(worktree));
+    cmd.args(args);
+    let label = args.first().copied().unwrap_or("command");
+    let output = output_bounded(cmd, class, label)?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     if output.status.success() {

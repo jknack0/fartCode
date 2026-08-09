@@ -15,13 +15,13 @@ use fartcode_core::Error;
 use serde::Serialize;
 
 use crate::commit::PushOutcome;
-use crate::{git_cmd, git_stdout_ok, CliGit};
+use crate::{git_cmd, git_stdout_ok, output_bounded, CliGit, GitTimeout};
 
 /// `git fetch <remote>` — refresh remote-tracking refs. Output is
 /// suppressed (`-q`): fetch progress noise belongs to a terminal, not the
 /// footer's error slot.
 pub fn fetch(worktree: &Path, remote: &str) -> Result<(), Error> {
-    run(worktree, &["fetch", "-q", remote]).map(|_| ())
+    run(worktree, &["fetch", "-q", remote], GitTimeout::Network).map(|_| ())
 }
 
 /// `git remote get-url <remote>` — `Ok(None)` when the remote doesn't
@@ -57,7 +57,7 @@ pub fn github_https_url(remote_url: &str) -> Option<String> {
 /// error"). Refuses to merge diverged history — the footer shows git's
 /// stderr verbatim ("Not possible to fast-forward, ...").
 pub fn pull(worktree: &Path) -> Result<(), Error> {
-    run(worktree, &["pull", "--ff-only"]).map(|_| ())
+    run(worktree, &["pull", "--ff-only"], GitTimeout::Network).map(|_| ())
 }
 
 /// Result of [`publish`] — the branch just published and its new upstream.
@@ -120,7 +120,8 @@ pub fn add_remote(worktree: &Path, name: &str, url: &str) -> Result<(), Error> {
     if existing.iter().any(|r| r == name) {
         return Err(Error::Git(format!("remote {name:?} already exists")));
     }
-    run(worktree, &["remote", "add", name, url]).map(|_| ())
+    // Local: `remote add` only writes .git/config — no wire traffic.
+    run(worktree, &["remote", "add", name, url], GitTimeout::Local).map(|_| ())
 }
 
 /// Current upstream shorthand (`git rev-parse --abbrev-ref @{upstream}`),
@@ -151,11 +152,14 @@ fn rev_list_count(worktree: &Path, range: &str) -> u32 {
 
 /// Runs git capturing both streams (fetch/pull print progress to stderr);
 /// non-zero exit → `Error::Git` with the trimmed stderr.
-fn run(worktree: &Path, args: &[&str]) -> Result<String, Error> {
-    let output = git_cmd(Some(worktree))
-        .args(args)
-        .output()
-        .map_err(|e| Error::Git(format!("failed to spawn git: {e}")))?;
+///
+/// `class` bounds the wait (#80). This was a bare `Command::output()`: an
+/// unreachable remote — a VPN that dropped, a host that black-holes SYNs —
+/// wedged the call forever, and with it the command that called it.
+fn run(worktree: &Path, args: &[&str], class: GitTimeout) -> Result<String, Error> {
+    let mut cmd = git_cmd(Some(worktree));
+    cmd.args(args);
+    let output = output_bounded(cmd, class, args.first().copied().unwrap_or("command"))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     if output.status.success() {
