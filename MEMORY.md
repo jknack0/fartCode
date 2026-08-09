@@ -4,6 +4,34 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## #67 Columns editor LANDED (2026-08-09, 64821b5 + abbca79) — #67 closed
+
+The column CRUD commands have their first UI callers; the configurable
+pipeline is no longer console-only (GAP-10/BOARD-46 closed). New
+ColumnsEditor.tsx (ColumnsPane) + nested `Columns` nav child in
+SettingsModal (renders only under the ACTIVE project row; prefix-safe id
+match). Summaries via columnConfigSummary + columnSublineTone — board and
+editor stay byte-identical, one formatter. Frontend suite: 165 tests.
+
+Review round: 19 raw -> 15 confirmed, 3 refuted, all fixed in abbca79.
+The one to remember: stepTools [] (fail-closed allowlist) and null
+(unrestricted) rendered identically in the tools editor and blur-save
+patched unconditionally — open-then-click-away silently granted
+unrestricted tools. Editor now guards every blur-save on actual change,
+renders [] as "none", splits tools on NEWLINES only (`write plan.md` is
+one tool — the frame's own example), keeps one `busy` flag across all
+mutations, and derives occupancy live (event-subscribed, refetched in
+mutate, re-checked at delete click so the backend refusal stays
+unreachable per §8d).
+
+10 design deviations listed on #67 for the designer (notably: no Memory
+child until #76, `--focus-bg` for the frame's nonexistent `--focus-row`,
+no "v<N> of the seeded template" until E19 versions templates). Known
+pre-existing, chipped: eslint flat config never registers react-hooks, so
+5 exhaustive-deps suppressions reference an unregistered rule and
+`npm run lint` fails on main. NEXT: #66 authority flip (checklist on the
+ticket), then #68 templated confirms.
+
 ## UI-thread audit LANDED — #80 closed (2026-08-09)
 
 41 of 101 tauri commands moved off the macOS main thread (async +
