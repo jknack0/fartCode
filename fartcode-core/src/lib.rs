@@ -24,6 +24,7 @@ pub mod resource_monitor;
 pub mod search;
 pub mod settings;
 pub mod shell_escape;
+pub mod skills;
 pub mod tasks;
 pub mod terminals;
 pub mod view_state;

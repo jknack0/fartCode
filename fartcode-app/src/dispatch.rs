@@ -132,6 +132,12 @@ pub fn issue_dispatch_core(app: &App, issue_id: &str) -> Result<DispatchOutcome,
         .issues
         .enter_column(&issue.id, &dispatch_column.id, None)
         .map_err(String::from)?;
+    // E19-02 (#71): the append instruction rides the packet on this legacy
+    // path too — it dispatches onto the seeded In Progress column, so it is
+    // a seeded step prompt by any reading of ADR-0038 item 2. Appended
+    // AFTER `enter_column`, because that re-read is where `dossier_path`
+    // (written moments ago by provisioning) becomes visible.
+    let prompt = crate::skills::with_append_instruction(app, &issue, &dispatch_column.name, prompt);
 
     Ok(DispatchOutcome {
         task,
@@ -195,6 +201,11 @@ pub(crate) fn provision_issue_task(app: &App, issue: &Issue) -> Result<(TaskDto,
     // dossier problem into a failed dispatch. (It could, before the fix
     // round: this used to re-read the row and propagate the read's error.)
     let linked = crate::dossiers::create_for_task(app, &linked, &created.task.id).unwrap_or(linked);
+    // E19-02 (#71; ADR-0038 item 3): the convention that explains the file
+    // rides the same branch as the file. Consent-gated and best-effort
+    // inside — it returns `()` because there is no failure here a dispatch
+    // should care about.
+    crate::skills::seed_for_task(app, &issue.project_id, &created.task.id);
     Ok((TaskDto::from(&created.task), linked))
 }
 
