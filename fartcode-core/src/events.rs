@@ -79,6 +79,56 @@ pub enum InternalEvent {
         project_id: String,
     },
 
+    // Step engine (E18-04/05, #63/#64; ADR-0037 items 2–4)
+    /// Directive event: an agent step wants an agent running — the
+    /// frontend opens (or, when `reattached`, focuses) the task's agent
+    /// terminal with `prompt` and the resolved provider/model/effort.
+    /// (Named as a directive, unlike the state-change events around it:
+    /// the launch has not happened yet — the terminal is a UI resource.)
+    ///
+    /// Until the UI wave subscribes to this event, settle-chained
+    /// launches are DEFERRED directives, not lost state: the engine's
+    /// launch registry marks them undelivered, and re-entering the column
+    /// re-emits the directive (and returns it through the command
+    /// outcome, which the current UI does consume).
+    StepLaunch {
+        issue_id: String,
+        project_id: String,
+        column_id: String,
+        task_id: String,
+        prompt: String,
+        provider: String,
+        model: Option<String>,
+        effort: Option<String>,
+        reattached: bool,
+    },
+    /// A queue-mode agent step parked awaiting `step_confirm` (the 8c
+    /// confirm UI). Carries the resolved agent config so the overlay can
+    /// name provider/model before fire (ADR-0037 cost doctrine).
+    StepQueued {
+        issue_id: String,
+        project_id: String,
+        column_id: String,
+        provider: String,
+        model: Option<String>,
+        effort: Option<String>,
+    },
+    /// A parked step was dropped without launching (manual drag override,
+    /// or superseded by another entry).
+    StepQueueCleared {
+        issue_id: String,
+        project_id: String,
+        column_id: String,
+    },
+    /// A hold-mode agent step settled. Step-done is DERIVED state — this
+    /// event exists for the UI; nothing is stored.
+    StepSettled {
+        issue_id: String,
+        project_id: String,
+        column_id: String,
+        task_id: String,
+    },
+
     // Conversations
     ConversationCreated {
         id: String,

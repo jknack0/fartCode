@@ -1019,6 +1019,10 @@ export interface IssueDto {
   linkedTaskId: string | null;
   /** Source URL when imported from an external tracker (GitHub #import). */
   externalRef: string | null;
+  /** Mirror pointer to the card's board column (E18-04): maintained by
+   * the enter primitive (lane moves route through it); lane stays
+   * authoritative until E18-07. null on never-moved cards. */
+  columnId: string | null;
   blocked: boolean;
   blockers: BlockerRefDto[];
   createdAt: string | null;
@@ -1209,6 +1213,45 @@ export function columnReorder(
   columnIds: string[],
 ): Promise<BoardColumnDto[]> {
   return invoke("column_reorder", { projectId, columnIds });
+}
+
+// -- E18-04/05 step engine ------------------------------------------------------
+
+/** Launch payload (DispatchOutcomeDto parity: empty prompt + reattached
+ * on reattach). Also rides the `step:launch` event. */
+export interface StepLaunchInfoDto {
+  task: TaskDto;
+  prompt: string;
+  provider: string;
+  model: string | null;
+  effort: string | null;
+  reattached: boolean;
+}
+
+/** What the engine did on entry/confirm. */
+export interface EnterOutcomeDto {
+  issue: IssueDto;
+  /** "launched" | "queued" | "reattached" | "inert" */
+  step: "launched" | "queued" | "reattached" | "inert";
+  launch: StepLaunchInfoDto | null;
+}
+
+/** The engine's move: enter a column, then run/queue/nothing per the
+ * column's kind and onEnter. Position omitted = append. Events:
+ * step:launch / step:queued ride the fartcode:event channel. */
+export function issueEnterColumn(
+  issueId: string,
+  columnId: string,
+  position?: number,
+): Promise<EnterOutcomeDto> {
+  return invoke("issue_enter_column", { issueId, columnId, position: position ?? null });
+}
+
+/** Fires the parked (queue-mode) step. Single-shot: throws "no parked
+ * step" when nothing is parked (already confirmed, or cleared by a
+ * drag — see step:queue_cleared). */
+export function stepConfirm(issueId: string): Promise<EnterOutcomeDto> {
+  return invoke("step_confirm", { issueId });
 }
 
 /** Project-scoped (PM chat) conversations (E17-04). */

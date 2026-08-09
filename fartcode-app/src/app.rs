@@ -55,6 +55,8 @@ pub struct App {
     /// E18-01 configurable pipeline columns (ADR-0037) — spike behind the
     /// seeded default; lanes stay authoritative.
     pub columns: Arc<fartcode_core::issues::columns::ColumnStore>,
+    /// E18-04 step engine state: in-memory parked (queue-mode) steps.
+    pub steps: crate::step_engine::StepEngine,
 }
 
 impl App {
@@ -167,6 +169,7 @@ impl App {
             pr_sync,
             issues,
             columns,
+            steps: crate::step_engine::StepEngine::new(),
         }))
     }
 }
@@ -248,6 +251,54 @@ pub fn event_to_value(event: &InternalEvent) -> Option<serde_json::Value> {
         })),
         InternalEvent::IssueDeleted { id, project_id } => Some(json!({
             "type": "issue:deleted", "id": id, "projectId": project_id,
+        })),
+        // E18-04/05 step engine: launch is a directive (open/focus the
+        // task's agent terminal); the rest are state notifications for the
+        // queue-confirm overlay and derived step-done styling.
+        InternalEvent::StepLaunch {
+            issue_id,
+            project_id,
+            column_id,
+            task_id,
+            prompt,
+            provider,
+            model,
+            effort,
+            reattached,
+        } => Some(json!({
+            "type": "step:launch", "issueId": issue_id, "projectId": project_id,
+            "columnId": column_id, "taskId": task_id, "prompt": prompt,
+            "provider": provider, "model": model, "effort": effort,
+            "reattached": reattached,
+        })),
+        InternalEvent::StepQueued {
+            issue_id,
+            project_id,
+            column_id,
+            provider,
+            model,
+            effort,
+        } => Some(json!({
+            "type": "step:queued", "issueId": issue_id, "projectId": project_id,
+            "columnId": column_id, "provider": provider, "model": model,
+            "effort": effort,
+        })),
+        InternalEvent::StepQueueCleared {
+            issue_id,
+            project_id,
+            column_id,
+        } => Some(json!({
+            "type": "step:queue_cleared", "issueId": issue_id,
+            "projectId": project_id, "columnId": column_id,
+        })),
+        InternalEvent::StepSettled {
+            issue_id,
+            project_id,
+            column_id,
+            task_id,
+        } => Some(json!({
+            "type": "step:settled", "issueId": issue_id, "projectId": project_id,
+            "columnId": column_id, "taskId": task_id,
         })),
         _ => None,
     }
@@ -346,6 +397,55 @@ mod tests {
         let v = event_to_value(&ev).unwrap();
         assert_eq!(v["type"], "comment:resolved");
         assert_eq!(v["id"], "lc_1");
+
+        // E18-04/05 step-engine events reach the frontend envelope.
+        let ev = InternalEvent::StepLaunch {
+            issue_id: "i1".into(),
+            project_id: "p1".into(),
+            column_id: "c1".into(),
+            task_id: "t1".into(),
+            prompt: "go".into(),
+            provider: "claude".into(),
+            model: Some("haiku".into()),
+            effort: None,
+            reattached: false,
+        };
+        let v = event_to_value(&ev).unwrap();
+        assert_eq!(v["type"], "step:launch");
+        assert_eq!(v["issueId"], "i1");
+        assert_eq!(v["taskId"], "t1");
+        assert_eq!(v["model"], "haiku");
+        assert_eq!(v["reattached"], false);
+
+        let ev = InternalEvent::StepQueued {
+            issue_id: "i1".into(),
+            project_id: "p1".into(),
+            column_id: "c1".into(),
+            provider: "claude".into(),
+            model: None,
+            effort: Some("high".into()),
+        };
+        let v = event_to_value(&ev).unwrap();
+        assert_eq!(v["type"], "step:queued");
+        assert_eq!(v["columnId"], "c1");
+        assert_eq!(v["effort"], "high");
+
+        let ev = InternalEvent::StepQueueCleared {
+            issue_id: "i1".into(),
+            project_id: "p1".into(),
+            column_id: "c1".into(),
+        };
+        assert_eq!(event_to_value(&ev).unwrap()["type"], "step:queue_cleared");
+
+        let ev = InternalEvent::StepSettled {
+            issue_id: "i1".into(),
+            project_id: "p1".into(),
+            column_id: "c1".into(),
+            task_id: "t1".into(),
+        };
+        let v = event_to_value(&ev).unwrap();
+        assert_eq!(v["type"], "step:settled");
+        assert_eq!(v["taskId"], "t1");
 
         // Events the UI doesn't consume are skipped, not panicked on.
         assert!(event_to_value(&InternalEvent::AppStarted).is_none());

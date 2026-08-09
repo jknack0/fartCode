@@ -120,7 +120,13 @@ pub struct Issue {
     /// Source URL when imported from an external tracker (GitHub issue
     /// import — dedupe key + provenance badge).
     pub external_ref: Option<String>,
-    /// Derived at read time (ADR-0032): any direct blocker not in Done.
+    /// Mirror pointer to the card's board column (E18-04): written by
+    /// [`IssueStore::enter_column`] (which lane-addressed moves route
+    /// through) and the 0006 backfill. Lane stays authoritative until the
+    /// E18-07 flip; `None` on cards that have never been moved/entered.
+    pub column_id: Option<String>,
+    /// Derived at read time (ADR-0032): any direct blocker not in a
+    /// counts-as-done column.
     pub blocked: bool,
     pub blockers: Vec<BlockerRef>,
     pub created_at: Option<String>,
@@ -227,7 +233,7 @@ pub struct IssueStore {
 /// EXISTS subquery appended by the list/get SELECTs.
 const COLUMNS: &str = "id, project_id, title, body, acceptance, lane, position, \
      provider, model, prd_path, prd_section, linked_task_id, external_ref, \
-     created_at, updated_at";
+     column_id, created_at, updated_at";
 
 /// Derived-blocked subquery (E18-03, #77; ADR-0037 item 6): true when any
 /// direct blocker is NOT in a `counts_as_done` column.
@@ -250,7 +256,7 @@ const BLOCKED_SQL: &str = "EXISTS(SELECT 1 FROM issue_dependencies d \
 fn issue_from_row(row: &rusqlite::Row) -> rusqlite::Result<Issue> {
     let lane: String = row.get(5)?;
     let acceptance_cell: Option<String> = row.get(4)?;
-    let blocked: i64 = row.get(15)?;
+    let blocked: i64 = row.get(16)?;
     Ok(Issue {
         id: row.get(0)?,
         project_id: row.get(1)?,
@@ -270,8 +276,9 @@ fn issue_from_row(row: &rusqlite::Row) -> rusqlite::Result<Issue> {
         prd_section: row.get(10)?,
         linked_task_id: row.get(11)?,
         external_ref: row.get(12)?,
-        created_at: row.get(13)?,
-        updated_at: row.get(14)?,
+        column_id: row.get(13)?,
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
         blocked: blocked != 0,
         blockers: Vec::new(), // attached by the caller (second query)
     })
@@ -501,10 +508,58 @@ impl IssueStore {
     /// target lane. Any lane transition is allowed — blocked-dispatch
     /// confirmation is a UI concern (ADR-0032) and derived blocked state
     /// needs no maintenance writes. Emits `IssueUpdated`.
+    ///
+    /// E18-04: when the target lane maps to a seeded column, the move
+    /// routes through [`Self::enter_column`] — one code path, and the
+    /// mirror pointer stays maintained. When the lane has no seeded column
+    /// (the user deleted it), the legacy lane-only write runs and the
+    /// mirror is cleared: no column can represent that lane.
     pub fn move_to(&self, id: &str, lane: Lane, position: Option<i64>) -> Result<Issue, Error> {
         let issue = self
             .get(id)?
             .ok_or_else(|| Error::IssueNotFound(id.into()))?;
+        // Same-lane REORDER (fix round, finding 13): position only — the
+        // mirror is NOT touched. A card resident in a non-seeded column
+        // (Quick) still renders in its stale lane on the legacy board;
+        // reordering it there must not clobber the column residence.
+        if issue.lane == lane {
+            {
+                let conn = self.conn()?;
+                let position = match position {
+                    Some(p) => p,
+                    None => conn.query_row(
+                        "SELECT COALESCE(MAX(position) + 1, 0) FROM issues
+                          WHERE project_id = ?1 AND lane = ?2",
+                        rusqlite::params![issue.project_id, lane.as_str()],
+                        |row| row.get(0),
+                    )?,
+                };
+                conn.execute(
+                    "UPDATE issues SET position = ?2, updated_at = datetime('now')
+                      WHERE id = ?1",
+                    rusqlite::params![id, position],
+                )?;
+            }
+            self.event_bus.send(InternalEvent::IssueUpdated {
+                id: id.into(),
+                project_id: issue.project_id.clone(),
+            });
+            return self
+                .get(id)?
+                .ok_or_else(|| Error::Internal(format!("issue vanished after move: {id}")));
+        }
+        let seeded_column: Option<String> = {
+            let conn = self.conn()?;
+            conn.query_row(
+                "SELECT id FROM board_columns WHERE project_id = ?1 AND seed_lane = ?2",
+                rusqlite::params![issue.project_id, lane.as_str()],
+                |row| row.get(0),
+            )
+            .optional()?
+        };
+        if let Some(column_id) = seeded_column {
+            return self.enter_column(id, &column_id, position);
+        }
         {
             let conn = self.conn()?;
             let position = match position {
@@ -517,7 +572,8 @@ impl IssueStore {
                 )?,
             };
             conn.execute(
-                "UPDATE issues SET lane = ?2, position = ?3, updated_at = datetime('now')
+                "UPDATE issues SET lane = ?2, position = ?3, column_id = NULL,
+                     updated_at = datetime('now')
                   WHERE id = ?1",
                 rusqlite::params![id, lane.as_str(), position],
             )?;
@@ -528,6 +584,88 @@ impl IssueStore {
         });
         self.get(id)?
             .ok_or_else(|| Error::Internal(format!("issue vanished after move: {id}")))
+    }
+
+    /// The step engine's move (E18-04, #63): points the card's mirror at
+    /// `column_id` and, when the column mirrors a seeded lane, syncs the
+    /// authoritative lane through the REVERSE seed_lane mapping. Entering
+    /// a non-seeded column (Quick, user-created) leaves the lane
+    /// UNCHANGED — interim until the E18-07 authority flip; the legacy
+    /// lane board cannot render non-seeded columns, so the stale lane is
+    /// invisible there.
+    ///
+    /// `position: None` appends to the end of the synced lane; when the
+    /// lane does not move and no position is given, position is left
+    /// alone. Cross-project entries are rejected. Emits `IssueUpdated`
+    /// (exactly one — the same event a lane move fires).
+    pub fn enter_column(
+        &self,
+        id: &str,
+        column_id: &str,
+        position: Option<i64>,
+    ) -> Result<Issue, Error> {
+        let issue = self
+            .get(id)?
+            .ok_or_else(|| Error::IssueNotFound(id.into()))?;
+        {
+            let conn = self.conn()?;
+            let (column_project, seed_lane): (String, Option<String>) = conn
+                .query_row(
+                    "SELECT project_id, seed_lane FROM board_columns WHERE id = ?1",
+                    [column_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?
+                .ok_or_else(|| Error::BoardColumnNotFound(column_id.into()))?;
+            if column_project != issue.project_id {
+                return Err(Error::InvalidBoardColumnInput(format!(
+                    "issue {id} is in project {}, column {column_id} is in project {column_project}",
+                    issue.project_id
+                )));
+            }
+            match seed_lane.as_deref().map(Lane::parse).transpose()? {
+                Some(lane) => {
+                    let position = match position {
+                        Some(p) => p,
+                        None => conn.query_row(
+                            "SELECT COALESCE(MAX(position) + 1, 0) FROM issues
+                              WHERE project_id = ?1 AND lane = ?2",
+                            rusqlite::params![issue.project_id, lane.as_str()],
+                            |row| row.get(0),
+                        )?,
+                    };
+                    conn.execute(
+                        "UPDATE issues SET lane = ?2, position = ?3, column_id = ?4,
+                             updated_at = datetime('now')
+                          WHERE id = ?1",
+                        rusqlite::params![id, lane.as_str(), position, column_id],
+                    )?;
+                }
+                None => match position {
+                    Some(p) => {
+                        conn.execute(
+                            "UPDATE issues SET column_id = ?2, position = ?3,
+                                 updated_at = datetime('now')
+                              WHERE id = ?1",
+                            rusqlite::params![id, column_id, p],
+                        )?;
+                    }
+                    None => {
+                        conn.execute(
+                            "UPDATE issues SET column_id = ?2, updated_at = datetime('now')
+                              WHERE id = ?1",
+                            rusqlite::params![id, column_id],
+                        )?;
+                    }
+                },
+            }
+        }
+        self.event_bus.send(InternalEvent::IssueUpdated {
+            id: id.into(),
+            project_id: issue.project_id.clone(),
+        });
+        self.get(id)?
+            .ok_or_else(|| Error::Internal(format!("issue vanished after enter: {id}")))
     }
 
     /// Deletes an issue; its dependency edges cascade (both directions).
@@ -793,6 +931,8 @@ mod tests {
         assert!(!fetched.blocked);
         assert!(fetched.blockers.is_empty());
         assert!(fetched.linked_task_id.is_none());
+        // Creation never writes the mirror — the first enter/move does.
+        assert!(fetched.column_id.is_none());
         assert!(fetched.created_at.is_some());
     }
 
@@ -935,6 +1075,140 @@ mod tests {
     /// exactly like the old `lane != 'done'` string test this ticket
     /// removed. Flag-specific behavior lives in
     /// `counts_as_done_flag_drives_blocked_derivation`.
+    /// E18-04: the enter primitive writes the mirror always and syncs the
+    /// lane only through the reverse seed_lane mapping.
+    #[test]
+    fn enter_column_syncs_lane_only_for_seeded_columns() {
+        let store = fixture();
+        let col_store = columns::ColumnStore::new(store.db.clone());
+        let board = col_store.list_for_project("p1").unwrap();
+        let (quick, done) = (board[2].clone(), board[5].clone());
+        let a = store.create(new_issue("a")).unwrap();
+
+        // Seeded column: lane syncs (reverse seed_lane mapping), mirror set,
+        // position appended within the synced lane.
+        let entered = store.enter_column(&a.id, &done.id, None).unwrap();
+        assert_eq!(entered.lane, Lane::Done);
+        assert_eq!(entered.column_id.as_deref(), Some(done.id.as_str()));
+        assert_eq!(entered.position, 0);
+
+        // Non-seeded column (Quick): mirror moves, lane UNCHANGED (interim
+        // until the E18-07 authority flip — the legacy board cannot render
+        // non-seeded columns, so the stale lane is invisible there).
+        let entered = store.enter_column(&a.id, &quick.id, None).unwrap();
+        assert_eq!(entered.lane, Lane::Done); // untouched
+        assert_eq!(entered.column_id.as_deref(), Some(quick.id.as_str()));
+
+        // Unknown and cross-project columns are typed rejections.
+        assert!(matches!(
+            store.enter_column(&a.id, "col_nope", None),
+            Err(Error::BoardColumnNotFound(_))
+        ));
+        let p2_board = col_store.list_for_project("p2").unwrap();
+        assert!(matches!(
+            store.enter_column(&a.id, &p2_board[0].id, None),
+            Err(Error::InvalidBoardColumnInput(_))
+        ));
+        assert!(matches!(
+            store.enter_column("nope", &done.id, None),
+            Err(Error::IssueNotFound(_))
+        ));
+    }
+
+    /// GOLDEN (E18-04 parity): lane-addressed moves route through the
+    /// enter primitive with identical lane/position/event behavior — the
+    /// only new effect is the maintained mirror. The fallback (seeded
+    /// column deleted) keeps the legacy lane write and clears the mirror.
+    #[test]
+    fn move_to_routes_through_the_enter_primitive() {
+        let store = fixture();
+        let col_store = columns::ColumnStore::new(store.db.clone());
+        let mut rx = store.event_bus.subscribe();
+        let a = store.create(new_issue("a")).unwrap();
+        let b = store.create(new_issue("b")).unwrap();
+        let _ = rx.try_recv(); // drain IssueCreated a
+        let _ = rx.try_recv(); // drain IssueCreated b
+
+        // Same contract as before routing: lane set, append-to-lane
+        // positioning, explicit position honored, exactly ONE IssueUpdated.
+        let moved = store.move_to(&a.id, Lane::InProgress, None).unwrap();
+        assert_eq!(moved.lane, Lane::InProgress);
+        assert_eq!(moved.position, 0);
+        let moved_b = store.move_to(&b.id, Lane::InProgress, None).unwrap();
+        assert_eq!(moved_b.position, 1);
+        let front = store.move_to(&b.id, Lane::InProgress, Some(0)).unwrap();
+        assert_eq!(front.position, 0);
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            InternalEvent::IssueUpdated { ref id, .. } if id == &a.id
+        ));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            InternalEvent::IssueUpdated { ref id, .. } if id == &b.id
+        ));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            InternalEvent::IssueUpdated { ref id, .. } if id == &b.id
+        ));
+        assert!(rx.try_recv().is_err(), "exactly one event per move");
+        // New effect: the mirror now points at the seeded In Progress
+        // column.
+        let in_progress = col_store
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .find(|c| c.seed_lane.as_deref() == Some("in_progress"))
+            .unwrap();
+        assert_eq!(front.column_id.as_deref(), Some(in_progress.id.as_str()));
+
+        // Fallback: with the Ready column deleted, a move to lane ready
+        // still works (legacy write) and the mirror clears — no column can
+        // represent that lane.
+        let ready = col_store
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .find(|c| c.seed_lane.as_deref() == Some("ready"))
+            .unwrap();
+        col_store.delete(&ready.id).unwrap();
+        let moved = store.move_to(&a.id, Lane::Ready, None).unwrap();
+        assert_eq!(moved.lane, Lane::Ready);
+        assert!(moved.column_id.is_none());
+    }
+
+    /// Fix round (finding 13): a same-lane reorder is position-only — it
+    /// must never clobber the mirror of a card resident in a non-seeded
+    /// column (the legacy board renders that card in its stale lane, so
+    /// innocuous reorders there are routine).
+    #[test]
+    fn same_lane_reorder_keeps_position_only() {
+        let store = fixture();
+        let col_store = columns::ColumnStore::new(store.db.clone());
+        let quick = col_store
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name == "Quick")
+            .unwrap();
+        let a = store.create(new_issue("a")).unwrap(); // lane backlog
+        let _b = store.create(new_issue("b")).unwrap();
+        let entered = store.enter_column(&a.id, &quick.id, None).unwrap();
+        assert_eq!(entered.lane, Lane::Backlog); // stale lane, by design
+        assert_eq!(entered.column_id.as_deref(), Some(quick.id.as_str()));
+
+        // Reorder within the (stale) backlog lane: position moves, mirror
+        // and lane untouched.
+        let reordered = store.move_to(&a.id, Lane::Backlog, Some(5)).unwrap();
+        assert_eq!(reordered.position, 5);
+        assert_eq!(reordered.lane, Lane::Backlog);
+        assert_eq!(reordered.column_id.as_deref(), Some(quick.id.as_str()));
+
+        // A cross-lane move still routes through the enter primitive.
+        let moved = store.move_to(&a.id, Lane::Ready, None).unwrap();
+        assert_eq!(moved.lane, Lane::Ready);
+        assert_ne!(moved.column_id.as_deref(), Some(quick.id.as_str()));
+    }
+
     #[test]
     fn blocked_is_derived_from_direct_blocker_lanes() {
         let store = fixture();

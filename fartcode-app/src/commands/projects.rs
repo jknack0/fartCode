@@ -25,5 +25,10 @@ pub fn create_project(app: State<'_, Arc<App>>, path: String) -> Result<ProjectD
 
 #[tauri::command]
 pub fn delete_project(app: State<'_, Arc<App>>, id: String) -> Result<(), String> {
-    app.projects.delete(&id).map_err(|e| e.to_string())
+    app.projects.delete(&id).map_err(|e| e.to_string())?;
+    // E18-04 fix round (finding 4): the FK cascade deletes the project's
+    // issues without per-issue events — sweep their step-engine state
+    // (parks + launch registry) by project.
+    crate::step_engine::on_project_deleted(&app, &id);
+    Ok(())
 }

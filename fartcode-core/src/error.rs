@@ -132,6 +132,11 @@ pub enum Error {
     #[error("board column {id} still has {count} issue(s); move them before deleting")]
     BoardColumnHasIssues { id: String, count: i64 },
 
+    /// `step_confirm` with nothing parked (never parked, already
+    /// launched, cleared by a drag, or gone stale) — E18-04 queue flow.
+    #[error("no parked step for issue {0}")]
+    NoParkedStep(String),
+
     #[error("empty session id")]
     EmptySessionId,
 

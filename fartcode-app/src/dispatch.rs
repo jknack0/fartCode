@@ -78,6 +78,27 @@ pub fn issue_dispatch_core(app: &App, issue_id: &str) -> Result<DispatchOutcome,
         .collect();
     let prompt = build_dispatch_prompt(&issue, &finished_blockers);
 
+    let (task, _linked) = provision_issue_task(app, &issue)?;
+    let issue = app
+        .issues
+        .move_to(&issue.id, Lane::InProgress, None)
+        .map_err(String::from)?;
+
+    Ok(DispatchOutcome {
+        task,
+        issue,
+        prompt,
+        provider,
+        reattached: false,
+    })
+}
+
+/// The provisioning tail of a dispatch (E17-03), shared verbatim with the
+/// E18-04 step engine (first `agent_step` entry — reuse, not a fork):
+/// create the task (worktree + issue-derived name + `linked_issue` local
+/// variant, created by the user gesture), then link it to the issue.
+/// Returns the created task and the re-read (linked) issue.
+pub(crate) fn provision_issue_task(app: &App, issue: &Issue) -> Result<(TaskDto, Issue), String> {
     let params = create_task_params(
         app,
         &issue.project_id,
@@ -103,63 +124,52 @@ pub fn issue_dispatch_core(app: &App, issue_id: &str) -> Result<DispatchOutcome,
         .create_with_provision(params)
         .map_err(|e| e.to_string())?;
 
-    app.issues
+    let linked = app
+        .issues
         .set_linked_task(&issue.id, Some(&created.task.id))
         .map_err(String::from)?;
-    let issue = app
-        .issues
-        .move_to(&issue.id, Lane::InProgress, None)
-        .map_err(String::from)?;
-
-    Ok(DispatchOutcome {
-        task: TaskDto::from(&created.task),
-        issue,
-        prompt,
-        provider,
-        reattached: false,
-    })
+    Ok((TaskDto::from(&created.task), linked))
 }
 
-/// Auto-flip In Progress → In Review for issues linked to `task_id`.
-/// Returns the flip count. Only In Progress cards move — a card the user
-/// dragged elsewhere stays put.
+/// Agent-settle trigger (E18-05 generalization of the E17-03 auto-flip):
+/// both exit hooks below funnel into
+/// [`crate::step_engine::settle_issues_for_task`], each carrying its
+/// SESSION identity (fix round: settle is session-scoped — stale
+/// triggers from finished/earlier sessions must no-op). The seeded In
+/// Progress column (`on_settle: advance`, pinned to In Review)
+/// reproduces the old In Progress → In Review flip exactly.
+///
+/// This identity-less wrapper survives for callers with no session
+/// context (integration tests, restart-style paths): it settles via the
+/// engine's registry-empty heuristic rules only.
 pub fn flip_issues_for_task(app: &App, task_id: &str) -> usize {
-    let issues = match app.issues.list_by_linked_task(task_id) {
-        Ok(issues) => issues,
-        Err(e) => {
-            tracing::warn!(task_id, error = %e, "dispatch flip lookup failed");
-            return 0;
-        }
-    };
-    let mut flipped = 0;
-    for issue in issues {
-        if issue.lane != Lane::InProgress {
-            continue;
-        }
-        match app.issues.move_to(&issue.id, Lane::InReview, None) {
-            Ok(_) => flipped += 1,
-            Err(e) => tracing::warn!(issue = %issue.id, error = %e, "dispatch flip failed"),
-        }
-    }
-    flipped
+    crate::step_engine::settle_issues_for_task(app, task_id, None)
 }
 
-/// ACP path: resolve the conversation to its task and flip. Project-scoped
-/// conversations (task_id NULL, the PM chat) never flip anything.
+/// ACP path: resolve the conversation to its task and settle with the
+/// conversation as the session identity. Project-scoped conversations
+/// (task_id NULL, the PM chat) never settle anything.
 pub fn flip_issues_for_conversation(app: &App, conversation_id: &str) {
     let conv = match app.conversations.get(conversation_id) {
         Ok(Some(conv)) => conv,
         _ => return,
     };
     if let Some(task_id) = &conv.task_id {
-        flip_issues_for_task(app, task_id);
+        let session = format!("acp:{conversation_id}");
+        crate::step_engine::settle_issues_for_task(app, task_id, Some(&session));
     }
 }
 
-/// Terminal-pump hook: an agent terminal exited. No-op when the App state
-/// isn't managed (standalone-manager tests).
-pub fn flip_for_exited_agent<R: tauri::Runtime>(app: &tauri::AppHandle<R>, task_id: &str) {
+/// Terminal-pump hook: an agent terminal exited. `terminal_id` is the
+/// exiting entry's id — the PTY side of the session identity. No-op when
+/// the App state isn't managed (standalone-manager tests).
+pub fn flip_for_exited_agent<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    task_id: &str,
+    terminal_id: &str,
+) {
     if let Some(state) = app.try_state::<Arc<App>>() {
-        flip_issues_for_task(&state, task_id);
+        let session = format!("pty:{terminal_id}");
+        crate::step_engine::settle_issues_for_task(&state, task_id, Some(&session));
     }
 }

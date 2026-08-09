@@ -103,6 +103,10 @@ pub fn issue_update(
 /// Lane move (board drag). `position: None` appends to the lane end.
 /// Blocked-dispatch confirmation is a frontend concern (ADR-0032); any
 /// transition is permitted here.
+///
+/// E18-04 item 5: a manual drag overrides a parked (queue-mode) step —
+/// unless the drag stays in the parked column. The move itself routes
+/// through the enter primitive inside the store.
 #[tauri::command]
 pub fn issue_move(
     app: State<'_, Arc<App>>,
@@ -111,6 +115,7 @@ pub fn issue_move(
     position: Option<i64>,
 ) -> Result<Issue, String> {
     let lane = Lane::parse(&lane).map_err(String::from)?;
+    crate::step_engine::on_lane_move(&app, &issue_id, lane);
     app.issues
         .move_to(&issue_id, lane, position)
         .map_err(String::from)
@@ -118,7 +123,11 @@ pub fn issue_move(
 
 #[tauri::command]
 pub fn issue_delete(app: State<'_, Arc<App>>, issue_id: String) -> Result<(), String> {
-    app.issues.delete(&issue_id).map_err(String::from)
+    app.issues.delete(&issue_id).map_err(String::from)?;
+    // E18-04 fix round (finding 4): sweep the dead card's park (with the
+    // cleared event) and its launch-registry traces.
+    crate::step_engine::on_issue_deleted(&app, &issue_id);
+    Ok(())
 }
 
 /// `issue_id` becomes blocked by `blocked_by_id`. Cycle/cross-project
@@ -153,7 +162,16 @@ pub fn issue_dispatch(
     app: State<'_, Arc<App>>,
     issue_id: String,
 ) -> Result<crate::dispatch::DispatchOutcome, String> {
-    crate::dispatch::issue_dispatch_core(&app, &issue_id)
+    // E18-04 item 5: a dispatch entry supersedes any parked step (the
+    // dispatch launches an agent now; the pending confirm is moot).
+    crate::step_engine::drop_parked_step(&app, &issue_id);
+    let outcome = crate::dispatch::issue_dispatch_core(&app, &issue_id)?;
+    // Final round item 3: a real dispatch entry (not a reattach-focus)
+    // is a user gesture — new settle epoch.
+    if !outcome.reattached {
+        crate::step_engine::begin_entry_epoch(&app, &issue_id);
+    }
+    Ok(outcome)
 }
 
 /// Open GitHub issues of the project's checkout (E17 dogfood), fetched via

@@ -158,7 +158,19 @@ pub fn column_update(
         .map(OnSettle::parse)
         .transpose()
         .map_err(String::from)?;
-    app.columns
+    // E18-04 fix round (finding 14): an edit that removes the column's
+    // queue-ness invalidates its pending parks — capture the before
+    // state so they can be dropped (with step:queue_cleared) after.
+    let was_queue_step = app
+        .columns
+        .get(&column_id)
+        .map_err(String::from)?
+        .is_some_and(|c| {
+            c.kind == fartcode_core::issues::columns::ColumnKind::AgentStep
+                && c.on_enter == fartcode_core::issues::columns::OnEnter::Queue
+        });
+    let updated = app
+        .columns
         .update(
             &column_id,
             ColumnPatch {
@@ -176,7 +188,16 @@ pub fn column_update(
                 step_tools: patch.step_tools,
             },
         )
-        .map_err(String::from)
+        .map_err(String::from)?;
+    let still_queue_step = updated.kind
+        == fartcode_core::issues::columns::ColumnKind::AgentStep
+        && updated.on_enter == fartcode_core::issues::columns::OnEnter::Queue;
+    if was_queue_step && !still_queue_step {
+        let still_runnable = updated.kind
+            == fartcode_core::issues::columns::ColumnKind::AgentStep;
+        crate::step_engine::on_column_lost_queue(&app, &column_id, still_runnable);
+    }
+    Ok(updated)
 }
 
 /// Rejected while the column is occupied (occupancy derives from the

@@ -9,6 +9,7 @@ pub mod app;
 pub mod commands;
 pub mod dispatch;
 mod indexer;
+pub mod step_engine;
 pub mod terminals;
 mod watchers;
 
@@ -183,6 +184,8 @@ pub fn run() {
             commands::columns::column_update,
             commands::columns::column_delete,
             commands::columns::column_reorder,
+            commands::steps::issue_enter_column,
+            commands::steps::step_confirm,
             commands::files::write_workspace_file,
             commands::conversations::create_conversation,
             commands::conversations::list_conversations,

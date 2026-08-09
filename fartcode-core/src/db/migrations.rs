@@ -54,6 +54,9 @@ fn sql_for_tag(tag: &str) -> Option<&'static str> {
         )),
         "0005_pull_requests" => Some(include_str!("../../migrations/0005_pull_requests.sql")),
         "0006_board_columns" => Some(include_str!("../../migrations/0006_board_columns.sql")),
+        "0007_pin_in_progress_advance" => Some(include_str!(
+            "../../migrations/0007_pin_in_progress_advance.sql"
+        )),
         _ => None,
     }
 }

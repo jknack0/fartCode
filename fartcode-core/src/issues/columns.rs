@@ -304,7 +304,10 @@ const SEED_COLUMNS: &[SeedColumn] = &[
         on_enter: OnEnter::Run,
         on_settle: OnSettle::Advance,
         seed_lane: Some("in_progress"),
-        advance_to_seed_lane: None,
+        // Pinned to the human gate (fix round): next-by-position adjacency
+        // would reroute to Done if In Review were deleted or the board
+        // reordered — approval gates remain the doctrine.
+        advance_to_seed_lane: Some("in_review"),
         step_provider: None,
         step_model: None,
     },
@@ -397,6 +400,22 @@ pub fn seed_default_columns(conn: &rusqlite::Connection, project_id: &str) -> Re
         )?;
     }
     Ok(())
+}
+
+/// Composes the prompt for an agent step (E18-04, ADR-0037 item 2).
+///
+/// `step_prompt` NULL/blank → the reference packet alone — byte-identical
+/// to today's dispatch. A set `step_prompt` becomes the framing, with the
+/// reference packet (issue title/body/acceptance/PRD/conventions — built
+/// by `build_dispatch_prompt`, composed here rather than duplicated)
+/// appended under a labeled divider.
+pub fn compose_step_prompt(step_prompt: Option<&str>, packet: &str) -> String {
+    match step_prompt.map(str::trim).filter(|s| !s.is_empty()) {
+        None => packet.to_string(),
+        Some(framing) => {
+            format!("{framing}\n\n---\n\n# Reference: issue packet\n\n{packet}")
+        }
+    }
 }
 
 pub struct ColumnStore {
@@ -727,6 +746,18 @@ impl ColumnStore {
                  column before deleting it"
             )));
         }
+        // TEMPORARY (E18-04 fix round): a seeded agent_step column (In
+        // Progress) carries dispatch/settle semantics the legacy
+        // lane-addressed paths still depend on — deleting it leaves
+        // issue_dispatch launching into a lane whose settle half has gone
+        // silent (no column to resolve). The restriction lifts at the
+        // E18-07 authority flip, when lanes stop being addressable.
+        if column.seed_lane.is_some() && column.kind == ColumnKind::AgentStep {
+            return Err(Error::InvalidBoardColumnInput(format!(
+                "column {id} is a seeded agent step; it cannot be deleted \
+                 until columns become authoritative (E18-07)"
+            )));
+        }
         let conn = self.conn()?;
         let issue_count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM issues
@@ -912,10 +943,12 @@ mod tests {
             ]
         );
         // Quick advances straight to Done (ADR-0037 item 4); In Progress
-        // advances to the NEXT column (advance_to NULL).
+        // pins its advance to the In Review human gate (fix round — the
+        // gate must survive reorders and neighbor deletion).
         let done = &columns[5];
+        let in_review = &columns[4];
         assert_eq!(columns[2].advance_to.as_deref(), Some(done.id.as_str()));
-        assert_eq!(columns[3].advance_to, None);
+        assert_eq!(columns[3].advance_to.as_deref(), Some(in_review.id.as_str()));
         // Quick is pinned to the cheap agent (design handoff v3:
         // claude · haiku); In Progress stays NULL = project default.
         assert_eq!(columns[2].step_provider.as_deref(), Some("claude"));
@@ -947,11 +980,13 @@ mod tests {
         assert!(store.list_for_project("p2").unwrap().is_empty());
     }
 
-    /// Integration test of migration 0006 against a database that already
-    /// has projects and laned issues: replays migrations 0000–0005 on a raw
-    /// connection, inserts pre-columns data, applies 0006, and checks the
-    /// seed (incl. Quick's advance_to and the seed_lane markers) + the
-    /// `issues.column_id` backfill.
+    /// Integration test of migrations 0006 + 0007 against a database that
+    /// already has projects and laned issues: replays migrations 0000–0005
+    /// on a raw connection, inserts pre-columns data, applies 0006 (seed +
+    /// backfill) and 0007 (the In Progress → In Review pin, shipped
+    /// separately because 0006 landed and is sha256-frozen), and checks
+    /// the seed (incl. both advance_to pins and the seed_lane markers) +
+    /// the `issues.column_id` backfill.
     #[test]
     fn migration_0006_seeds_existing_projects_and_backfills_column_id() {
         const PRIOR: &[&str] = &[
@@ -988,6 +1023,9 @@ mod tests {
         .unwrap();
 
         apply(include_str!("../../migrations/0006_board_columns.sql"));
+        apply(include_str!(
+            "../../migrations/0007_pin_in_progress_advance.sql"
+        ));
 
         // Both pre-existing projects got the six-column default board, with
         // seed_lane on the five legacy columns and Quick advancing to the
@@ -1032,7 +1070,19 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(rows[2].2.as_deref(), Some(done_id.as_str()), "Quick → Done");
-            assert_eq!(rows[3].2, None, "In Progress advances to next column");
+            let in_review_id: String = conn
+                .query_row(
+                    "SELECT id FROM board_columns
+                      WHERE project_id = ?1 AND seed_lane = 'in_review'",
+                    [project],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                rows[3].2.as_deref(),
+                Some(in_review_id.as_str()),
+                "In Progress → In Review (pinned human gate)"
+            );
             // Quick is pinned to claude · haiku; In Progress keeps the
             // project default (NULL provider/model).
             let step_pins: Vec<(String, Option<String>, Option<String>)> = conn
@@ -1409,11 +1459,17 @@ mod tests {
         let ready = store.list_for_project("p1").unwrap()[1].clone();
         assert_eq!(ready.seed_lane.as_deref(), Some("ready"));
 
-        // Reproduced scenario (a): a FRESH issue (column_id NULL — nothing
-        // maintains the mirror) moved to Ready via move_to must BLOCK the
-        // delete. The old column_id-count guard false-allowed this.
-        let fresh = issues.create(new_issue("fresh")).unwrap();
-        issues.move_to(&fresh.id, Lane::Ready, None).unwrap();
+        // Reproduced scenario (a): an issue whose mirror is NULL sits in
+        // Ready — deleting Ready must BLOCK. (Since E18-04 routes moves
+        // through the enter primitive, the NULL-mirror state comes from
+        // CREATING the card directly in the lane — create never writes
+        // the mirror.) The old column_id-count guard false-allowed this.
+        let fresh = issues
+            .create(NewIssue {
+                lane: Some(Lane::Ready),
+                ..new_issue("fresh")
+            })
+            .unwrap();
         let mirror: Option<String> = store
             .conn()
             .unwrap()
@@ -1423,19 +1479,19 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert!(mirror.is_none(), "precondition: the mirror is unmaintained");
+        assert!(mirror.is_none(), "precondition: the mirror is NULL");
         assert!(matches!(
             store.delete(&ready.id),
             Err(Error::BoardColumnHasIssues { ref id, count: 1 }) if *id == ready.id
         ));
 
-        // Reproduced scenario (b): a BACKFILLED issue (column_id = Ready)
-        // later moved lane-wise to Done leaves a stale pointer; deleting
-        // the now-empty Ready column must SUCCEED. The old guard
-        // false-blocked on the stale mirror.
+        // Reproduced scenario (b): a STALE pointer at Ready (the pre-E18-04
+        // backfill-then-lane-move state; now only constructible raw, since
+        // routed moves maintain the mirror) must not block deleting the
+        // truly empty Ready column.
         issues.move_to(&fresh.id, Lane::Done, None).unwrap(); // drain (a)
         let backfilled = issues.create(new_issue("backfilled")).unwrap();
-        issues.move_to(&backfilled.id, Lane::Ready, None).unwrap();
+        issues.move_to(&backfilled.id, Lane::Done, None).unwrap();
         store
             .conn()
             .unwrap()
@@ -1443,8 +1499,7 @@ mod tests {
                 "UPDATE issues SET column_id = ?1 WHERE id = ?2",
                 rusqlite::params![ready.id, backfilled.id],
             )
-            .unwrap(); // simulate the 0006 backfill
-        issues.move_to(&backfilled.id, Lane::Done, None).unwrap();
+            .unwrap(); // construct the stale mirror
         store.delete(&ready.id).unwrap();
         // The stale pointer was cleared by the FK (SET NULL), not orphaned,
         // and the remaining positions compacted to 0..n-1.
@@ -1548,6 +1603,36 @@ mod tests {
             store.reorder("p2", &reversed),
             Err(Error::InvalidBoardColumnInput(_))
         ));
+    }
+
+    /// Fix round (findings 2/3): the seeded In Progress column cannot be
+    /// deleted while lanes are addressable — dispatch would keep
+    /// launching into the lane with the settle half gone silent. Lifts at
+    /// E18-07.
+    #[test]
+    fn seeded_agent_step_columns_cannot_be_deleted() {
+        let store = seeded_fixture();
+        let in_progress = store.list_for_project("p1").unwrap()[3].clone();
+        assert_eq!(in_progress.seed_lane.as_deref(), Some("in_progress"));
+        let err = store.delete(&in_progress.id).unwrap_err();
+        assert!(matches!(err, Error::InvalidBoardColumnInput(_)));
+        assert!(err.to_string().contains("E18-07"));
+        // Quick is an agent step but NOT seeded (seed_lane NULL): still
+        // deletable — nothing lane-addressed can reach it.
+        let quick = store.list_for_project("p1").unwrap()[2].clone();
+        store.delete(&quick.id).unwrap();
+    }
+
+    /// E18-04: NULL/blank step_prompt = the packet byte-identical to
+    /// today's dispatch; a set prompt frames it with the packet appended.
+    #[test]
+    fn compose_step_prompt_frames_or_passes_through() {
+        let packet = "You are implementing an issue from the project board.\n\n# Issue\nX\n";
+        assert_eq!(compose_step_prompt(None, packet), packet);
+        assert_eq!(compose_step_prompt(Some("   "), packet), packet);
+        let framed = compose_step_prompt(Some("Grill me on the plan."), packet);
+        assert!(framed.starts_with("Grill me on the plan.\n\n---\n\n# Reference: issue packet\n\n"));
+        assert!(framed.ends_with(packet));
     }
 
     #[test]

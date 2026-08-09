@@ -15,6 +15,7 @@ pub mod projects;
 pub mod provider_accounts;
 pub mod search;
 pub mod settings;
+pub mod steps;
 pub mod tasks;
 pub mod terminals;
 pub mod view_state;
