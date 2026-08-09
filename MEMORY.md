@@ -67,6 +67,50 @@ Fixed in passing: `tests/migrations.rs` and `tests/db_integration.rs`
 migration COUNTS had been stale since #66 added 0008 (both binaries red
 on clean main); now 10.
 
+## E19-02 + E19-03 LANDED (2026-08-09) — #71, #72 closed
+
+#71 (a5f24c6 + 2ae341e): `.claude/skills/feature-log/` + one AGENTS.md
+pointer line + the step-prompt append instruction, all versioned together
+by `FEATURE_LOG_VERSION`. Scaffold is written into the WORKTREE (rides the
+feature branch, lands in the PR where the user can drop it). The append
+instruction is injected at PROMPT-ASSEMBLY time — never stored in
+SEED_COLUMNS, whose step_prompt is NULL by design; storing it would write
+a dossier instruction into the DB before consent is asked and survive
+revocation. `feature_log_seeded_version` (base, non-shareable) makes a
+user's DELETION STICK while a version bump still self-heals — the first
+build printed "delete these files to remove the convention" while
+re-seeding on every provision.
+
+#72 (b5e108c + 74d6503): dossier sections indexed as `feature` rows;
+reindex on settle (inside settle_issues_for_task — the ADVANCE branch
+emits NO StepSettled, so subscribing to the event would miss it), on
+project pull, and a boot sweep (search::backfill wipes the WHOLE table at
+launch). item_id = `<issue id>#<heading>`, ordinal deduped on the EMITTED
+id. Feature rows are held out of ⌘K by PALETTE_HIDDEN_TYPES until #75
+lands their row style — a unit test over the constant makes #75's removal
+a visible deletion.
+
+THE LESSON OF THIS PAIR (write it on the wall): #72's parser factoring
+made fences structural and REGRESSED #70's hardening — untrusted card
+text could again change how the file parses below it. An unclosed fence
+in a card body (a pasted stack trace) swallowed every heading below it:
+breadcrumbs landed at EOF, and on the index side later sections went
+invisible AND their still-present rows were pruned. Fixed at both ends
+(anchor-relative scan with fresh fence state; demote_headings CLOSES an
+unbalanced fence rather than mangling markers — a balanced block is
+legitimate content). Separately, #72's landed-copy fallback indexed ANY
+file at the path — the exact adopt-any-file bug #70's review fixed ONE
+TICKET EARLIER. RULE: when you make a new thing structural, re-audit
+every trust boundary that existed to contain untrusted text; and never
+resolve a file by path alone — `inspect()` it.
+
+Suites after both: core 283 lib, app 174 across suites, frontend 180.
+Chipped: fartcode-terminal env_policy_controls_inheritance is flaky under
+workspace parallelism (mutates process env). Open pre-existing: settings
+update_project_settings is FULL-REPLACE, so a stale open settings pane
+can clear feature_log_seeded_version / re-grant consent — wants a
+patch-shaped update command.
+
 ## E19-01 DOSSIERS LANDED (2026-08-09, 6217dd9 + bbaca0c) — #70 closed
 
 Migration 0009 adds issues.dossier_path. Dossier is born INSIDE the
