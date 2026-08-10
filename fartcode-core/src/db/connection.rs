@@ -37,6 +37,30 @@ pub trait Db: Send + Sync {
     fn kv_set(&self, key: &str, value: &str) -> Result<(), Error>;
     fn kv_delete(&self, key: &str) -> Result<(), Error>;
 
+    /// Read-modify-write of one kv value **under a single connection
+    /// guard**, inside a transaction.
+    ///
+    /// The obvious spelling — `kv_get`, edit, `kv_set` — takes the guard
+    /// twice, and a caller cannot close that window itself: the guard may
+    /// not be held across `kv_get`/`kv_set` (the mutex is not reentrant),
+    /// so there is no way to compose them safely from outside. Two writers
+    /// racing on one key therefore lose an update, which for an
+    /// append-style value means losing whatever the other writer appended.
+    ///
+    /// `update` receives the current value (`None` when the key is unset)
+    /// and returns the new one; returning `None` deletes the key. An `Err`
+    /// from `update` rolls the transaction back and is returned unchanged,
+    /// so a caller that cannot serialize its new value leaves the old one
+    /// intact rather than half-written.
+    ///
+    /// `&mut dyn FnMut` rather than a generic so `Db` stays object-safe —
+    /// every consumer holds it as `Arc<dyn Db>`.
+    fn kv_update(
+        &self,
+        key: &str,
+        update: &mut dyn FnMut(Option<String>) -> Result<Option<String>, Error>,
+    ) -> Result<(), Error>;
+
     /// Path to the database file (`:memory:` for in-memory DBs).
     fn path(&self) -> &Path;
 }
@@ -98,6 +122,25 @@ impl Db for SqliteDb {
     fn kv_delete(&self, key: &str) -> Result<(), Error> {
         let conn = lock_conn(&self.conn)?;
         kv_delete_raw(&conn, key)
+    }
+
+    fn kv_update(
+        &self,
+        key: &str,
+        update: &mut dyn FnMut(Option<String>) -> Result<Option<String>, Error>,
+    ) -> Result<(), Error> {
+        let mut conn = lock_conn(&self.conn)?;
+        // One guard for the whole read-modify-write, and a transaction so a
+        // crash between the read and the write cannot leave the value
+        // half-applied.
+        let tx = conn.transaction()?;
+        let current = kv_get_raw(&tx, key)?;
+        match update(current)? {
+            Some(next) => kv_set_raw(&tx, key, &next)?,
+            None => kv_delete_raw(&tx, key)?,
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     fn path(&self) -> &Path {

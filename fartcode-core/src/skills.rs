@@ -577,13 +577,18 @@ If the step asked you to clarify something before you could proceed, add one
 line per question saying **where the answer came from**:
 
 ```markdown
-{TAG_MEMORY} Which auth provider? — answered from {DOSSIER_DIR}/oauth-login.md
-{TAG_HUMAN} Should refresh tokens rotate?
+{TAG_MEMORY} <the question> — <where in project memory you found the answer>
+{TAG_HUMAN} <the question you had to put to the human>
 ```
 
 `{TAG_MEMORY}` means you found the answer in this project's own memory — a
 dossier, a PRD, the repository — without spending the human's attention.
 `{TAG_HUMAN}` means you had to ask them.
+
+**Replace the `<...>` placeholders.** A tag still followed by a `<` is read as
+this documentation rather than as a clarification, which is what lets these
+instructions be quoted anywhere without being counted. Start each line with the
+tag; a tag in the middle of a sentence is prose, not a record.
 
 Tag only questions you actually had. A step that needed no clarification writes
 none of these lines, and that is the correct output; an invented tag is worse
@@ -658,11 +663,13 @@ pub fn append_instruction_version(column_name: &str, dossier_rel: &str, version:
          ```\n\
          \n\
          If this step asked you to clarify something, add one line per \
-         question inside that section, saying where the answer came from:\n\
+         question inside that section, starting the line with the tag and \
+         replacing the `<...>` placeholders (a tag still followed by `<` is \
+         read as this instruction, not as a clarification):\n\
          \n\
          ```markdown\n\
-         {TAG_MEMORY} <question> — <where in project memory you found it>\n\
-         {TAG_HUMAN} <question you had to put to the human>\n\
+         {TAG_MEMORY} <the question> — <where in project memory you found it>\n\
+         {TAG_HUMAN} <the question you had to put to the human>\n\
          ```\n\
          \n\
          Append only: never rewrite, reorder, or delete existing sections, and \
@@ -1130,10 +1137,31 @@ mod tests {
             assert!(text.contains(TAG_MEMORY), "{text}");
             assert!(text.contains(TAG_HUMAN), "{text}");
         }
-        // The parser's own reading of the taught format finds one of each.
-        let parsed = fartcode_telemetry::reask::tally_text(&prompt);
-        assert_eq!(parsed.memory_answered, 1, "{prompt}");
-        assert_eq!(parsed.human_asked, 1, "{prompt}");
+        // ...and the parser reads NEITHER text as a clarification. The
+        // teaching examples are written with `<...>` placeholders exactly
+        // so that the instruction can appear in a transcript, be echoed by
+        // a terminal, or be `cat`-ed out of the skill file without scoring
+        // a tag it only meant to describe.
+        for text in [&prompt, &skill] {
+            let parsed = fartcode_telemetry::reask::tally_text(text);
+            assert!(
+                parsed.is_silent(),
+                "the teaching text parses as {parsed:?} clarifications:\n{text}"
+            );
+        }
+    }
+
+    /// The other half of that property: an agent that actually fills the
+    /// placeholders in IS counted.
+    #[test]
+    fn a_filled_in_tag_is_counted() {
+        let filled = format!(
+            "{TAG_MEMORY} Which auth provider? — from the earlier dossier\n\
+             {TAG_HUMAN} Should refresh tokens rotate?\n"
+        );
+        let parsed = fartcode_telemetry::reask::tally_text(&filled);
+        assert_eq!(parsed.memory_answered, 1);
+        assert_eq!(parsed.human_asked, 1);
     }
 
     /// Never a nag: a step with no clarification is told, in both texts,

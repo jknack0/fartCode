@@ -828,6 +828,32 @@ fn launch_step(
 ///
 /// Returns the number of issues settled (held or advanced).
 pub fn settle_issues_for_task(app: &App, task_id: &str, session: Option<&str>) -> usize {
+    settle_issues_observed(app, task_id, session, None)
+}
+
+/// [`settle_issues_for_task`] for a caller that also holds the settling
+/// session's transcript (E19-04, #73).
+///
+/// The transcript exists only in the two hooks' stack frames — nothing in
+/// fartCode persists one (ADR-0029 item 5) — so memory-value telemetry has
+/// to read it on the way past. It is threaded through *here*, rather than
+/// scanned at the hooks themselves, because only this function knows
+/// whether a step actually settled: the hooks fire on every finished ACP
+/// turn and every agent-terminal exit, including ones the engine then
+/// refuses (parked, stale, tombstoned, or a repark). Observing at the hook
+/// recorded those refusals as steps, and — because a task keeps ONE agent
+/// terminal for its whole life (ADR-0033) — gave every column of a card the
+/// same session identity, so a later step overwrote an earlier one.
+///
+/// Borrowed, not owned: the ACP view borrows the live models and the PTY
+/// view borrows a decoded scrollback, so nothing is copied for a step that
+/// turns out not to settle.
+pub fn settle_issues_observed(
+    app: &App,
+    task_id: &str,
+    session: Option<&str>,
+    transcript: Option<&fartcode_telemetry::observation::TranscriptView<'_>>,
+) -> usize {
     let issues = match app.issues.list_by_linked_task(task_id) {
         Ok(issues) => issues,
         Err(e) => {
@@ -875,6 +901,11 @@ pub fn settle_issues_for_task(app: &App, task_id: &str, session: Option<&str>) -
         // thread (this runs on the PTY pump / ACP callback), and incapable
         // of failing the settle: it returns `()` and logs.
         crate::dossier_index::reindex_issue(app, &issue);
+        // E19-04 (#73; ADR-0038 item 7): one settled step run is one
+        // observation, and this is the only place that fact is known.
+        // Same posture as the reindex above — bounded, off the main
+        // thread, returns `()` and logs.
+        crate::telemetry::observe_settled_step(app, &issue, &column, session, transcript);
         match column.on_settle {
             OnSettle::Hold => {
                 app.event_bus.send(InternalEvent::StepSettled {

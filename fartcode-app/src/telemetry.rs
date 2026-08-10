@@ -2,9 +2,9 @@
 //! item 7).
 //!
 //! `fartcode_telemetry` owns what the four signals *mean* and computes them
-//! from values. This module is the half that needs the App: which transcript
-//! to read, when to read it, where the small verdict goes, and which
-//! dossiers to walk when the dashboard asks.
+//! from values. This module is the half that needs the App: which
+//! transcript to read, when to read it, where the small verdict goes, and
+//! which dossiers to walk when the dashboard asks.
 //!
 //! # Capture at settle, compute on demand
 //!
@@ -20,34 +20,58 @@
 //! breadcrumbs are committed to the branch, so it is read from the
 //! repository when the dashboard asks and never touches a hot path.
 //!
+//! # Where the capture happens, and why not at the hooks
+//!
+//! [`observe_settled_step`] is called from `step_engine::settle_issues_observed`,
+//! after the engine's `begin_settle` has returned `Act`. The two hooks that
+//! *hold* a transcript — a finished ACP turn, an agent terminal exiting —
+//! fire far more often than a step settles, and the engine refuses most of
+//! them (parked, stale, tombstoned, repark). Observing at the hook counted
+//! those refusals as steps. Threading the transcript down to the engine's
+//! verdict makes one settled step run exactly one row.
+//!
+//! # Provenance is the whole safety property
+//!
+//! Both citation corrections and the re-ask tally key off
+//! [`SegmentSource`]: the injected prompt names the dossier and demonstrates
+//! both clarification tags, so any text containing it must not be scanned.
+//! The ACP adapter has real structure to map — roles, tool kinds — and
+//! preserves it. A PTY session has none: fartCode sees an agent CLI through
+//! a 64 KiB scrollback ring that *echoes the bracket-pasted prompt*, so it
+//! is handed over as [`SegmentSource::Unstructured`] and is not scanned at
+//! all. That is argued where the variant is defined; the short version is
+//! that a reconstructed prompt mask matches only partially against a TUI's
+//! reflowed redraw, and a partial match quietly restores a citation rate of
+//! 100%.
+//!
 //! # Same posture as the dossier writer
 //!
 //! Every entry point here returns `()` and logs. Telemetry must not fail a
-//! settle, slow one, or change what the pipeline does — a memory-value
-//! number is worth strictly less than the step it would have broken. All
-//! four capture sites already run off the main thread (the ACP callback and
-//! the PTY pump thread), and the reads the dashboard needs are behind an
-//! `async` command that hands its body to `spawn_blocking`.
+//! settle, slow one, or change what the pipeline does. The capture sites run
+//! off the main thread (the ACP callback and the PTY pump thread), and the
+//! dashboard read is behind an `async` command that hands its body to
+//! `spawn_blocking`.
 //!
 //! # Nothing leaves the machine
 //!
 //! There is no upload path here and none in `fartcode-telemetry`, whose
 //! `tests/no_egress.rs` fails the build if one appears. The store is a
-//! versioned-JSON value in the app's own SQLite `kv` table.
+//! versioned-JSON value in the app's own SQLite `kv` table, written through
+//! `Db::kv_update` so two concurrent settles cannot lose each other's rows.
 
 use std::path::Path;
 use std::sync::Arc;
 
-use fartcode_core::conversations::ConversationStore as _;
 use fartcode_core::db::versioned_json::Versioned;
 use fartcode_core::dossiers;
+use fartcode_core::issues::columns::BoardColumn;
 use fartcode_core::issues::Issue;
-use fartcode_telemetry::citations::CitationTargets;
-use fartcode_telemetry::memory::{self, MemoryInputs, MemoryValue};
+use fartcode_telemetry::citations::{classify_shell, CitationTargets};
+use fartcode_telemetry::memory::{self, DatedTally, MemoryInputs, MemoryValue};
 use fartcode_telemetry::observation::{
     Fidelity, ObservationLog, Segment, SegmentSource, StepObservation, TranscriptView,
 };
-use fartcode_telemetry::reask::{self, ReAskTally};
+use fartcode_telemetry::reask;
 use fartcode_telemetry::time_to_land::{self, FeatureCycle};
 
 use crate::app::App;
@@ -74,36 +98,44 @@ fn key(project_id: &str) -> String {
     format!("{KV_PREFIX}{project_id}")
 }
 
+fn parse_log(raw: Option<&str>) -> ObservationLog {
+    fartcode_core::db::versioned_json::parse_versioned::<StoredLog>("telemetry_memory", raw)
+        .map(|stored| stored.0)
+        .unwrap_or_default()
+}
+
 /// Reads a project's log. A missing, corrupt, or future-versioned value
 /// reads as empty — `parse_versioned` never throws, and losing telemetry
 /// history is not a reason to fail anything.
 fn load(app: &App, project_id: &str) -> ObservationLog {
-    let raw = match app.db.kv_get(&key(project_id)) {
-        Ok(raw) => raw,
+    match app.db.kv_get(&key(project_id)) {
+        Ok(raw) => parse_log(raw.as_deref()),
         Err(e) => {
             tracing::warn!(project_id, error = %e, "telemetry log read failed");
-            return ObservationLog::default();
+            ObservationLog::default()
         }
-    };
-    fartcode_core::db::versioned_json::parse_versioned::<StoredLog>(
-        "telemetry_memory",
-        raw.as_deref(),
-    )
-    .map(|stored| stored.0)
-    .unwrap_or_default()
+    }
 }
 
-fn save(app: &App, project_id: &str, log: &ObservationLog) {
-    // `ObservationLog` is `Clone` and small; the serializer needs an owned
-    // newtype and this is the whole cost of it.
-    let stored = StoredLog(log.clone());
-    match fartcode_core::db::versioned_json::serialize_versioned(&stored) {
-        Ok(json) => {
-            if let Err(e) = app.db.kv_set(&key(project_id), &json) {
-                tracing::warn!(project_id, error = %e, "telemetry log write failed");
-            }
+/// Appends one observation **atomically**.
+///
+/// `kv_update` runs the read-modify-write under one connection guard. The
+/// obvious `kv_get` / edit / `kv_set` spelling cannot: the guard may not be
+/// held across those calls, so two settles landing together each read the
+/// same log and the second write erases the first's row. Two agent steps
+/// finishing at once is not an exotic case on a board that runs them in
+/// parallel.
+fn append(app: &App, project_id: &str, observation: StepObservation) {
+    let mut observation = Some(observation);
+    let result = app.db.kv_update(&key(project_id), &mut |current| {
+        let mut log = parse_log(current.as_deref());
+        if let Some(observation) = observation.take() {
+            log.push(observation);
         }
-        Err(e) => tracing::warn!(project_id, error = %e, "telemetry log serialize failed"),
+        fartcode_core::db::versioned_json::serialize_versioned(&StoredLog(log)).map(Some)
+    });
+    if let Err(e) = result {
+        tracing::warn!(project_id, error = %e, "telemetry log write failed");
     }
 }
 
@@ -115,36 +147,68 @@ fn now_secs() -> i64 {
 }
 
 // ---------------------------------------------------------------------------
-// Capture — ACP
+// Capture
 // ---------------------------------------------------------------------------
 
-/// Records one settled ACP session against every dossier-bearing card its
-/// task owns.
+/// Records one settled step run against the card it settled.
 ///
-/// Called from `acp_events::transcript_changed` on the newly-done-turn
-/// edge — the same edge that already triggers the auto-flip — and **before**
-/// the flip, because an advancing settle moves the card out of the column
-/// this observation is about.
-///
-/// Idempotent by construction: the hook fires once per turn that settles
-/// Done, and `ObservationLog::record` replaces the row for this
-/// `(card, session)` instead of appending, so a ten-turn session is one
-/// observation reflecting the whole transcript rather than ten nested
-/// supersets of it.
-pub fn observe_acp_session(app: &App, conversation_id: &str, models: &fartcode_acp::LiveModels) {
-    let Ok(Some(conversation)) = app.conversations.get(conversation_id) else {
+/// Called by `step_engine::settle_issues_observed` after the engine decided
+/// this step really settled. A card with no dossier records nothing: it had
+/// no memory to cite, and the citation rate is a statement about steps that
+/// did.
+pub fn observe_settled_step(
+    app: &App,
+    issue: &Issue,
+    column: &BoardColumn,
+    session: Option<&str>,
+    transcript: Option<&TranscriptView<'_>>,
+) {
+    let Some(rel) = issue
+        .dossier_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    else {
         return;
     };
-    // A project-scoped conversation (the PM chat) settles nothing and has
-    // no feature to cite.
-    let Some(task_id) = conversation.task_id.as_deref() else {
-        return;
+
+    let absent = TranscriptView::absent();
+    let view = transcript.unwrap_or(&absent);
+
+    let paths = [rel.to_string()];
+    let targets = CitationTargets {
+        paths: &paths,
+        dir: dossiers::DOSSIER_DIR,
     };
-    let view = acp_view(models);
-    record_for_task(app, task_id, &format!("acp:{conversation_id}"), &view);
+    // The FOLDED fidelity, not the one the view started with: a scan that
+    // ran out of budget is no longer a full reading, and a session that can
+    // only ever contribute a positive must not sit in the rate.
+    let (citation, scan, fidelity) = fartcode_telemetry::citations::verdict(view, &targets);
+
+    append(
+        app,
+        &issue.project_id,
+        StepObservation {
+            project_id: issue.project_id.clone(),
+            issue_id: issue.id.clone(),
+            session: session.unwrap_or_default().to_string(),
+            column: column.name.clone(),
+            settled_at: now_secs(),
+            citation,
+            wrote_dossier: scan.write_hits > 0,
+            reask: reask::tally(view),
+            context_used: view.context_used,
+            context_size: view.context_size,
+            fidelity,
+        },
+    );
 }
 
-/// Flattens a reduced transcript into scannable segments.
+// ---------------------------------------------------------------------------
+// Transcript adapters
+// ---------------------------------------------------------------------------
+
+/// Flattens a reduced ACP transcript into scannable, provenanced segments.
 ///
 /// **`Role::User` maps to `InjectedPrompt`.** The seeded step prompt arrives
 /// as the synthetic user message (ADR-0029), so it has to be excluded or the
@@ -153,18 +217,28 @@ pub fn observe_acp_session(app: &App, conversation_id: &str, models: &fartcode_a
 /// session may read as not-cited. Conservative in the direction that
 /// matters — a metric that under-reports is recoverable, one that flatters
 /// itself is not.
-fn acp_view(models: &fartcode_acp::LiveModels) -> TranscriptView<'_> {
+pub fn acp_view(models: &fartcode_acp::LiveModels) -> TranscriptView<'_> {
     use fartcode_acp::transcript::{ToolItemKind, TranscriptItem};
 
     let mut segments: Vec<Segment<'_>> = Vec::new();
 
     fn push_tool<'a>(out: &mut Vec<Segment<'a>>, tool: &'a fartcode_acp::transcript::ToolCallItem) {
+        // A shell call's intent is read off the command by
+        // `classify_shell`, so `git add docs/features/x.md` — the staging
+        // the seeded prompt's own instruction leads to — is authorship,
+        // while `rg docs/features/`, the read the seeded skill teaches, is
+        // a real citation. Scored flat, the first was a citation and the
+        // second was nothing.
         let source = match tool.kind {
             ToolItemKind::ReadToolCall | ToolItemKind::SearchToolCall => SegmentSource::ToolRead,
             ToolItemKind::CreateFileToolCall
             | ToolItemKind::ModifyFileToolCall
             | ToolItemKind::DeleteFileToolCall => SegmentSource::ToolWrite,
-            ToolItemKind::ExecuteToolCall => SegmentSource::ToolExec,
+            ToolItemKind::ExecuteToolCall => tool
+                .command
+                .as_deref()
+                .map(|command| classify_shell(command).source())
+                .unwrap_or(SegmentSource::ToolExec),
             _ => SegmentSource::Other,
         };
         // Fields that can name a path. `content` / `new_text` / `old_text`
@@ -231,49 +305,47 @@ fn acp_view(models: &fartcode_acp::LiveModels) -> TranscriptView<'_> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Capture — PTY
-// ---------------------------------------------------------------------------
-
-/// Records one settled agent-terminal session from the terminal's rolling
-/// scrollback.
+/// The agent terminal's rolling scrollback, decoded and de-ANSI'd, or
+/// `None` when there is no such terminal.
 ///
-/// **Everything a PTY session yields is [`Fidelity::Truncated`].** fartCode
-/// runs the agent CLI in a terminal and keeps a 64 KiB tail for reattach
-/// replay; there is no transcript, no roles, no tool-call structure, and the
-/// beginning of a long session has already been evicted. So a hit still
-/// counts (a mention is a mention) but a *miss* resolves to
-/// `Citation::Unknown`, never to "did not cite" — and no usage metadata
-/// exists on this path at all, so PTY sessions never enter the token
-/// contrast.
-pub fn observe_pty_session<R: tauri::Runtime>(
+/// Returned as owned text so the caller can borrow a [`TranscriptView`]
+/// from it across the settle.
+pub fn pty_scrollback<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
-    app: &App,
-    task_id: &str,
     terminal_id: &str,
-) {
+) -> Option<String> {
     use tauri::Manager as _;
 
-    let session = format!("pty:{terminal_id}");
-    let text = handle
-        .try_state::<Arc<crate::terminals::TerminalManager<R>>>()
-        .and_then(|terminals| terminals.tail(terminal_id))
-        .and_then(|b64| {
-            use base64::Engine as _;
-            base64::engine::general_purpose::STANDARD.decode(b64).ok()
-        })
-        .map(|bytes| strip_ansi(&String::from_utf8_lossy(&bytes)));
+    let tail = handle
+        .try_state::<Arc<crate::terminals::TerminalManager<R>>>()?
+        .tail(terminal_id)?;
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(tail)
+        .ok()?;
+    Some(strip_ansi(&String::from_utf8_lossy(&bytes)))
+}
 
-    let view = match text.as_deref() {
+/// A view over PTY scrollback.
+///
+/// **Everything here is unscannable and truncated, on purpose.** See
+/// [`SegmentSource::Unstructured`]: the tail echoes the bracket-pasted step
+/// prompt, which contains the dossier path and demonstrates both
+/// clarification tags, and there is no provenance left to exclude it with.
+/// So a PTY step yields `Citation::Unknown` and an unreadable re-ask
+/// observation rather than a hit it did not earn. Its tags are still
+/// counted — from the section it committed to the dossier, which carries no
+/// echo.
+pub fn pty_view(scrollback: Option<&str>) -> TranscriptView<'_> {
+    match scrollback {
         Some(text) => TranscriptView {
-            segments: vec![Segment::new(SegmentSource::Other, text)],
+            segments: vec![Segment::new(SegmentSource::Unstructured, text)],
             context_used: None,
             context_size: None,
             fidelity: Fidelity::Truncated,
         },
         None => TranscriptView::absent(),
-    };
-    record_for_task(app, task_id, &session, &view);
+    }
 }
 
 /// Removes CSI/OSC escape sequences so a path split by a colour change is
@@ -316,69 +388,6 @@ fn strip_ansi(input: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Shared recording path
-// ---------------------------------------------------------------------------
-
-fn record_for_task(app: &App, task_id: &str, session: &str, view: &TranscriptView<'_>) {
-    let issues = match app.issues.list_by_linked_task(task_id) {
-        Ok(issues) => issues,
-        Err(e) => {
-            tracing::warn!(task_id, error = %e, "telemetry: issue lookup failed");
-            return;
-        }
-    };
-    let settled_at = now_secs();
-    let reask = reask::tally(view);
-
-    for issue in issues {
-        // No dossier means nothing to cite — and the card never consented
-        // to one either. Skipping keeps the citation rate a statement about
-        // steps that HAD memory available, which is the only version of the
-        // number that answers "is this feature worth it".
-        let Some(rel) = issue
-            .dossier_path
-            .as_deref()
-            .map(str::trim)
-            .filter(|p| !p.is_empty())
-        else {
-            continue;
-        };
-        let paths = [rel.to_string()];
-        let targets = CitationTargets {
-            paths: &paths,
-            dir: dossiers::DOSSIER_DIR,
-        };
-        let (citation, _) = fartcode_telemetry::citations::verdict(view, &targets);
-
-        let observation = StepObservation {
-            project_id: issue.project_id.clone(),
-            issue_id: issue.id.clone(),
-            session: session.to_string(),
-            column: column_name(app, &issue),
-            settled_at,
-            citation,
-            reask,
-            context_used: view.context_used,
-            context_size: view.context_size,
-            fidelity: view.fidelity,
-        };
-
-        let mut log = load(app, &issue.project_id);
-        log.record(observation);
-        save(app, &issue.project_id, &log);
-    }
-}
-
-fn column_name(app: &App, issue: &Issue) -> String {
-    issue
-        .column_id
-        .as_deref()
-        .and_then(|id| app.columns.get(id).ok().flatten())
-        .map(|column| column.name)
-        .unwrap_or_default()
-}
-
-// ---------------------------------------------------------------------------
 // On-demand aggregation (the dashboard, #76)
 // ---------------------------------------------------------------------------
 
@@ -398,8 +407,14 @@ const MAX_DOSSIERS: usize = 200;
 /// somebody committed by accident.
 const MAX_DOSSIER_BYTES: u64 = 1024 * 1024;
 
-/// Builds the report. Blocking (SQLite + a bounded directory of small file
-/// reads) — callers must already be off the main thread.
+/// Builds the report. Blocking (SQLite + a bounded set of small file reads)
+/// — callers must already be off the main thread.
+///
+/// The window applies to **every** signal, not just the observations: cycles
+/// are filtered by landing time and dossier sections by the date in their
+/// heading, both inside `memory::compute`. A section whose heading carries
+/// no date is excluded and counted, because a report labelled "the last 90
+/// days" that silently spans all history is a wrong number, not a rough one.
 pub fn memory_value(app: &App, project_id: &str, window_days: u32) -> MemoryValue {
     let since = now_secs() - i64::from(window_days) * 86_400;
     let log = load(app, project_id);
@@ -420,18 +435,19 @@ pub fn memory_value(app: &App, project_id: &str, window_days: u32) -> MemoryValu
     issues.truncate(MAX_DOSSIERS);
 
     let mut cycles: Vec<FeatureCycle> = Vec::new();
-    let mut dossier_tallies: Vec<ReAskTally> = Vec::new();
+    let mut dossier_tallies: Vec<DatedTally> = Vec::new();
     let mut dossiers_scanned = 0u32;
+
+    // Derived from the heading the appender writes, not spelled out again:
+    // one string, so a rename cannot leave this reading a section that no
+    // longer exists.
+    let timeline = dossiers::TIMELINE_HEADING.trim_start_matches("## ");
 
     for issue in &issues {
         let Some(content) = read_dossier(app, issue) else {
             continue;
         };
         dossiers_scanned += 1;
-        // Derived from the heading the appender writes, not spelled out
-        // again: one string, so a rename cannot leave this reading a
-        // section that no longer exists.
-        let timeline = dossiers::TIMELINE_HEADING.trim_start_matches("## ");
         for section in dossiers::sections(&content) {
             if section.heading == timeline {
                 let events = time_to_land::parse_timeline(&section.body);
@@ -445,7 +461,10 @@ pub fn memory_value(app: &App, project_id: &str, window_days: u32) -> MemoryValu
                 // clarification.
                 let tally = reask::tally_text(&section.body);
                 if !tally.is_silent() {
-                    dossier_tallies.push(tally);
+                    dossier_tallies.push(DatedTally {
+                        at: time_to_land::section_date(&section.heading),
+                        tally,
+                    });
                 }
             }
         }
@@ -454,6 +473,7 @@ pub fn memory_value(app: &App, project_id: &str, window_days: u32) -> MemoryValu
     memory::compute(MemoryInputs {
         project_id,
         window_days,
+        since,
         observations: &observations,
         dossier_tallies: &dossier_tallies,
         cycles,
@@ -485,6 +505,8 @@ fn too_big(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fartcode_telemetry::observation::ReAskObservation;
+    use fartcode_telemetry::reask::{TAG_HUMAN, TAG_MEMORY};
 
     #[test]
     fn ansi_stripping_rejoins_a_colourised_path() {
@@ -501,6 +523,39 @@ mod tests {
         assert_eq!(strip_ansi("tail\u{1b}["), "tail");
     }
 
+    /// The headline of the fix round, at the unit level: a terminal echoes
+    /// the seeded prompt, which names the dossier and shows both tags. The
+    /// PTY view must yield nothing from either.
+    #[test]
+    fn a_pty_view_of_an_echoed_prompt_scores_nothing() {
+        let echoed = format!(
+            "$ claude\r\n\u{1b}[2m> This feature keeps a decision log at \
+             `docs/features/oauth-login.md`.\u{1b}[0m\r\n\
+             > {TAG_MEMORY} <question> — <where>\r\n\
+             > {TAG_HUMAN} <question>\r\n\
+             thinking...\r\n"
+        );
+        let stripped = strip_ansi(&echoed);
+        let view = pty_view(Some(&stripped));
+        let paths = ["docs/features/oauth-login.md".to_string()];
+        let targets = CitationTargets {
+            paths: &paths,
+            dir: dossiers::DOSSIER_DIR,
+        };
+        let (citation, scan, fidelity) = fartcode_telemetry::citations::verdict(&view, &targets);
+        assert_eq!(citation, fartcode_telemetry::Citation::Unknown);
+        assert_eq!(scan, fartcode_telemetry::CitationScan::default());
+        assert_eq!(fidelity, Fidelity::Truncated);
+        assert_eq!(reask::tally(&view), ReAskObservation::Unreadable);
+    }
+
+    #[test]
+    fn no_scrollback_is_an_absent_view() {
+        let view = pty_view(None);
+        assert!(view.segments.is_empty());
+        assert_eq!(view.fidelity, Fidelity::Absent);
+    }
+
     #[test]
     fn the_kv_key_is_project_scoped() {
         assert_eq!(key("prj_1"), "telemetry:memory:prj_1");
@@ -513,17 +568,18 @@ mod tests {
     #[test]
     fn the_log_round_trips_through_versioned_json() {
         let mut log = ObservationLog::default();
-        log.record(StepObservation {
+        log.push(StepObservation {
             project_id: "prj_1".into(),
             issue_id: "iss_1".into(),
             session: "acp:c1".into(),
             column: "Plan".into(),
             settled_at: 42,
             citation: fartcode_telemetry::Citation::CitedRead,
-            reask: ReAskTally {
+            wrote_dossier: true,
+            reask: ReAskObservation::Scanned(fartcode_telemetry::ReAskTally {
                 memory_answered: 2,
                 human_asked: 1,
-            },
+            }),
             context_used: Some(1_000),
             context_size: Some(200_000),
             fidelity: Fidelity::Full,
@@ -531,27 +587,10 @@ mod tests {
         let json = fartcode_core::db::versioned_json::serialize_versioned(&StoredLog(log.clone()))
             .unwrap();
         assert!(json.contains("\"version\":1"), "{json}");
-        let back = fartcode_core::db::versioned_json::parse_versioned::<StoredLog>(
-            "telemetry_memory",
-            Some(&json),
-        )
-        .unwrap();
-        assert_eq!(back.0, log);
+        assert_eq!(parse_log(Some(&json)), log);
 
         // Never throws: junk and absence both read as an empty log.
-        assert!(
-            fartcode_core::db::versioned_json::parse_versioned::<StoredLog>(
-                "telemetry_memory",
-                Some("{not json"),
-            )
-            .is_none()
-        );
-        assert!(
-            fartcode_core::db::versioned_json::parse_versioned::<StoredLog>(
-                "telemetry_memory",
-                None,
-            )
-            .is_none()
-        );
+        assert_eq!(parse_log(Some("{not json")), ObservationLog::default());
+        assert_eq!(parse_log(None), ObservationLog::default());
     }
 }
