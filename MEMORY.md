@@ -4,6 +4,37 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## #76 memory value dashboard LANDED (2026-08-09) — E19 CLOSED (#69)
+
+732c391 + 73de08e. Memory pane at settings → project → Memory renders
+#73's four signals AS STATES: Unknown/Insufficient/NoData/SinglePoint are
+honest blanks (headline "no memory signal yet", never "0 re-explanations
+avoided"); the time-to-land caveat renders verbatim from the payload's
+`caveat` field, unconditionally; no sparkline/arrow for SinglePoint.
+- Backend extension: `TimeToLandKind::Trend` gained `landed_hours`
+  (landing-ordered cycle hours) so the §8g sparkline is real data, not
+  glyphs fabricated from two medians. Series lives INSIDE the
+  caveat-welded private type; Copy dropped from TimeToLand(Kind), read()
+  clones; compile_fail doctest intact.
+- Wire format: the tagged telemetry enums (TimeToLandKind, ReAskRate,
+  TokensSaved) now serialize variant FIELDS camelCase
+  (`rename_all_fields`) — verified nothing persists these shapes; the
+  dashboard is the only consumer.
+- SettingsModal section parsing generalized to `project:<id>[:<child>]`;
+  Memory joins Columns as a nav child.
+- Review round: 7 findings, 6 confirmed, 1 refuted. Fixed: citations row
+  dropped `unknownWithHit` — the excluded-but-cited count that makes the
+  rate a floor travels with the exclusion now.
+- DESIGN DEVIATIONS listed on #76 for design review (do not auto-fix):
+  "last 90 days" vs frame's "this month" (window is 90d — "this month"
+  would be false, and the test certifies current copy); prose sentences in
+  mono value slots for empty states; pre-existing TREND_CAVEAT copy vs
+  §8g wording (ADR-0038 vs frame conflict); dangling "Memory · " /
+  "Columns · " title when a project is deleted mid-view.
+Suites: core 306, app 212 across suites, telemetry 65 (+1 doctest),
+frontend 242. fmt + clippy clean. One fartcode-app lib test flaked once
+(103/1) and passed clean on re-run — unidentified, watch for recurrence.
+
 ## #70 feature dossiers: file lifecycle LANDED (2026-08-09) — E19-01
 
 ADR-0038 items 1–2, backend only. Migration 0009 adds
