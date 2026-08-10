@@ -67,6 +67,64 @@ Fixed in passing: `tests/migrations.rs` and `tests/db_integration.rs`
 migration COUNTS had been stale since #66 added 0008 (both binaries red
 on clean main); now 10.
 
+## E19-04/05/06 LANDED (2026-08-09) — #73, #74, #75 closed; only #76 left in E19
+
+#74 consent card (99878b5 + 89881cf): THE switch that turns dossiers on —
+everything before it was inert (fail-closed None). Gate now lives in
+store/dossierConsent.ts with the card rendered app-level, awaited by ALL
+THREE entries (board enterGated, taskPipeline.enterColumn, CardDetail
+dispatch). Frontend 213.
+
+#75 card detail + ⌘K (a6a075e + e88fe26): §8f Dossier group, §8h feature
+rows, PALETTE_HIDDEN_TYPES removed. Core 302, frontend 229.
+
+#73 telemetry (0e5c1c6 + b1cd345): four local signals; new Db::kv_update
+for atomic RMW. Telemetry 64, core 306, app 212.
+
+THREE RULES THIS ROUND PAID FOR — all found by review, all would have
+shipped:
+1. A CONSENT DECISION MUST BE BOUND TO THE QUESTION ASKED, never to
+   ambient state. #74 wrote the answer against the CURRENTLY selected
+   project (BoardView is not remounted on project switch), so answering in
+   A could grant consent for B — or flip a B that had DECLINED — then
+   dispatch A's card into an unviewed project. And the backdrop click,
+   which means "nothing happened" on every other overlay in this app,
+   declined permanently AND dispatched. Now: ask carries its projectId,
+   withdrawn on project change; backdrop inert (Onboarding precedent).
+2. A METRIC THAT CAN ONLY FLATTER ITSELF IS WORSE THAN NONE. #73's
+   injected-prompt exclusion was right for ACP and the PTY path (the
+   MAINSTREAM one) flattened scrollback into one unprovenanced segment —
+   the echoed seeded prompt contains the dossier path AND both tag
+   literals, so citations read 100% by construction and re-ask a
+   fabricated 50%. Fixed by making unstructured scrollback UNSCANNABLE
+   rather than masking a reconstructed span (a TUI reflows/redraws/
+   truncates its echo, so a partial match silently restores the bug).
+   Corollary now enforced: the TEACHING text must not parse as the thing
+   it teaches — skills.rs asserts its own prompt tallies to zero.
+3. A FIXTURE THAT HAND-BUILDS THE ARTIFACT CERTIFIES A FICTION. #75's
+   tests injected a `· settled` line and claimed the appender wrote it —
+   but on the SEEDED board no step ever writes one (both agent-step
+   columns are on_settle: Advance; StepSettled fires only on Hold arms),
+   so every step rendered as permanently `running · 3w` with a live
+   ticker. Fixtures now drive settle_issues_for_task for real.
+
+Also: three readers of the dossier file now share ONE anchor
+(dossiers::timeline_block) — #75's viewer had resolved the Timeline block
+by heading text while the appender uses the sentinel, so an agent writing
+a bare `## Timeline` in prose stole the block.
+
+DEFERRED WITH REASONING, not forgotten: #83 (`· landed` needs base-ref
+ancestry — working-tree presence is not ancestry, and answering it right
+means base-ref resolution + git cat-file per keystroke). §8f artifact-diff
+rows still blocked on a board_columns artifact field + migration — TWO
+tickets have now bumped into it, worth its own.
+
+NEXT: #76 memory value dashboard (§8g) is the last E19 ticket, then close
+epic #69. It renders #73's four signals — the labels now carry Unknown/
+Insufficient/Estimated states and the time-to-land caveat is structurally
+inseparable from the value, so the dashboard MUST render those states
+rather than coercing them to numbers.
+
 ## E19-02 + E19-03 LANDED (2026-08-09) — #71, #72 closed
 
 #71 (a5f24c6 + 2ae341e): `.claude/skills/feature-log/` + one AGENTS.md
