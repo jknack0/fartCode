@@ -16,6 +16,24 @@
 //! mismatch is a scaffold on disk older than the running app, which
 //! [`seed`] detects from the version recorded in the file and repairs.
 //!
+//! **v2 adds a third party to that agreement** (E19-04, #73). ADR-0038
+//! item 7's re-ask signal needs steps to mark clarifications as answered
+//! from memory or put back to the human, and the ADR says so as a
+//! step-prompt convention "versioned with the skill". So both texts now
+//! teach the tags — and they teach them by interpolating
+//! [`fartcode_telemetry::reask::TAG_MEMORY`] and
+//! [`fartcode_telemetry::reask::TAG_HUMAN`], the very constants the parser
+//! matches on. A tag the prompt asks for that the reader does not
+//! recognize is not a bug this code can have.
+//!
+//! One spec resolution: the ADR scopes the tags to "the grill steps", but
+//! there is no such thing here — [`append_instruction`] is one text used by
+//! every `agent_step` column, and columns are user-renameable, so "is this
+//! the grill?" is not a question the app can answer. The instruction is
+//! made **conditional** instead ("when this step asked you to clarify
+//! something"), which reaches grill steps without inventing a column
+//! taxonomy, and leaves a step that clarified nothing writing nothing.
+//!
 //! The same three rules as `crate::dossiers`, because this writes into the
 //! same stranger's repository:
 //!
@@ -47,6 +65,8 @@
 
 use std::path::Path;
 
+use fartcode_telemetry::reask::{TAG_HUMAN, TAG_MEMORY};
+
 use crate::dossiers::{
     atomic_write, inline, is_temp_name, DOSSIER_DIR, TIMELINE_HEADING, TIMELINE_SENTINEL,
 };
@@ -62,7 +82,13 @@ use crate::Error;
 /// project with an older scaffold rewrites the files fartCode owns and
 /// leaves everything else alone. Do not bump for typo fixes — a rewrite is
 /// a diff in someone's repository.
-pub const FEATURE_LOG_VERSION: u32 = 1;
+///
+/// **v2 (E19-04, #73)** added the clarification tags
+/// ([`fartcode_telemetry::reask`]) to both halves. ADR-0038 item 7's
+/// re-ask signal "requires the grill steps to tag questions as
+/// memory-answered vs. human-asked (a step-prompt convention, versioned
+/// with the skill)" — this is that version.
+pub const FEATURE_LOG_VERSION: u32 = 2;
 
 /// Repo-relative directory of the seeded skill.
 pub const SKILL_DIR: &str = ".claude/skills/feature-log";
@@ -545,6 +571,26 @@ changelog: the diff is already in git. What belongs here is the decision, the
 tradeoff, and the alternative you rejected — especially the one a future reader
 would otherwise try again.
 
+## Recording clarifications
+
+If the step asked you to clarify something before you could proceed, add one
+line per question saying **where the answer came from**:
+
+```markdown
+{TAG_MEMORY} Which auth provider? — answered from {DOSSIER_DIR}/oauth-login.md
+{TAG_HUMAN} Should refresh tokens rotate?
+```
+
+`{TAG_MEMORY}` means you found the answer in this project's own memory — a
+dossier, a PRD, the repository — without spending the human's attention.
+`{TAG_HUMAN}` means you had to ask them.
+
+Tag only questions you actually had. A step that needed no clarification writes
+none of these lines, and that is the correct output; an invented tag is worse
+than a missing one, because fartCode counts them locally to tell you whether
+this convention is earning its keep, and a wrong count is worse than no count.
+Nothing you write here leaves your machine.
+
 ## Append discipline
 
 1. **Append only.** Add your section at the END. Never rewrite, reorder,
@@ -574,11 +620,13 @@ would otherwise try again.
 /// refused to write, which is worse than the app writing it: it arrives in
 /// the user's pull request with no trace of who asked for it.
 ///
-/// Wording is load-bearing in two places. It says *append* and names the
-/// section fartCode owns, so a helpful agent does not tidy the file. And it
+/// Wording is load-bearing in three places. It says *append* and names the
+/// section fartCode owns, so a helpful agent does not tidy the file. It
 /// says skipping is fine, because ADR-0038 item 2 promises "a skipped
 /// append leaves the facts intact — only the reasoning section is missing":
-/// this is never a nag and never a failure.
+/// this is never a nag and never a failure. And since v2 it teaches the
+/// clarification tags by interpolating the parser's own constants, so the
+/// text asked for and the text read are one string.
 ///
 /// `column_name` is user-controlled (columns are renameable) and
 /// `dossier_rel` is app-generated; both are flattened to one line so
@@ -609,11 +657,19 @@ pub fn append_instruction_version(column_name: &str, dossier_rel: &str, version:
          - Rejected: <alternative> — <why not>\n\
          ```\n\
          \n\
+         If this step asked you to clarify something, add one line per \
+         question inside that section, saying where the answer came from:\n\
+         \n\
+         ```markdown\n\
+         {TAG_MEMORY} <question> — <where in project memory you found it>\n\
+         {TAG_HUMAN} <question you had to put to the human>\n\
+         ```\n\
+         \n\
          Append only: never rewrite, reorder, or delete existing sections, and \
          never edit the `{TIMELINE_HEADING}` section or its \
          `{TIMELINE_SENTINEL}` sentinel — the app owns those. If this step \
          made no decision worth recording, skip it; a missing section is fine, \
-         an invented one is not.\n\
+         an invented one is not, and the same goes for the tags above.\n\
          \n\
          (feature-log convention v{version} — full conventions in `{SKILL_FILE}`.)"
     )
@@ -1059,6 +1115,64 @@ mod tests {
             append_instruction_version("Plan", "docs/features/x.md", v + 1)
                 .contains(&format!("feature-log convention v{}", v + 1))
         );
+    }
+
+    // -- the clarification tags (v2, E19-04 #73; ADR-0038 item 7) ---------
+
+    /// Both texts teach the tags, and they teach the *exact* literals
+    /// `fartcode_telemetry::reask` matches — so the reader cannot be asked
+    /// for a format it does not recognize.
+    #[test]
+    fn both_halves_teach_the_tags_the_parser_actually_reads() {
+        let prompt = append_instruction("Grill", "docs/features/oauth-login.md");
+        let skill = skill_body(FEATURE_LOG_VERSION);
+        for text in [&prompt, &skill] {
+            assert!(text.contains(TAG_MEMORY), "{text}");
+            assert!(text.contains(TAG_HUMAN), "{text}");
+        }
+        // The parser's own reading of the taught format finds one of each.
+        let parsed = fartcode_telemetry::reask::tally_text(&prompt);
+        assert_eq!(parsed.memory_answered, 1, "{prompt}");
+        assert_eq!(parsed.human_asked, 1, "{prompt}");
+    }
+
+    /// Never a nag: a step with no clarification is told, in both texts,
+    /// that writing nothing is the right answer. A metric that pressures
+    /// agents into inventing tags measures the pressure, not the memory.
+    #[test]
+    fn the_tags_are_optional_and_say_so() {
+        let prompt = append_instruction("Grill", "docs/features/x.md");
+        assert!(prompt.contains("the same goes for the tags"), "{prompt}");
+        let skill = skill_body(FEATURE_LOG_VERSION);
+        assert!(
+            skill.contains("Tag only questions you actually had"),
+            "{skill}"
+        );
+        assert!(skill.contains("an invented tag is worse"), "{skill}");
+        // And the honesty about where the counts go (ADR-0038 item 7).
+        assert!(
+            skill.contains("Nothing you write here leaves your machine"),
+            "{skill}"
+        );
+    }
+
+    /// v2 exists because the tags landed. A project whose scaffold predates
+    /// them is stale by version, and the reseed path — the whole reason
+    /// [`FEATURE_LOG_VERSION`] is a number — refreshes it in place rather
+    /// than leaving its agents taught a convention without the tags.
+    #[test]
+    fn a_v1_scaffold_is_stale_and_the_reseed_brings_the_tags() {
+        let dir = repo();
+        seed_version(dir.path(), 1).unwrap();
+        let report = seed(dir.path()).unwrap();
+        assert_eq!(report.skill, Seeded::Updated { from: 1 });
+        assert_eq!(report.pointer, Seeded::Updated { from: 1 });
+        let skill = read(&dir, SKILL_FILE);
+        assert!(
+            skill.contains(&format!("{SKILL_MARKER}{FEATURE_LOG_VERSION}")),
+            "{skill}"
+        );
+        assert!(skill.contains(TAG_MEMORY), "{skill}");
     }
 
     #[test]

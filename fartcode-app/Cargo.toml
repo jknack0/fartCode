@@ -20,6 +20,7 @@ agent-client-protocol-schema = { workspace = true }
 fartcode-providers = { path = "../fartcode-providers" }
 fartcode-git = { path = "../fartcode-git" }
 fartcode-terminal = { path = "../fartcode-terminal" }
+fartcode-telemetry = { path = "../fartcode-telemetry" }
 tauri-plugin-shell = { workspace = true }
 tauri-plugin-process = { workspace = true }
 tauri-plugin-dialog = { workspace = true }

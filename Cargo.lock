@@ -1077,6 +1077,7 @@ dependencies = [
  "fartcode-core",
  "fartcode-git",
  "fartcode-providers",
+ "fartcode-telemetry",
  "fartcode-terminal",
  "parking_lot",
  "rusqlite",
@@ -1103,6 +1104,7 @@ dependencies = [
  "base64 0.22.1",
  "fartcode-git",
  "fartcode-providers",
+ "fartcode-telemetry",
  "fartcode-terminal",
  "glob",
  "keyring",
@@ -1175,6 +1177,10 @@ version = "0.1.0"
 [[package]]
 name = "fartcode-telemetry"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "fartcode-terminal"

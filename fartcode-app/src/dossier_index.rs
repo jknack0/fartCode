@@ -115,6 +115,11 @@ pub fn reindex_issue(app: &App, issue: &Issue) {
 /// copies is THIS CARD'S and was modified most recently. `None` when neither
 /// qualifies.
 ///
+/// Shared with `crate::telemetry` (E19-04, #73), which reads the same file
+/// for time-to-land and the durable half of the re-ask signal. Reused rather
+/// than re-derived so search and telemetry can never disagree about which
+/// file a card owns — the ownership rule below is the whole point.
+///
 /// **Ownership, not existence.** `docs/features/` is a common hand-written
 /// convention, so a file sitting at the card's slug path in the main
 /// checkout is not evidence that it is the card's dossier — it may be a
@@ -133,7 +138,7 @@ pub fn reindex_issue(app: &App, issue: &Issue) {
 /// that actually has the latest sections; the worktree wins ties and any
 /// case where metadata cannot be read, since that is where an agent is
 /// actively writing.
-fn dossier_source(app: &App, issue: &Issue, rel: &str) -> Option<PathBuf> {
+pub(crate) fn dossier_source(app: &App, issue: &Issue, rel: &str) -> Option<PathBuf> {
     let live = issue
         .linked_task_id
         .as_deref()
