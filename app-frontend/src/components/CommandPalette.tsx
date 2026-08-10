@@ -212,7 +212,7 @@ export default function CommandPalette() {
           // Until the card resolves, the indexed heading is the honest
           // label — it is what the row matched on.
           title: title ? `${columnOfHeading(r.title)} — ${title}` : r.title,
-          hint: `${FEATURE_ITEM_TYPE}${ref ? ` · ${ref}` : ""}`,
+          hint: `${FEATURE_ITEM_TYPE}${ref ? ` · ${ref}` : ""}${feature?.landed === true ? " · landed" : ""}`,
           hintIsChord: false,
           feature: true,
           run: () => {

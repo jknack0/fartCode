@@ -34,6 +34,7 @@ use tauri::State;
 use fartcode_core::dossier_index;
 use fartcode_core::dossier_view::{self, DossierSection, TimelineEntry};
 use fartcode_core::issues::Issue;
+use fartcode_core::projects::ProjectStore;
 
 use crate::app::App;
 use crate::commands::git::off_main_thread;
@@ -62,17 +63,8 @@ pub struct DossierDto {
 ///
 /// The row's TITLE half comes from the indexed section heading and its
 /// ROUTE from `search`'s own `issueId`; this fills in only what neither
-/// carries — the feature's own title and its display ref.
-///
-/// **No `landed` field, deliberately.** §8h appends ` · landed` "once
-/// merged", and the app cannot answer that yet: the only cheap signal is
-/// whether the dossier sits in the project checkout, which is a
-/// WORKING-TREE fact, not an ancestry one — it is equally true of a branch
-/// someone has checked out, or a file that was never merged at all. A
-/// correct answer is a committed-content query against the project's base
-/// ref (`git cat-file -e <base>:<path>`), and the app has no base-ref
-/// resolver; adding one, plus a subprocess per hit per keystroke, is its
-/// own ticket. Rendering nothing beats rendering a guess.
+/// carries — the feature's own title, its display ref, and the ` · landed`
+/// ancestry answer.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeatureRowDto {
@@ -87,6 +79,14 @@ pub struct FeatureRowDto {
     pub title: String,
     /// The card's tracker URL, for the `#id` the board already derives.
     pub external_ref: Option<String>,
+    /// §8h's ` · landed` (#83): `true` only when the card's dossier is
+    /// committed in the project base ref's tree — a committed-content
+    /// answer (`git cat-file -e <base>:<path>`), never the working-tree
+    /// presence E19-06 rejected (a checked-out branch reads the same).
+    /// `None` is UNKNOWN — no dossier path, no base ref, a failed probe —
+    /// and the palette renders the tag on a literal `true` only: unknown
+    /// is never a guess.
+    pub landed: Option<bool>,
 }
 
 /// The card's dossier, or `None` when it has none.
@@ -142,16 +142,22 @@ pub async fn dossier_feature_rows(
 /// [`dossier_feature_rows`]'s whole body. Public for the same reason
 /// [`read_dossier`] is: the integration suite drives it against a real App.
 pub fn feature_rows(app: &App, item_ids: &[String]) -> Vec<FeatureRowDto> {
-    let mut cards: HashMap<&str, Option<Issue>> = HashMap::new();
+    // Card id → (card, its ` · landed` answer): the ancestry probe is
+    // resolved PER CARD (AC #83), so a dossier matching N sections still
+    // costs one git subprocess.
+    let mut cards: HashMap<&str, Option<(Issue, Option<bool>)>> = HashMap::new();
     let mut out = Vec::with_capacity(item_ids.len());
     for item_id in item_ids {
         let Some(issue_id) = dossier_index::issue_id_of(item_id) else {
             continue;
         };
-        let card = cards
-            .entry(issue_id)
-            .or_insert_with(|| app.issues.get(issue_id).ok().flatten());
-        let Some(issue) = card else {
+        let card = cards.entry(issue_id).or_insert_with(|| {
+            app.issues.get(issue_id).ok().flatten().map(|issue| {
+                let landed = landed_in_base(app, &issue);
+                (issue, landed)
+            })
+        });
+        let Some((issue, landed)) = card else {
             continue;
         };
         out.push(FeatureRowDto {
@@ -159,6 +165,7 @@ pub fn feature_rows(app: &App, item_ids: &[String]) -> Vec<FeatureRowDto> {
             issue_id: issue.id.clone(),
             title: issue.title.clone(),
             external_ref: issue.external_ref.clone(),
+            landed: *landed,
         });
     }
     out
@@ -171,6 +178,24 @@ fn dossier_rel(issue: &Issue) -> Option<&str> {
         .as_deref()
         .map(str::trim)
         .filter(|p| !p.is_empty())
+}
+
+/// §8h's ` · landed` ancestry answer (#83): whether THIS card's dossier is
+/// committed in the project base ref's tree. One git probe per card per
+/// call — `feature_rows` groups by card, so a dossier matching N sections
+/// still costs one subprocess, and the ⌘K batch (one call per debounced
+/// keystroke, capped at the visible hit count) bounds the total.
+///
+/// Existence, not ownership: `cat-file -e` answers "is this path in the
+/// base tree", not "is it OUR dossier" — a hand-written file at the slug
+/// path would read as landed. Accepted: dossier slugs embed the card id,
+/// so a foreign file at the same path is a deliberate collision, not an
+/// accident; parsing committed blobs for the marker would cost a second
+/// subprocess for a case that does not occur in practice.
+fn landed_in_base(app: &App, issue: &Issue) -> Option<bool> {
+    let rel = dossier_rel(issue)?;
+    let project = app.projects.get(&issue.project_id).ok().flatten()?;
+    fartcode_git::remote::path_in_ref(&project.path, project.base_ref(), rel)
 }
 
 #[cfg(test)]

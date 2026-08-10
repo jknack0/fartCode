@@ -167,12 +167,14 @@ fn live_copy(app: &App, issue: &Issue, rel: &str) -> Option<PathBuf> {
 /// arrived when the feature branch merged and the checkout was pulled
 /// (ADR-0038 item 5, "merge is publication").
 ///
-/// **Presence here is not proof of a merge**, which is why nothing renders
-/// a ` · landed` tag off it (E19-06): the same file is present while
-/// someone has the feature branch checked out, and absent on a merge nobody
-/// has pulled. It is a freshness candidate, not an ancestry answer. Same
-/// ownership rule as everywhere else — a file at the slug path in the main
-/// checkout is only OURS when [`dossiers::inspect`] says so.
+/// **Presence here is not proof of a merge** (E19-06): the same file is
+/// present while someone has the feature branch checked out, and absent on
+/// a merge nobody has pulled. It is a freshness candidate, not an ancestry
+/// answer — the ` · landed` tag (#83) instead comes from
+/// `commands::dossiers::landed_in_base`, a committed-content probe against
+/// the base ref. Same ownership rule as everywhere else — a file at the
+/// slug path in the main checkout is only OURS when [`dossiers::inspect`]
+/// says so.
 fn landed_copy(app: &App, issue: &Issue, rel: &str) -> Option<PathBuf> {
     app.projects
         .get(&issue.project_id)

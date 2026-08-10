@@ -584,3 +584,56 @@ fn a_card_without_a_dossier_indexes_nothing_and_never_fails() {
     dossier_index::reindex_all(&fx.app);
     assert_eq!(fx.feature_rows(), 0);
 }
+
+// ---------------------------------------------------------------------------
+// 7. #83: ` · landed` is a base-ref ancestry answer
+// ---------------------------------------------------------------------------
+
+/// §8h's tag tracks the dossier's presence in the BASE branch's tree, never
+/// the working tree: uncommitted (worktree-only) reads Some(false), a commit
+/// on main flips it to Some(true), and a card with no dossier path stays
+/// UNKNOWN (None) — the palette renders nothing on anything but `true`.
+#[test]
+fn feature_rows_marks_landed_only_when_committed_in_base() {
+    let fx = fixture();
+    let (issue, task_id) = fx.card_mid_step("Invite vetting");
+    let rel = issue.dossier_path.clone().expect("dossier born");
+    let ids = vec![format!("{}#Plan — 2026-08-07", issue.id)];
+
+    // Worktree-only: the base ref resolves, the path is not in it.
+    let rows = fartcode_app_lib::commands::dossiers::feature_rows(&fx.app, &ids);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].landed,
+        Some(false),
+        "uncommitted is a definitive no"
+    );
+
+    // Commit the dossier to main (the fixture's base ref) → landed.
+    let root = fx.project_root();
+    let landed = root.join(&rel);
+    std::fs::create_dir_all(landed.parent().unwrap()).unwrap();
+    std::fs::copy(fx.worktree_of(&task_id).join(&rel), &landed).unwrap();
+    git_ok(&root, &["add", "."]);
+    git_ok(
+        &root,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=t@fartCode.dev",
+            "commit",
+            "-m",
+            "land it",
+        ],
+    );
+
+    let rows = fartcode_app_lib::commands::dossiers::feature_rows(&fx.app, &ids);
+    assert_eq!(rows[0].landed, Some(true), "committed in base is landed");
+
+    // A card with no dossier path: unknown, never a guess.
+    let plain = fx.new_issue("No dossier yet");
+    let ids = vec![format!("{}#Plan — 2026-08-07", plain.id)];
+    let rows = fartcode_app_lib::commands::dossiers::feature_rows(&fx.app, &ids);
+    assert_eq!(rows[0].landed, None);
+}

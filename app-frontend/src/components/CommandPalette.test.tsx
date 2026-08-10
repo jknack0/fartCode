@@ -8,9 +8,9 @@
 // feature is live or landed, INCLUDING while (or if) the title lookup
 // never resolves.
 //
-// §8h's ` · landed` suffix is not here: it needs an ancestry answer the app
-// cannot give yet, and a wrong tag is worse than no tag (see FeatureRowDto
-// in fartcode-app/src/commands/dossiers.rs).
+// §8h's ` · landed` suffix (#83): a committed-content answer against the
+// base ref drives it — rendered on a literal `true` only, since unknown is
+// never a guess (see FeatureRowDto in fartcode-app/src/commands/dossiers.rs).
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -113,6 +113,31 @@ describe("feature hits", () => {
   /// the row into the project/task runner, which matches neither — so ↵
   /// closed the palette and opened nothing. The hit's own `issueId` makes
   /// the row routable from the first frame.
+  /// #83: ` · landed` rides the right meta, and only on a literal `true` —
+  /// a definitive no AND an unknown answer both render nothing.
+  it("appends ` · landed` only on a true ancestry answer", async () => {
+    vi.mocked(dossierFeatureRows).mockResolvedValue([
+      row({ externalRef: "https://github.com/o/r/issues/392", landed: true }),
+    ]);
+    await searchFor("vetting");
+    await screen.findByText("feature · #392 · landed");
+  });
+
+  it("renders no landed tag on a definitive no or an unknown answer", async () => {
+    for (const landed of [false, null, undefined] as const) {
+      vi.mocked(dossierFeatureRows).mockResolvedValue([
+        row({ externalRef: "https://github.com/o/r/issues/392", landed }),
+      ]);
+      const { unmount } = render(<CommandPalette />);
+      fireEvent.change(screen.getByLabelText("Command palette"), {
+        target: { value: "vetting" },
+      });
+      await screen.findByText("feature · #392");
+      expect(screen.queryByText(/landed/)).toBeNull();
+      unmount();
+    }
+  });
+
   it("still opens the card detail when the title lookup returns nothing", async () => {
     vi.mocked(dossierFeatureRows).mockResolvedValue([]);
     await searchFor("vetting");

@@ -1329,11 +1329,12 @@ export function dossierRead(issueId: string): Promise<DossierDto | null> {
 }
 
 /** What a ⌘K `feature` hit needs beyond its indexed section heading and the
- * `issueId` the search hit already carries (§8h): the feature's own title
- * and the tracker ref the `#id` derives from.
+ * `issueId` the search hit already carries (§8h): the feature's own title,
+ * the tracker ref the `#id` derives from, and the ` · landed` answer.
  *
- * No `landed`: the tag needs an ancestry answer the app cannot give yet —
- * see `FeatureRowDto` in fartcode-app/src/commands/dossiers.rs. */
+ * `landed` is a committed-content answer against the project base ref
+ * (#83): render the tag on a literal `true` ONLY — null/undefined is
+ * unknown, never a guess. */
 export interface FeatureRowDto {
   /** Echoes the `search_index` item id asked about. */
   itemId: string;
@@ -1341,6 +1342,9 @@ export interface FeatureRowDto {
   /** The card's title — the "feature title" half of the row title. */
   title: string;
   externalRef: string | null;
+  /** §8h ` · landed` — true only when the dossier is committed in the base
+   * ref's tree; null/undefined = unknown (render nothing). */
+  landed?: boolean | null;
 }
 
 export function dossierFeatureRows(itemIds: string[]): Promise<FeatureRowDto[]> {

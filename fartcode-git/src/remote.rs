@@ -135,6 +135,21 @@ pub fn upstream_of(worktree: &Path) -> Option<String> {
     })
 }
 
+/// Whether `path` is committed in `ref_name`'s tree (`git cat-file -e
+/// <ref>:<path>`) — a committed-content answer, not a working-tree one.
+/// `Some(false)` is a definitive ABSENCE (the ref resolved; the path is
+/// not in it); `None` is UNKNOWN (the ref itself did not resolve, or git
+/// failed). Callers rendering an ancestry tag (#83's ` · landed`) must
+/// treat unknown as "render nothing" — never as a guess either way.
+pub fn path_in_ref(worktree: &Path, ref_name: &str, path: &str) -> Option<bool> {
+    let spec = format!("{ref_name}:{path}");
+    if git_stdout_ok(worktree, &["cat-file", "-e", &spec]).is_some() {
+        return Some(true);
+    }
+    // Absent path vs unresolvable ref: only the first is an answer.
+    git_stdout_ok(worktree, &["rev-parse", "--verify", "--quiet", ref_name]).map(|_| false)
+}
+
 /// `(ahead, behind)` commit counts vs the upstream. `(0, 0)` when there is
 /// no upstream (unpublished branch) — the footer renders counts only with
 /// one. Reference: `rev-list --count @{upstream}..HEAD` and its mirror.
@@ -208,6 +223,37 @@ mod tests {
         // Already published → publish refuses (footer hides the button).
         let err = publish(repo.path(), "origin").unwrap_err();
         assert!(err.to_string().contains("already has an upstream"));
+    }
+
+    #[test]
+    fn path_in_ref_answers_committed_content() {
+        let repo = repo_fixture();
+        let branch = branch_name(&repo);
+        let p = repo.path();
+        std::fs::create_dir_all(p.join("docs/features")).unwrap();
+        std::fs::write(p.join("docs/features/x.md"), "hi\n").unwrap();
+        git(p, &["add", "."]);
+        git(
+            p,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-m",
+                "d",
+            ],
+        );
+
+        assert_eq!(path_in_ref(p, &branch, "docs/features/x.md"), Some(true));
+        // Ref resolves, path absent — a definitive no.
+        assert_eq!(
+            path_in_ref(p, &branch, "docs/features/nope.md"),
+            Some(false)
+        );
+        // Unresolvable ref → unknown, never a guess.
+        assert_eq!(path_in_ref(p, "no-such-ref", "docs/features/x.md"), None);
     }
 
     #[test]
