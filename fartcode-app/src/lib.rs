@@ -232,6 +232,8 @@ pub fn run() {
             commands::view_state::get_view_state,
             commands::view_state::set_view_state,
             commands::search::search,
+            commands::dossiers::dossier_read,
+            commands::dossiers::dossier_feature_rows,
             commands::search::resource_sample,
             commands::search::get_resource_monitor_enabled,
             commands::search::set_resource_monitor_enabled,

@@ -111,9 +111,13 @@ pub fn reindex_issue(app: &App, issue: &Issue) {
     }
 }
 
-/// The dossier copy to index: whichever of the worktree and project-checkout
+/// The dossier copy to READ: whichever of the worktree and project-checkout
 /// copies is THIS CARD'S and was modified most recently. `None` when neither
 /// qualifies.
+///
+/// Shared with the card-detail read command (E19-06, #75) so the file ⌘K
+/// indexed and the file the card renders are the same bytes — a second
+/// resolver is a second answer to "which copy is current".
 ///
 /// **Ownership, not existence.** `docs/features/` is a common hand-written
 /// convention, so a file sitting at the card's slug path in the main
@@ -133,20 +137,9 @@ pub fn reindex_issue(app: &App, issue: &Issue) {
 /// that actually has the latest sections; the worktree wins ties and any
 /// case where metadata cannot be read, since that is where an agent is
 /// actively writing.
-fn dossier_source(app: &App, issue: &Issue, rel: &str) -> Option<PathBuf> {
-    let live = issue
-        .linked_task_id
-        .as_deref()
-        .and_then(|task_id| task_worktree(app, task_id))
-        .map(|root| join_rel(root, rel))
-        .filter(|p| dossiers::inspect(p, &issue.id) == dossiers::Occupant::OurDossier);
-    let landed = app
-        .projects
-        .get(&issue.project_id)
-        .ok()
-        .flatten()
-        .map(|project| join_rel(project.path, rel))
-        .filter(|p| dossiers::inspect(p, &issue.id) == dossiers::Occupant::OurDossier);
+pub(crate) fn dossier_source(app: &App, issue: &Issue, rel: &str) -> Option<PathBuf> {
+    let live = live_copy(app, issue, rel);
+    let landed = landed_copy(app, issue, rel);
 
     match (live, landed) {
         (Some(live), Some(landed)) => match (modified(&live), modified(&landed)) {
@@ -155,6 +148,33 @@ fn dossier_source(app: &App, issue: &Issue, rel: &str) -> Option<PathBuf> {
         },
         (live, landed) => live.or(landed),
     }
+}
+
+/// This card's dossier inside its live worktree, when it has one.
+fn live_copy(app: &App, issue: &Issue, rel: &str) -> Option<PathBuf> {
+    issue
+        .linked_task_id
+        .as_deref()
+        .and_then(|task_id| task_worktree(app, task_id))
+        .map(|root| join_rel(root, rel))
+        .filter(|p| dossiers::inspect(p, &issue.id) == dossiers::Occupant::OurDossier)
+}
+
+/// This card's dossier in the PROJECT CHECKOUT — the copy that only exists
+/// once the feature branch merged and the checkout was pulled (ADR-0038
+/// item 5, "merge is publication").
+///
+/// Crate-visible since E19-06 (#75): §8h's ` · landed` tag on a ⌘K feature
+/// hit is exactly this predicate. Same ownership rule as everywhere else —
+/// a file at the slug path in the main checkout is only OURS when
+/// [`dossiers::inspect`] says so.
+pub(crate) fn landed_copy(app: &App, issue: &Issue, rel: &str) -> Option<PathBuf> {
+    app.projects
+        .get(&issue.project_id)
+        .ok()
+        .flatten()
+        .map(|project| join_rel(project.path, rel))
+        .filter(|p| dossiers::inspect(p, &issue.id) == dossiers::Occupant::OurDossier)
 }
 
 fn modified(path: &Path) -> Option<std::time::SystemTime> {

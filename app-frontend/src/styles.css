@@ -888,6 +888,19 @@ button.danger:hover {
   color: var(--foreground-passive);
 }
 
+/* Feature hit (handoff v3 §8h): a dossier section. The title is human text
+   at the row-title size; the right meta is machine text at the meta floor.
+   Scoped to this row style — the rest of the palette keeps the legacy ramp
+   until the redesign reaches it. */
+.palette-results li.palette-feature .palette-title {
+  font-size: 12.5px;
+}
+
+.palette-results li.palette-feature .palette-hint {
+  font-size: 10.5px;
+  color: var(--meta);
+}
+
 /* empty-query legend row seated under the palette input */
 .palette > .palette-hint {
   margin: 0;
