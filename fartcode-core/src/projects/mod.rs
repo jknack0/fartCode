@@ -338,8 +338,18 @@ impl DbProjectStore {
             self.settings.as_ref(),
             &project,
         ) {
-            if pool.exists() && pool != project.path {
-                if let Err(e) = std::fs::remove_dir_all(&pool) {
+            // F8: canonicalize both sides — a symlink-aliased override can
+            // make the pool resolve to the repository itself.
+            let pool_c = std::fs::canonicalize(&pool).unwrap_or_else(|_| pool.clone());
+            let repo_c =
+                std::fs::canonicalize(&project.path).unwrap_or_else(|_| project.path.clone());
+            if pool.exists() && pool_c != repo_c {
+                // F2b: a half-finished adoption move can leave another
+                // project's worktrees inside this pool dir — never destroy
+                // them (this project's own rows were deleted above).
+                if self.pool_has_foreign_worktrees(&project.id, &pool_c)? {
+                    tracing::warn!(path = %pool.display(), "worktree pool teardown skipped: directory contains another project's worktrees");
+                } else if let Err(e) = std::fs::remove_dir_all(&pool) {
                     tracing::warn!(path = %pool.display(), error = %e, "worktree pool teardown failed (non-fatal)");
                 }
             }
@@ -349,6 +359,27 @@ impl DbProjectStore {
         Ok(())
     }
 }
+impl DbProjectStore {
+    /// F2b: does ANY other project have a `kind='worktree'` workspace row
+    /// whose (canonicalized) path lies inside `pool`? Component-safe
+    /// `starts_with` — never a string compare.
+    fn pool_has_foreign_worktrees(&self, project_id: &str, pool: &Path) -> Result<bool, Error> {
+        let paths: Vec<String> = self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT w.path FROM workspaces w
+                 JOIN tasks t ON t.workspace_id = w.id
+                 WHERE t.project_id != ?1 AND w.kind = 'worktree' AND w.path IS NOT NULL",
+            )?;
+            let rows = stmt.query_map([project_id], |row| row.get::<_, String>(0))?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })?;
+        Ok(paths.iter().any(|p| {
+            let c = std::fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p));
+            c.starts_with(pool)
+        }))
+    }
+}
+
 impl ProjectStore for DbProjectStore {
     fn create_local(&self, path: &Path, init_if_missing: bool) -> Result<Project, Error> {
         // Validate the directory (realpath so duplicate detection is exact).

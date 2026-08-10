@@ -15,7 +15,7 @@ use fartcode_core::projects::{
     worktrees::{EnsureWorktreeOptions, WorktreeManager},
     DbProjectStore, Project, ProjectStore, WorkspaceProviderKind,
 };
-use fartcode_core::settings::{DbSettingsStore, LocalProjectGroup, LOCAL_PROJECT};
+use fartcode_core::settings::{DbSettingsStore, LocalProjectGroup, ProjectSettings, LOCAL_PROJECT};
 use fartcode_git::{CliGit, GitOps};
 
 struct Fixture {
@@ -492,22 +492,26 @@ fn legacy_collision_fixture(
     .unwrap();
     drop(conn);
 
-    // Legacy shared pool: one worktree per project.
+    // Legacy shared pool: one worktree per project. Branch names are NESTED
+    // (`<branch_prefix>/<branch>`, production layout — see naming.rs) so the
+    // adoption move's nested-target dir creation is exercised (F1).
     let shared = worktrees_dir.join("ade");
     let git = CliGit;
-    git.branch_create(&repo1, "b1", "main").unwrap();
-    git.worktree_add(&repo1, &shared.join("b1"), "b1").unwrap();
-    git.branch_create(&repo2, "b2", "main").unwrap();
-    git.worktree_add(&repo2, &shared.join("b2"), "b2").unwrap();
+    git.branch_create(&repo1, "fartCode/b1", "main").unwrap();
+    git.worktree_add(&repo1, &shared.join("fartCode/b1"), "fartCode/b1")
+        .unwrap();
+    git.branch_create(&repo2, "fartCode/b2", "main").unwrap();
+    git.worktree_add(&repo2, &shared.join("fartCode/b2"), "fartCode/b2")
+        .unwrap();
     let conn = db.conn().lock().unwrap();
     conn.execute(
         "INSERT INTO workspaces (id, kind, path) VALUES ('w1', 'worktree', ?1)",
-        [shared.join("b1").to_string_lossy()],
+        [shared.join("fartCode/b1").to_string_lossy()],
     )
     .unwrap();
     conn.execute(
         "INSERT INTO workspaces (id, kind, path) VALUES ('w2', 'worktree', ?1)",
-        [shared.join("b2").to_string_lossy()],
+        [shared.join("fartCode/b2").to_string_lossy()],
     )
     .unwrap();
     conn.execute(
@@ -557,8 +561,8 @@ fn test_adoption_moves_colliding_legacy_pool_worktrees() {
     assert_ne!(pool1, pool2, "pools must be distinct after adoption");
 
     // p2's worktree moved + repaired: valid on disk, DB row repointed.
-    let moved = pool2.join("b2");
-    assert!(!shared.join("b2").exists());
+    let moved = pool2.join("fartCode/b2");
+    assert!(!shared.join("fartCode/b2").exists());
     assert!(moved.exists());
     git_ok(&moved, ["status"]);
     let recorded: String = db
@@ -578,7 +582,7 @@ fn test_adoption_moves_colliding_legacy_pool_worktrees() {
             project: &p2,
             task_id: "t2",
             workspace_id: "w2",
-            branch_name: "b2",
+            branch_name: "fartCode/b2",
             source_ref: Some("main"),
             worktree_enabled: true,
         })
@@ -643,6 +647,195 @@ fn test_adoption_sole_project_keeps_legacy_segment() {
     assert_eq!(p.worktree_pool_segment.as_deref(), Some("demo"));
     let pool = worktree_pool_path(db.as_ref(), settings.as_ref(), &p).unwrap();
     assert_eq!(pool, worktrees_dir.join("demo"));
+}
+
+#[test]
+fn test_adoption_interrupted_run_mover_gets_distinct_segment() {
+    // F6 regression: a crash between keeper stamp and mover completion leaves
+    // one project stamped with the legacy segment and the other unstamped. On
+    // re-run the sole-member group must NOT adopt the (now taken) legacy
+    // segment in place — it becomes a mover with a distinct segment.
+    let tmp = tempfile::tempdir().unwrap();
+    let (db, settings, worktrees_dir, _repo1, _repo2) = legacy_collision_fixture(&tmp);
+    db.conn()
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE projects SET worktree_pool_segment = 'ade' WHERE id = 'p1'",
+            [],
+        )
+        .unwrap();
+
+    let store = DbProjectStore::new(
+        db.clone(),
+        settings.clone(),
+        Arc::new(CliGit),
+        Arc::new(BroadcastEventBus::new(16)),
+    );
+
+    let p2 = store.get("p2").unwrap().unwrap();
+    assert_ne!(
+        p2.worktree_pool_segment.as_deref(),
+        Some("ade"),
+        "duplicate legacy segment forbidden"
+    );
+    assert_eq!(p2.worktree_pool_segment, Some(new_pool_segment(&p2)));
+
+    let pool2 = worktree_pool_path(db.as_ref(), settings.as_ref(), &p2).unwrap();
+    let moved = pool2.join("fartCode/b2");
+    assert!(!worktrees_dir.join("ade/fartCode/b2").exists());
+    assert!(moved.exists());
+    git_ok(&moved, ["status"]);
+
+    // The moved worktree resolves and is reusable.
+    let wm = WorktreeManager::new(db.clone(), settings.clone(), Arc::new(CliGit));
+    let result = wm
+        .ensure_worktree(&EnsureWorktreeOptions {
+            project: &p2,
+            task_id: "t2",
+            workspace_id: "w2",
+            branch_name: "fartCode/b2",
+            source_ref: Some("main"),
+            worktree_enabled: true,
+        })
+        .unwrap();
+    assert!(result.reused);
+    // Keeper's worktree untouched.
+    assert!(worktrees_dir.join("ade/fartCode/b1").exists());
+}
+
+#[test]
+fn test_adoption_moves_legacy_pool_to_override_root() {
+    // F3 regression: pre-#81 the per-project worktree_directory override was
+    // dead, so the legacy pool sits under the app default even for
+    // override-having projects. Adoption must relocate it to the override
+    // root (keeping the legacy segment) or the resolver would orphan it.
+    let tmp = tempfile::tempdir().unwrap();
+    let (db, settings, worktrees_dir, repo1, _repo2) = legacy_collision_fixture(&tmp);
+    // Make p1 a sole claimant.
+    db.conn()
+        .lock()
+        .unwrap()
+        .execute_batch(
+            "DELETE FROM tasks WHERE project_id = 'p2';
+             DELETE FROM workspaces WHERE id = 'w2';
+             DELETE FROM projects WHERE id = 'p2';",
+        )
+        .unwrap();
+    let override_dir = tmp.path().join("override");
+    std::fs::create_dir_all(&override_dir).unwrap();
+    let ps = ProjectSettings {
+        worktree_directory: Some(override_dir.to_string_lossy().into_owned()),
+        ..Default::default()
+    };
+    settings.update_project_settings("p1", &repo1, &ps).unwrap();
+
+    let store = DbProjectStore::new(
+        db.clone(),
+        settings.clone(),
+        Arc::new(CliGit),
+        Arc::new(BroadcastEventBus::new(16)),
+    );
+
+    let p1 = store.get("p1").unwrap().unwrap();
+    assert_eq!(p1.worktree_pool_segment.as_deref(), Some("ade"));
+    let pool = worktree_pool_path(db.as_ref(), settings.as_ref(), &p1).unwrap();
+    assert_eq!(pool, override_dir.join("ade"));
+
+    let moved = pool.join("fartCode/b1");
+    assert!(!worktrees_dir.join("ade/fartCode/b1").exists());
+    assert!(moved.exists());
+    git_ok(&moved, ["status"]);
+    let recorded: String = db
+        .conn()
+        .lock()
+        .unwrap()
+        .query_row("SELECT path FROM workspaces WHERE id = 'w1'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(recorded, moved.to_string_lossy().into_owned());
+}
+
+#[test]
+fn test_delete_skips_pool_containing_foreign_worktrees() {
+    // F2b regression: a half-finished adoption can leave two projects sharing
+    // one pool dir. Deleting one must skip teardown when another project's
+    // worktrees live inside the pool.
+    let fx = Fixture::new();
+    let a = fx
+        .store
+        .create_local(&fx.make_repo("alpha"), false)
+        .unwrap();
+    let b = fx.store.create_local(&fx.make_repo("beta"), false).unwrap();
+    let wt_b = add_task_worktree(&fx, &b, "task-b");
+
+    // Force a's pool onto b's pool dir (shared by construction).
+    let seg_b = fx
+        .store
+        .get(&b.id)
+        .unwrap()
+        .unwrap()
+        .worktree_pool_segment
+        .clone()
+        .unwrap();
+    fx.db
+        .conn()
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE projects SET worktree_pool_segment = ?1 WHERE id = ?2",
+            rusqlite::params![seg_b, a.id],
+        )
+        .unwrap();
+
+    fx.store.delete(&a.id).unwrap();
+
+    // a's row gone, but the shared pool dir and b's worktree survive.
+    assert!(fx.store.get(&a.id).unwrap().is_none());
+    let pool = fx.worktrees_dir.join(&seg_b);
+    assert!(pool.exists(), "shared pool dir must NOT be removed");
+    assert!(wt_b.exists(), "foreign worktree must survive");
+    assert!(wt_b.join("README.md").exists());
+    git_ok(&wt_b, ["status"]);
+}
+
+#[test]
+fn test_ensure_worktree_refuses_dirty_stale_path() {
+    // F5b regression: a stale (broken-linkage) worktree path holding
+    // uncommitted work must NOT be removed — ensure_worktree fails loud and
+    // the directory survives with its contents.
+    let fx = Fixture::new();
+    let repo = fx.make_repo("stale");
+    let project = fx.store.create_local(&repo, false).unwrap();
+    let wt = add_task_worktree(&fx, &project, "task-x");
+    std::fs::write(wt.join("WIP.txt"), "precious uncommitted work\n").unwrap();
+
+    // Break the git linkage (what a failed adoption repair + prune leaves).
+    let admin = repo.join(".git/worktrees");
+    for entry in std::fs::read_dir(&admin).unwrap() {
+        std::fs::remove_dir_all(entry.unwrap().path()).unwrap();
+    }
+
+    let wm = WorktreeManager::new(fx.db.clone(), fx.settings.clone(), Arc::new(CliGit));
+    let err = wm
+        .ensure_worktree(&EnsureWorktreeOptions {
+            project: &project,
+            task_id: "task-task-x",
+            workspace_id: "ws-task-x",
+            branch_name: "task-x",
+            source_ref: Some("main"),
+            worktree_enabled: true,
+        })
+        .expect_err("stale path with unverifiable cleanliness must refuse");
+    assert!(
+        err.to_string().contains("refusing to remove"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        wt.join("WIP.txt").exists(),
+        "dirty stale worktree must survive"
+    );
 }
 
 fn sha256_hex(input: &str) -> String {

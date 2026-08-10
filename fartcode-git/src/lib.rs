@@ -620,7 +620,16 @@ impl GitOps for CliGit {
             .env("GIT_OPTIONAL_LOCKS", "0")
             .output()
             .map_err(|e| Error::Git(format!("status porcelain: {e}")))?;
-        // The exit code is always 0.
+        // Exit 0 = status ran (dirty or clean); non-zero = broken repo /
+        // broken worktree linkage — cleanliness is UNKNOWN, not clean. The
+        // remove_stale_path guard (F5b) relies on this distinction.
+        if !output.status.success() {
+            return Err(Error::Git(format!(
+                "git status failed in {}: {}",
+                worktree.display(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
         let stdout = String::from_utf8_lossy(&output.stdout);
         Ok(stdout.trim().is_empty())
     }

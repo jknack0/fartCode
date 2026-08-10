@@ -186,7 +186,7 @@ impl WorktreeManager {
                     reused: true,
                 });
             }
-            self.remove_stale_path(&pool, &worktree_path)?;
+            self.remove_stale_path(opts.project, &pool, &worktree_path)?;
             self.prune(opts.project)?;
         }
 
@@ -508,7 +508,12 @@ impl WorktreeManager {
             .is_some())
     }
 
-    fn remove_stale_path(&self, pool: &Path, target: &Path) -> Result<(), Error> {
+    fn remove_stale_path(
+        &self,
+        project: &Project,
+        pool: &Path,
+        target: &Path,
+    ) -> Result<(), Error> {
         let pool_real = std::fs::canonicalize(pool).unwrap_or_else(|_| pool.to_path_buf());
         let target_real = std::fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf());
         if !target_real.starts_with(&pool_real) {
@@ -516,6 +521,26 @@ impl WorktreeManager {
                 "refusing to remove worktree path outside pool: {}",
                 target.display()
             )));
+        }
+        // F5b: never destroy a stale path unless it is PROVEN clean. A stale
+        // path usually has broken git linkage (failed adoption repair +
+        // prune), so its cleanliness cannot be verified — refusing is the
+        // only safe outcome. Err propagates to the task-launch caller
+        // (fail-loud beats silently destroying uncommitted work).
+        match self.git.is_worktree_clean(&project.path, target) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(Error::Internal(format!(
+                    "refusing to remove stale worktree with uncommitted changes: {}",
+                    target.display()
+                )));
+            }
+            Err(e) => {
+                return Err(Error::Internal(format!(
+                    "cannot verify cleanliness of stale worktree {} ({e}) — refusing to remove",
+                    target.display()
+                )));
+            }
         }
         if target.exists() {
             std::fs::remove_dir_all(target)?;

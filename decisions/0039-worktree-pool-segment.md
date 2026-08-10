@@ -55,11 +55,10 @@ landed in the app-level `default_worktree_directory`.
      CLI shell-out — git2 has no repair) re-links `.git/worktrees/*/gitdir`,
      and the stored `workspaces.path` is rewritten. `issues.dossier_path`
      needs no rewrite — it is repo-relative, not absolute.
-   - Failures never block startup: per-project errors warn-log and skip
-     (a skipped project lazily gets a fresh unique pool on first resolve —
-     its leftovers stay with the keeper); the gate is set once the pass
-     completes, so it runs exactly once and is safe to re-run (stamped rows
-     and moved directories are simply not re-processed).
+   - Failures never block startup: per-project errors warn-log and skip.
+     The gate is set ONLY when the whole pass succeeded — re-runs are safe
+     (stamping is idempotent, moved rows take the repoint branch), so a
+     partial pass retries on the next startup (see Hardening below).
 
 4. **Delete.** `DbProjectStore::delete` removes
    `<root>/<stored-or-computed segment>` — unique per project, so deleting
@@ -77,9 +76,66 @@ landed in the app-level `default_worktree_directory`.
   created after setting it land there. (Adoption itself only considers the
   app-level default, because the legacy code ignored the override — all
   existing pools live under the app default.)
-- A project whose adoption move fails simply gets a fresh pool later; its old
-  worktrees remain on disk under the keeper's pool until the user removes
-  them — loud-enough via warn log, and never data loss.
+- A project whose adoption move fails retries the move on the next startup
+  (gate-on-success); its worktrees are never stranded in a half-moved state
+  because moves are idempotent (already-moved rows just repoint).
 - Regression coverage: FIRST-58 (delete isolation), collision adoption
-  (move + repair + rewrite + `ensure_worktree` reuse), sole-adopter
-  stability, override + fallback, resolver stamping.
+  (move + repair + rewrite + `ensure_worktree` reuse, with NESTED
+  `<branch_prefix>/<branch>` names as in production), sole-adopter
+  stability, interrupted-adoption distinct segments, override relocation,
+  delete foreign-content guard, dirty-stale-path refusal, resolver
+  stamping.
+
+## Hardening (adversarial review of #81 round 1)
+
+Confirmed review findings fixed on the same branch, keeping the decisions
+above with these refinements:
+
+1. **Gate-on-success + retry (F2a, F9).** `worktree_pool_adoption_v1` is set
+   only when every stamp/move succeeded; a failed per-project move no longer
+   strands worktrees forever — the pass re-runs next startup. Top-level
+   errors (project list, kv) still return before the gate. The app default
+   root is resolved lazily per project; a `localProject` read failure skips
+   that project instead of aborting the pass (an override-less project with
+   no worktree rows is still stamped, since it needs no filesystem
+   knowledge).
+2. **Delete foreign-content guard (F2b).** Teardown queries for `kind=
+   'worktree'` workspace rows of OTHER projects and skips `remove_dir_all`
+   (with a warn) when any canonicalized path lies inside the pool dir
+   (component-safe `Path::starts_with`). Covers a half-finished adoption
+   that left two projects sharing one pool dir.
+3. **Override-aware adoption (F3).** The resolver honors the per-project
+   `worktree_directory` override, but pre-#81 the override was dead, so all
+   legacy pools live under the app default. Adoption resolves each project's
+   target root the SAME way as the resolver; when it differs from the app
+   default, the legacy dir moves `default_root/<legacy> →
+   override_root/<legacy>` (sole claimants keep the legacy segment — it is
+   unique across projects; collision keepers likewise, after movers leave).
+   The move machinery is generalized to `from_pool → to_pool` across roots.
+4. **Repair as a retryable sweep (F5).** After moving, `git worktree
+   repair` runs for EVERY worktree row of the project now under the new
+   pool (idempotent — heals rows moved by a previous failed run too). The
+   segment is stamped only when every repair succeeded; otherwise it stays
+   NULL and the pass retries. This prevents `.git/worktrees/*/gitdir` from
+   pointing at the old path, which the next prune would turn into a stale
+   path.
+5. **Dirty-guard on stale-path removal (F5).** `remove_stale_path` removes
+   only when `is_worktree_clean` PROVES the dir clean; a dirty result or a
+   clean-check error (broken linkage — the usual stale-path state) refuses
+   with `Error::Internal`, which propagates to the task-launch caller
+   (fail-loud beats silently destroying uncommitted work).
+   `CliGit::is_worktree_clean` now treats a non-zero `git status` exit as
+   Err (cleanliness unknown ≠ clean).
+6. **Interrupted-run segment check (F6).** A sole-member group checks
+   `SELECT ... WHERE worktree_pool_segment = ? AND id != ?` before adopting
+   in place; if another project holds the legacy segment (crash between
+   keeper stamp and mover completion), it becomes a mover to its new-scheme
+   segment instead of duplicating the legacy one.
+7. **Nested-path moves (F1).** Production worktrees sit at
+   `pool/<branch_prefix>/<branch>-<suffix>`, so the move creates
+   `new_path.parent()` before `fs::rename`.
+8. **Canonicalized matching (F4, F8).** Adoption compares canonicalized
+   paths (fallback raw) on both sides of `starts_with`/`strip_prefix`
+   (stored rows can be realpathed, e.g. `/private/var` on macOS). Delete's
+   `pool != project.path` root guard canonicalizes both sides too
+   (symlink-aliased overrides).
