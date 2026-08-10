@@ -273,6 +273,25 @@ pub fn parse_stamp(stamp: &str) -> Option<i64> {
     Some(days_from_civil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second)
 }
 
+/// The date an agent-written dossier section carries, from its heading.
+///
+/// The convention is `## <Column> — <YYYY-MM-DD>` (seeded prompt and skill
+/// both), so the date is the last whitespace-delimited token that parses as
+/// one. Midnight UTC — a section is dated to the day, not the minute.
+///
+/// `None` for a heading that carries no date. Callers windowing by time
+/// must **exclude** those rather than assume they are recent: including an
+/// undated section is how a report labelled "the last 90 days" silently
+/// starts spanning all history.
+pub fn section_date(heading: &str) -> Option<i64> {
+    heading.split_whitespace().rev().find_map(|token| {
+        parse_stamp(&format!(
+            "{} 00:00",
+            token.trim_matches(|c: char| !c.is_ascii_digit() && c != '-')
+        ))
+    })
+}
+
 /// Howard Hinnant's `days_from_civil` — the inverse of the `civil_from_days`
 /// in `fartcode_core::dossiers::format_stamp`.
 fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
@@ -379,6 +398,19 @@ mod tests {
             created,
             landed: created + hours * HOUR,
         }
+    }
+
+    #[test]
+    fn section_dates_come_off_the_heading_or_are_absent() {
+        let day = parse_stamp("2026-08-09 00:00").unwrap();
+        assert_eq!(section_date("Plan — 2026-08-09"), Some(day));
+        assert_eq!(section_date("In Review — 2026-08-09"), Some(day));
+        // Punctuation around the token is tolerated.
+        assert_eq!(section_date("Plan (2026-08-09)"), Some(day));
+        // No date is None — never "assume it is recent".
+        assert_eq!(section_date("Plan"), None);
+        assert_eq!(section_date("Context"), None);
+        assert_eq!(section_date("Plan — yesterday"), None);
     }
 
     #[test]

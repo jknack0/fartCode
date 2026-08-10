@@ -58,9 +58,11 @@ pub mod reask;
 pub mod time_to_land;
 pub mod tokens;
 
-pub use citations::{Citation, CitationScan, CitationTargets};
-pub use memory::{Citations, MemoryInputs, MemoryValue};
-pub use observation::{Fidelity, ObservationLog, Segment, SegmentSource, StepObservation};
+pub use citations::{Citation, CitationScan, CitationTargets, ShellIntent};
+pub use memory::{Citations, DatedTally, MemoryInputs, MemoryValue};
+pub use observation::{
+    Fidelity, ObservationLog, ReAskObservation, Segment, SegmentSource, StepObservation,
+};
 pub use reask::{ReAskRate, ReAskTally};
 pub use time_to_land::{FeatureCycle, TimeToLand, TimeToLandKind, TimelineEvent, TREND_CAVEAT};
 pub use tokens::{EstimatedTokens, TokenBasis, TokensSaved};

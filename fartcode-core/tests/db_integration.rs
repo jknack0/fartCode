@@ -327,3 +327,80 @@ fn test_db_trait_object() {
     assert_eq!(db.kv_get("trait").unwrap(), Some("object".into()));
     assert!(db.path().as_os_str() == ":memory:");
 }
+
+// -- kv_update: atomic read-modify-write (E19-04, #73) -----------------------
+
+/// The composition callers cannot write themselves: `kv_get` then `kv_set`
+/// takes the guard twice, and the guard may not be held across them, so a
+/// concurrent writer's update is lost in between.
+#[test]
+fn kv_update_applies_a_read_modify_write() {
+    let db = SqliteDb::init_in_memory().unwrap();
+    // A fresh key sees `None`.
+    db.kv_update("counter", &mut |current| {
+        assert_eq!(current, None);
+        Ok(Some("1".into()))
+    })
+    .unwrap();
+    assert_eq!(db.kv_get("counter").unwrap().as_deref(), Some("1"));
+
+    // ...and an existing one sees what is there.
+    db.kv_update("counter", &mut |current| {
+        let n: i32 = current.unwrap().parse().unwrap();
+        Ok(Some((n + 1).to_string()))
+    })
+    .unwrap();
+    assert_eq!(db.kv_get("counter").unwrap().as_deref(), Some("2"));
+
+    // Returning None deletes.
+    db.kv_update("counter", &mut |_| Ok(None)).unwrap();
+    assert_eq!(db.kv_get("counter").unwrap(), None);
+}
+
+/// A closure that fails leaves the old value intact rather than clobbering
+/// it with a half-written one.
+#[test]
+fn kv_update_rolls_back_when_the_closure_fails() {
+    let db = SqliteDb::init_in_memory().unwrap();
+    db.kv_set("k", "original").unwrap();
+    let err = db
+        .kv_update("k", &mut |_| {
+            Err(fartcode_core::Error::Internal("cannot serialize".into()))
+        })
+        .unwrap_err();
+    assert!(err.to_string().contains("cannot serialize"));
+    assert_eq!(db.kv_get("k").unwrap().as_deref(), Some("original"));
+}
+
+/// Concurrent appenders must not lose each other's writes — the failure
+/// mode the two-call spelling has, and the reason the telemetry
+/// observation log uses this method.
+#[test]
+fn concurrent_kv_updates_do_not_lose_appends() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db: Arc<dyn Db> = SqliteDb::init(Some(tmp.path().join("t.db").to_str().unwrap())).unwrap();
+    let threads: Vec<_> = (0..8)
+        .map(|i| {
+            let db = db.clone();
+            std::thread::spawn(move || {
+                for j in 0..25 {
+                    db.kv_update("log", &mut |current| {
+                        let mut value = current.unwrap_or_default();
+                        value.push_str(&format!("{i}:{j},"));
+                        Ok(Some(value))
+                    })
+                    .unwrap();
+                }
+            })
+        })
+        .collect();
+    for thread in threads {
+        thread.join().unwrap();
+    }
+    let value = db.kv_get("log").unwrap().unwrap();
+    assert_eq!(
+        value.split(',').filter(|s| !s.is_empty()).count(),
+        200,
+        "every append survived"
+    );
+}

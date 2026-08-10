@@ -3,8 +3,8 @@
 //!
 //! ADR-0038's Consequences paragraph names the mechanism: "citations
 //! require detecting dossier references in transcripts (path-mention
-//! heuristic first)". This is that heuristic, with two corrections the bare
-//! version needs before its output means anything.
+//! heuristic first)". This is that heuristic, with three corrections the
+//! bare version needs before its output means anything.
 //!
 //! **Correction 1 — the prompt is not a citation.**
 //! `skills::append_instruction` puts the dossier path into every seeded
@@ -18,7 +18,20 @@
 //! step to *append* a section, so the dossier path also shows up in the
 //! agent's own edit. Write-ish tool calls are counted separately and never
 //! score a citation; a read/grep tool call that resolves the dossier is the
-//! strong tier, and prose or a shell line naming it is the weak one.
+//! strong tier, and prose naming it is the weak one. Shell commands are
+//! routed to one of those tiers by [`classify_shell`] rather than sitting
+//! flat at the weak one — otherwise `git add docs/features/x.md`, the
+//! staging step the prompt's own instruction leads to, scores as a
+//! citation, while `rg docs/features/`, which is the read the seeded skill
+//! actually teaches, scores nothing.
+//!
+//! **Correction 3 — text with no provenance cannot be corrected at all.**
+//! Corrections 1 and 2 both key off
+//! [`crate::observation::SegmentSource`], so they hold only while
+//! provenance survives. A flattened terminal scrollback has none *and*
+//! echoes the injected prompt, so it is not scanned — see
+//! [`crate::observation::SegmentSource::Unstructured`], which is where that
+//! decision and its cost are argued.
 //!
 //! **Rejected: matching section headings.** The ticket floats headings as a
 //! second needle. They fail correction 2 badly — an agent appending
@@ -175,17 +188,111 @@ pub fn scan(view: &TranscriptView<'_>, targets: &CitationTargets<'_>) -> (Citati
     (out, clipped)
 }
 
-/// Scans and rules in one call, folding a clipped scan into the fidelity.
+/// Scans and rules in one call.
+///
+/// Returns the **folded fidelity** as well as the verdict, and the caller
+/// is expected to persist it: a scan that ran out of budget over a `Full`
+/// transcript is no longer `Full`, and if that fact is dropped the session
+/// can still contribute a positive while never being able to contribute a
+/// negative. A sample that can only add to the numerator is a sample that
+/// can only flatter, which is the failure this whole module is shaped
+/// against.
 pub fn verdict(
     view: &TranscriptView<'_>,
     targets: &CitationTargets<'_>,
-) -> (Citation, CitationScan) {
+) -> (Citation, CitationScan, Fidelity) {
     let (scan_result, clipped) = scan(view, targets);
     let fidelity = match (clipped, view.fidelity) {
         (true, Fidelity::Full) => Fidelity::Truncated,
         (_, fidelity) => fidelity,
     };
-    (scan_result.verdict(fidelity), scan_result)
+    (scan_result.verdict(fidelity), scan_result, fidelity)
+}
+
+// ---------------------------------------------------------------------------
+// Shell intent
+// ---------------------------------------------------------------------------
+
+/// What a shell command was going to do to the path it names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellIntent {
+    /// `rg`, `cat`, `grep`… — consuming the file. The seeded skill teaches
+    /// `rg -n "…" docs/features/`, so this is how a real citation most
+    /// often looks on the shell.
+    Read,
+    /// `git add`, `mv`, `>`… — producing, staging or moving it. The seeded
+    /// prompt tells every step to append a section and most agents then
+    /// stage it, so this is the *expected background* on any consented
+    /// project and must never reach the citation numerator.
+    Write,
+    /// Neither recognized. Scored at the weak prose tier rather than forced
+    /// into one of the two.
+    Ambiguous,
+}
+
+/// Verbs and operators that mean the command produced or moved a file.
+///
+/// Checked first and matched anywhere in the line: a pipeline that both
+/// reads and writes has, on balance, written. The asymmetry is deliberate —
+/// guessing wrong this way costs a missed citation, guessing wrong the
+/// other way puts authorship in the numerator, and only one of those two
+/// errors makes the number look better than the truth.
+const WRITE_TOKENS: &[&str] = &[
+    "git add ",
+    "git commit",
+    "git rm ",
+    "git mv ",
+    "git stash",
+    "git restore",
+    "git checkout",
+    "git apply",
+    "rm ",
+    "mv ",
+    "cp ",
+    "tee ",
+    "sed -i",
+    "touch ",
+    ">>",
+    "> ",
+];
+
+/// Verbs that mean the command consumed a file.
+const READ_TOKENS: &[&str] = &[
+    "rg ", "grep ", "cat ", "bat ", "head ", "tail ", "less ", "more ", "sed -n", "awk ", "find ",
+    "ls ", "git show", "git log", "git diff", "git grep", "wc ", "nl ",
+];
+
+/// Classifies a shell command line.
+///
+/// A deliberately small substring table rather than a grammar: commands
+/// arrive as free text from any of 35 providers, so a parser would be for a
+/// language nobody agreed on. Anything unrecognized stays
+/// [`ShellIntent::Ambiguous`].
+pub fn classify_shell(command: &str) -> ShellIntent {
+    // Padded so a line that ENDS in the verb's argument still matches the
+    // trailing space the tokens carry (which is what keeps `rm ` from
+    // matching `--dry-run`).
+    let padded = format!("{command} ");
+    if WRITE_TOKENS.iter().any(|token| padded.contains(token)) {
+        return ShellIntent::Write;
+    }
+    if READ_TOKENS.iter().any(|token| padded.contains(token)) {
+        return ShellIntent::Read;
+    }
+    ShellIntent::Ambiguous
+}
+
+impl ShellIntent {
+    /// The segment provenance a command of this intent should carry, so the
+    /// app layer holds no verb knowledge of its own.
+    pub fn source(&self) -> crate::observation::SegmentSource {
+        use crate::observation::SegmentSource;
+        match self {
+            ShellIntent::Read => SegmentSource::ToolRead,
+            ShellIntent::Write => SegmentSource::ToolWrite,
+            ShellIntent::Ambiguous => SegmentSource::ToolExec,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -309,7 +416,7 @@ mod tests {
             Fidelity::Full,
             vec![Segment::new(SegmentSource::ToolRead, DOSSIER)],
         );
-        let (verdict_, scan_) = verdict(&v, &targets(&paths));
+        let (verdict_, scan_, _) = verdict(&v, &targets(&paths));
         assert_eq!(verdict_, Citation::CitedRead);
         assert_eq!(scan_.read_hits, 1);
     }
@@ -373,7 +480,7 @@ mod tests {
             Fidelity::Full,
             vec![Segment::new(SegmentSource::InjectedPrompt, prompt)],
         );
-        let (verdict_, scan_) = verdict(&v, &targets(&paths));
+        let (verdict_, scan_, _) = verdict(&v, &targets(&paths));
         assert_eq!(verdict_, Citation::NotCited);
         assert_eq!(scan_, CitationScan::default());
     }
@@ -387,7 +494,7 @@ mod tests {
             Fidelity::Full,
             vec![Segment::new(SegmentSource::ToolWrite, DOSSIER)],
         );
-        let (verdict_, scan_) = verdict(&v, &targets(&paths));
+        let (verdict_, scan_, _) = verdict(&v, &targets(&paths));
         assert_eq!(verdict_, Citation::NotCited);
         assert_eq!(scan_.write_hits, 1);
         assert_eq!(scan_.read_hits, 0);
@@ -497,6 +604,100 @@ mod tests {
             vec![Segment::new(SegmentSource::ToolRead, text)],
         );
         assert_eq!(verdict(&v, &targets(&paths)).0, Citation::CitedRead);
+    }
+
+    /// A flattened scrollback echoes the injected prompt, so nothing in it
+    /// can be attributed — including the dossier path the prompt itself
+    /// names. Without this the mainstream dispatch path reports 100%.
+    #[test]
+    fn an_unprovenanced_scrollback_is_never_a_citation() {
+        let paths = vec![DOSSIER.to_string()];
+        let echoed =
+            format!("$ claude\n> This feature keeps a decision log at `{DOSSIER}`.\nthinking...\n");
+        let v = view(
+            Fidelity::Truncated,
+            vec![Segment::new(SegmentSource::Unstructured, &echoed)],
+        );
+        let (verdict_, scan_, fidelity) = verdict(&v, &targets(&paths));
+        assert_eq!(verdict_, Citation::Unknown);
+        assert_eq!(scan_, CitationScan::default());
+        assert_eq!(fidelity, Fidelity::Truncated);
+    }
+
+    /// `git add docs/features/x.md` is the staging step the prompt's own
+    /// instruction leads to. Scored flat at the prose tier it was a
+    /// citation; classified, it is authorship.
+    #[test]
+    fn shell_intent_separates_the_mandated_write_from_a_real_read() {
+        assert_eq!(
+            classify_shell("git add docs/features/oauth-login.md"),
+            ShellIntent::Write
+        );
+        assert_eq!(
+            classify_shell("git commit -m 'dossier: plan'"),
+            ShellIntent::Write
+        );
+        assert_eq!(
+            classify_shell("echo hi > docs/features/oauth-login.md"),
+            ShellIntent::Write
+        );
+        assert_eq!(
+            classify_shell("rg -n 'rate limit' docs/features/"),
+            ShellIntent::Read
+        );
+        assert_eq!(
+            classify_shell("cat docs/features/oauth-login.md"),
+            ShellIntent::Read
+        );
+        // A pipeline that both reads and writes counts as a write: the
+        // error that direction costs a citation, the other costs the
+        // metric its meaning.
+        assert_eq!(
+            classify_shell("cat a.md >> docs/features/oauth-login.md"),
+            ShellIntent::Write
+        );
+        // Unrecognized stays unrecognized rather than being forced.
+        assert_eq!(classify_shell("cargo test"), ShellIntent::Ambiguous);
+        assert_eq!(classify_shell(""), ShellIntent::Ambiguous);
+    }
+
+    #[test]
+    fn a_classified_shell_command_lands_in_the_right_tier() {
+        let paths = vec![DOSSIER.to_string()];
+
+        // The mandated staging is authorship, not a citation.
+        let staged = format!("git add {DOSSIER}");
+        let write = view(
+            Fidelity::Full,
+            vec![Segment::new(
+                classify_shell(&staged).source(),
+                staged.as_str(),
+            )],
+        );
+        let (verdict_, scan_, _) = verdict(&write, &targets(&paths));
+        assert_eq!(verdict_, Citation::NotCited);
+        assert_eq!(scan_.write_hits, 1);
+
+        // The grep the seeded skill teaches is a strong citation — it used
+        // to score nothing at all, because the directory needle required a
+        // read-ish segment and every shell line was scored as prose.
+        let grep = "rg -n 'rate limit' docs/features/";
+        let read = view(
+            Fidelity::Full,
+            vec![Segment::new(classify_shell(grep).source(), grep)],
+        );
+        assert_eq!(verdict(&read, &targets(&paths)).0, Citation::CitedRead);
+
+        // An unrecognized command naming the file stays at the weak tier.
+        let odd = format!("my-tool --input {DOSSIER}");
+        let ambiguous = view(
+            Fidelity::Full,
+            vec![Segment::new(classify_shell(&odd).source(), odd.as_str())],
+        );
+        assert_eq!(
+            verdict(&ambiguous, &targets(&paths)).0,
+            Citation::CitedMention
+        );
     }
 
     #[test]

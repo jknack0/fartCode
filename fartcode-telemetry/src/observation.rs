@@ -65,19 +65,56 @@ pub enum SegmentSource {
     /// seeded prompt asks every step to append a section, so a write
     /// mention is the expected background, not a signal.
     ToolWrite,
-    /// A shell command line and its output. Ambiguous by nature (`rg
-    /// docs/features/` reads, `git add docs/features/x.md` writes), so it
-    /// is scored at the weaker prose tier.
+    /// A shell command whose intent could not be read either way — see
+    /// [`crate::citations::classify_shell`], which routes the ones that
+    /// can be (`rg docs/features/` reads, `git add docs/features/x.md`
+    /// writes) to [`SegmentSource::ToolRead`] and
+    /// [`SegmentSource::ToolWrite`] instead. What is left over is scored at
+    /// the weaker prose tier.
     ToolExec,
-    /// Anything else, including a flattened PTY scrollback with no
-    /// structure to read.
+    /// Text with no provenance at all: a flattened terminal scrollback.
+    ///
+    /// **Never scanned, and this is the more important of the two
+    /// exclusions.** A PTY session is an agent CLI in a terminal, and the
+    /// terminal echoes the bracket-pasted step prompt — which contains the
+    /// dossier path *and* both clarification tags, because the prompt is
+    /// what teaches them. Flattening that into scannable text bypasses
+    /// [`SegmentSource::InjectedPrompt`] entirely and hands back a citation
+    /// rate of 100% and a fabricated re-ask rate, on what is currently the
+    /// mainstream dispatch path.
+    ///
+    /// **Why not mask the echo instead.** The seeded prompt is
+    /// reconstructible at settle (`skills::append_instruction` is a pure
+    /// function of column and path), so masking its span looks available.
+    /// It is not sound: the echo is re-rendered by the agent's own TUI,
+    /// reflowed at terminal width, and often redrawn or truncated, so a
+    /// reconstructed span matches partially at best — and a partial match
+    /// leaves the path visible and quietly restores the 100% behaviour.
+    /// A heuristic whose failure mode is "the metric flatters itself again"
+    /// is worse than no reading at all, so a flattened scrollback yields
+    /// [`crate::Citation::Unknown`] and a silent tally. Under-reporting is
+    /// recoverable; 100%-by-construction is not.
+    ///
+    /// A PTY agent that really does tag its clarifications is still counted
+    /// — through the section it committed to the dossier, which is read
+    /// separately and carries no echo.
+    Unstructured,
+    /// Anything else with structure but no useful classification — an
+    /// unrecognized tool kind.
     Other,
 }
 
 impl SegmentSource {
-    /// Whether this segment is scanned at all.
+    /// Whether this segment is scanned at all. Two sources are excluded,
+    /// for the same underlying reason: the injected prompt names the
+    /// dossier and demonstrates the tags, so any text that contains it — in
+    /// its own right, or echoed into an unprovenanced blob — would score
+    /// against the very thing it asked for.
     pub fn scannable(&self) -> bool {
-        !matches!(self, SegmentSource::InjectedPrompt)
+        !matches!(
+            self,
+            SegmentSource::InjectedPrompt | SegmentSource::Unstructured
+        )
     }
 
     /// Whether a hit here counts as "the agent opened the memory".
@@ -159,10 +196,49 @@ pub struct StepObservation {
     /// Unix seconds. Supplied by the app — this crate has no clock.
     pub settled_at: i64,
     pub citation: Citation,
-    pub reask: ReAskTally,
+    /// Whether this step **wrote** to the dossier without reading it.
+    ///
+    /// Surfaced rather than discarded because it is the size of a known
+    /// confounder: the seeded prompt tells every step to append a section,
+    /// so a corpus of write-only sessions is a corpus doing what it was
+    /// told. A caller can see how much of the citation number is made of
+    /// obedience.
+    #[serde(default)]
+    pub wrote_dossier: bool,
+    pub reask: ReAskObservation,
     pub context_used: Option<u64>,
     pub context_size: Option<u64>,
+    /// The fidelity the scan **settled on**, not the one it started with: a
+    /// scan that ran out of budget over a `Full` transcript records
+    /// `Truncated` here, and rates are computed over `Full` rows only.
     pub fidelity: Fidelity,
+}
+
+/// What a step's transcript said about clarifications — or that it could
+/// not be asked.
+///
+/// The distinction mirrors [`Citation::Unknown`], and for the same reason:
+/// "we scanned and it tagged nothing" and "we had nothing scannable to
+/// look at" are different facts, and folding them together lets an
+/// unreadable corpus masquerade as a well-behaved one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ReAskObservation {
+    /// Nothing scannable: no transcript, a truncated one, or a flattened
+    /// scrollback whose provenance is gone.
+    Unreadable,
+    /// Scanned. The tally may be empty, which means this step recorded no
+    /// clarification — a real observation, not an absence of one.
+    Scanned(ReAskTally),
+}
+
+impl ReAskObservation {
+    pub fn tally(&self) -> Option<ReAskTally> {
+        match self {
+            ReAskObservation::Unreadable => None,
+            ReAskObservation::Scanned(tally) => Some(*tally),
+        }
+    }
 }
 
 /// How many observations one project keeps.
@@ -186,28 +262,22 @@ pub struct ObservationLog {
 }
 
 impl ObservationLog {
-    /// Records one observation, **replacing** any earlier one for the same
-    /// card and session, and evicting the oldest entries past
+    /// Appends one observation, evicting the oldest entries past
     /// [`MAX_OBSERVATIONS`]. Returns how many were evicted, so the caller
     /// can report the log as clipped rather than let a truncated history
     /// read as a complete one.
     ///
-    /// The replace is what makes the capture idempotent. A settling ACP
-    /// session fires the hook once per turn that finishes Done, and every
-    /// one of those scans the whole transcript so far — appending them
-    /// would enter the same session three or ten times, each a superset of
-    /// the last, and the citation rate would silently weight chatty
-    /// sessions. Replacing keeps exactly one row per session: the last, and
-    /// therefore the most complete.
-    pub fn record(&mut self, observation: StepObservation) -> usize {
-        if let Some(existing) = self
-            .entries
-            .iter_mut()
-            .find(|e| e.issue_id == observation.issue_id && e.session == observation.session)
-        {
-            *existing = observation;
-            return 0;
-        }
+    /// **One row is one settled step run**, and the identity is upstream:
+    /// the app records only after the step engine's `begin_settle` returns
+    /// `Act`, and the engine tombstones that entry, so the later turns of a
+    /// chatty session no-op instead of arriving here. This used to
+    /// de-duplicate on `(card, session)` and that was wrong in both
+    /// directions — it merged two step runs that shared an identity (a
+    /// task keeps ONE agent terminal for its whole life under ADR-0033, so
+    /// `pty:<terminal>` is stable across every column the card passes
+    /// through, and the second step silently overwrote the first) while
+    /// still admitting turns the engine had already refused to settle.
+    pub fn push(&mut self, observation: StepObservation) -> usize {
         self.entries.push(observation);
         let over = self.entries.len().saturating_sub(MAX_OBSERVATIONS);
         if over > 0 {
@@ -237,11 +307,7 @@ mod tests {
     use super::*;
 
     fn obs(project: &str, at: i64) -> StepObservation {
-        let mut observation = session_obs(project, "iss_1", "acp:c1", at);
-        // Distinct sessions, so the eviction tests exercise the append path
-        // rather than the replace path.
-        observation.session = format!("acp:{at}");
-        observation
+        session_obs(project, "iss_1", "acp:c1", at)
     }
 
     fn session_obs(project: &str, issue: &str, session: &str, at: i64) -> StepObservation {
@@ -252,7 +318,8 @@ mod tests {
             column: "Plan".into(),
             settled_at: at,
             citation: Citation::Unknown,
-            reask: ReAskTally::default(),
+            wrote_dossier: false,
+            reask: ReAskObservation::Unreadable,
             context_used: None,
             context_size: None,
             fidelity: Fidelity::Absent,
@@ -260,40 +327,43 @@ mod tests {
     }
 
     #[test]
-    fn record_evicts_oldest_past_the_cap() {
+    fn push_evicts_oldest_past_the_cap() {
         let mut log = ObservationLog::default();
         for i in 0..MAX_OBSERVATIONS as i64 {
-            assert_eq!(log.record(obs("p1", i)), 0);
+            assert_eq!(log.push(obs("p1", i)), 0);
         }
         assert!(log.is_full());
-        assert_eq!(log.record(obs("p1", 9_999)), 1);
+        assert_eq!(log.push(obs("p1", 9_999)), 1);
         assert_eq!(log.entries.len(), MAX_OBSERVATIONS);
         // The oldest went, the newest stayed.
         assert_eq!(log.entries.first().unwrap().settled_at, 1);
         assert_eq!(log.entries.last().unwrap().settled_at, 9_999);
     }
 
-    /// One session is one row however many times its turns settle.
+    /// Two step runs on ONE agent terminal are two rows. ADR-0033 keeps one
+    /// agent terminal per task for the card's whole life, so `pty:<id>` is
+    /// the same string in every column — a store keyed on it would report
+    /// a four-step feature as one step.
     #[test]
-    fn recording_the_same_session_twice_replaces_rather_than_appends() {
+    fn two_runs_sharing_a_session_identity_are_two_rows() {
         let mut log = ObservationLog::default();
-        log.record(session_obs("p1", "iss_1", "acp:c1", 100));
-        log.record(session_obs("p1", "iss_1", "acp:c1", 200));
-        assert_eq!(log.entries.len(), 1);
-        assert_eq!(log.entries[0].settled_at, 200);
-
-        // A different session, or a different card, is a different row.
-        log.record(session_obs("p1", "iss_1", "acp:c2", 300));
-        log.record(session_obs("p1", "iss_2", "acp:c1", 400));
-        assert_eq!(log.entries.len(), 3);
+        let mut plan = session_obs("p1", "iss_1", "pty:t1", 100);
+        plan.column = "Plan".into();
+        let mut implement = session_obs("p1", "iss_1", "pty:t1", 200);
+        implement.column = "Implement".into();
+        log.push(plan);
+        log.push(implement);
+        assert_eq!(log.entries.len(), 2);
+        assert_eq!(log.entries[0].column, "Plan");
+        assert_eq!(log.entries[1].column, "Implement");
     }
 
     #[test]
     fn window_filters_by_project_and_time() {
         let mut log = ObservationLog::default();
-        log.record(obs("p1", 100));
-        log.record(obs("p2", 200));
-        log.record(obs("p1", 300));
+        log.push(obs("p1", 100));
+        log.push(obs("p2", 200));
+        log.push(obs("p1", 300));
         let got = log.window("p1", 150);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].settled_at, 300);
@@ -308,9 +378,13 @@ mod tests {
         assert_eq!(view.context_used, None);
     }
 
+    /// The two exclusions, and the second is the one the PTY path needs:
+    /// a flattened scrollback echoes the prompt, so nothing in it can be
+    /// attributed.
     #[test]
-    fn the_injected_prompt_is_never_scanned() {
+    fn the_prompt_and_unprovenanced_text_are_never_scanned() {
         assert!(!SegmentSource::InjectedPrompt.scannable());
+        assert!(!SegmentSource::Unstructured.scannable());
         for source in [
             SegmentSource::AgentProse,
             SegmentSource::ToolRead,
@@ -320,5 +394,14 @@ mod tests {
         ] {
             assert!(source.scannable(), "{source:?}");
         }
+    }
+
+    #[test]
+    fn an_unreadable_reask_observation_yields_no_tally() {
+        assert_eq!(ReAskObservation::Unreadable.tally(), None);
+        assert_eq!(
+            ReAskObservation::Scanned(ReAskTally::default()).tally(),
+            Some(ReAskTally::default())
+        );
     }
 }

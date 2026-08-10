@@ -228,13 +228,39 @@ pub fn flip_issues_for_task(app: &App, task_id: &str) -> usize {
 /// conversation as the session identity. Project-scoped conversations
 /// (task_id NULL, the PM chat) never settle anything.
 pub fn flip_issues_for_conversation(app: &App, conversation_id: &str) {
+    settle_conversation(app, conversation_id, None)
+}
+
+/// [`flip_issues_for_conversation`] carrying the session's reduced
+/// transcript, for memory-value telemetry (E19-04, #73).
+///
+/// The live models exist only inside the `acp:transcript` callback — the
+/// reducer's state dies with the session (ADR-0029 item 5) and nothing
+/// persists a transcript — so they are borrowed down to the step engine,
+/// which is the only place that knows whether this turn actually settled a
+/// step. Nothing is copied: a turn the engine refuses costs a view
+/// construction and no more.
+pub fn flip_issues_for_conversation_observed(
+    app: &App,
+    conversation_id: &str,
+    models: &fartcode_acp::LiveModels,
+) {
+    let view = crate::telemetry::acp_view(models);
+    settle_conversation(app, conversation_id, Some(&view))
+}
+
+fn settle_conversation(
+    app: &App,
+    conversation_id: &str,
+    transcript: Option<&fartcode_telemetry::observation::TranscriptView<'_>>,
+) {
     let conv = match app.conversations.get(conversation_id) {
         Ok(Some(conv)) => conv,
         _ => return,
     };
     if let Some(task_id) = &conv.task_id {
         let session = format!("acp:{conversation_id}");
-        crate::step_engine::settle_issues_for_task(app, task_id, Some(&session));
+        crate::step_engine::settle_issues_observed(app, task_id, Some(&session), transcript);
     }
 }
 
@@ -248,11 +274,13 @@ pub fn flip_for_exited_agent<R: tauri::Runtime>(
 ) {
     if let Some(state) = app.try_state::<Arc<App>>() {
         let session = format!("pty:{terminal_id}");
-        // E19-04 (#73): observe before settling — an advancing settle moves
-        // the card out of the column this is about, and the terminal entry
-        // is dropped right after this call, taking its scrollback with it.
-        // Best-effort and bounded; it cannot fail the settle.
-        crate::telemetry::observe_pty_session(app, &state, task_id, terminal_id);
-        crate::step_engine::settle_issues_for_task(&state, task_id, Some(&session));
+        // E19-04 (#73): the scrollback is read HERE because the terminal
+        // entry is dropped right after this call, taking its ring with it —
+        // but it is only ever *recorded* if the engine says a step settled.
+        // The view is deliberately unscannable (the ring echoes the pasted
+        // prompt); see `telemetry::pty_view`.
+        let scrollback = crate::telemetry::pty_scrollback(app, terminal_id);
+        let view = crate::telemetry::pty_view(scrollback.as_deref());
+        crate::step_engine::settle_issues_observed(&state, task_id, Some(&session), Some(&view));
     }
 }

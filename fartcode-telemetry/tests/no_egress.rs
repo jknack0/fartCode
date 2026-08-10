@@ -10,11 +10,14 @@
 //!
 //! Three rules, all about *capability* rather than intent:
 //!
-//! 1. The manifest declares no HTTP client, socket library, TLS stack, or
-//!    async runtime with networking. The workspace manifest still lists
-//!    `reqwest` under "declared for integrations/**telemetry**"; that
-//!    reservation predates ADR-0038 item 7, and this test is what voids it
-//!    for this crate.
+//! 1. The manifest declares **only** the dependencies on [`ALLOWED_DEPS`].
+//!    An allowlist, not a denylist: a denylist passes by default, so it
+//!    tests the imagination of whoever wrote it rather than the constraint
+//!    — the next HTTP crate, or a wrapper around one, sails straight
+//!    through a list of names nobody thought of. The workspace manifest
+//!    still lists `reqwest` under "declared for integrations/**telemetry**";
+//!    that reservation predates ADR-0038 item 7, and this rule is what
+//!    voids it for this crate.
 //! 2. No source file names a network or subprocess API — the routes that
 //!    need no new dependency at all (`std::net`, or shelling out).
 //! 3. No source file performs I/O of any kind. That is the positive form
@@ -23,7 +26,7 @@
 //!
 //! It deliberately does not inspect transitive dependencies. `serde` could
 //! in principle pull in the world; what matters is that nothing *here* can
-//! call it. Keeping this crate's own dependency list to one entry is what
+//! call it. Keeping this crate's own dependency list to two entries is what
 //! makes the claim verifiable by eye as well as by test.
 //!
 //! Comment lines are stripped before matching. The modules genuinely need
@@ -37,23 +40,12 @@ fn crate_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Dependency names that would give this crate a way off the machine.
-const FORBIDDEN_DEPS: &[&str] = &[
-    "reqwest",
-    "hyper",
-    "ureq",
-    "isahc",
-    "attohttpc",
-    "tungstenite",
-    "socket2",
-    "tonic",
-    "quinn",
-    "rustls",
-    "native-tls",
-    "openssl",
-    "tokio",
-    "async-std",
-];
+/// Every dependency this crate may declare, in any dependency table.
+///
+/// **Adding an entry is the reviewable act.** It is a claim that the crate
+/// still cannot reach anything off this machine, and it belongs in the same
+/// change as the ADR that allows it.
+const ALLOWED_DEPS: &[&str] = &["serde", "serde_json"];
 
 /// Source substrings that would mean egress with no new dependency.
 ///
@@ -114,22 +106,80 @@ fn code() -> Vec<(PathBuf, String)> {
     out
 }
 
-#[test]
-fn the_manifest_declares_no_way_to_reach_the_network() {
-    let manifest = std::fs::read_to_string(crate_root().join("Cargo.toml")).unwrap();
-    let declarations: String = manifest
-        .lines()
-        .filter(|line| !line.trim_start().starts_with('#'))
-        .collect::<Vec<_>>()
-        .join("\n");
+/// Dependency-table keys declared in this crate's manifest.
+///
+/// A deliberately small hand parser rather than a TOML crate: adding a
+/// dependency to prove the crate has none would be its own joke, and the
+/// manifest's shape is fixed and one screen long. It reads every
+/// `[...dependencies...]` table (including `[target.'...'.dependencies]`)
+/// and takes the key left of the first `=`.
+fn declared_deps(manifest: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_deps = false;
+    for line in manifest.lines() {
+        let line = line.trim();
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') {
+            in_deps = line.trim_end_matches(']').ends_with("dependencies");
+            continue;
+        }
+        if !in_deps {
+            continue;
+        }
+        if let Some((key, _)) = line.split_once('=') {
+            let key = key.trim().trim_matches('"');
+            if !key.is_empty() {
+                out.push(key.to_string());
+            }
+        }
+    }
+    out
+}
 
-    for dep in FORBIDDEN_DEPS {
+#[test]
+fn the_manifest_declares_only_allowlisted_dependencies() {
+    let manifest = std::fs::read_to_string(crate_root().join("Cargo.toml")).unwrap();
+    let declared = declared_deps(&manifest);
+
+    // The guard must see something, or it is passing on an empty parse.
+    assert!(
+        declared.contains(&"serde".to_string()),
+        "parsed no dependency tables from the manifest — the guard went blind: {declared:?}"
+    );
+
+    for dep in &declared {
         assert!(
-            !declarations.contains(dep),
-            "fartcode-telemetry must not depend on `{dep}` — ADR-0038 item 7: no metric \
-             leaves the machine. If a signal genuinely needs it, the ADR changes first."
+            ALLOWED_DEPS.contains(&dep.as_str()),
+            "fartcode-telemetry declares `{dep}`, which is not on this test's allowlist \
+             ({ALLOWED_DEPS:?}). ADR-0038 item 7: no metric leaves the machine, and this \
+             crate performs no I/O at all. If a signal genuinely needs a new dependency, \
+             add it here in the same change — and say why."
         );
     }
+}
+
+/// The allowlist is only as good as its ability to reject.
+#[test]
+fn the_dependency_parser_sees_a_new_entry() {
+    let manifest = "\
+[package]
+name = \"fartcode-telemetry\"
+
+[dependencies]
+serde = { workspace = true }
+reqwest = \"0.12\"
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = \"0.2\"
+";
+    let declared = declared_deps(manifest);
+    assert_eq!(declared, ["serde", "reqwest", "serde_json", "libc"]);
+    assert!(declared.iter().any(|d| !ALLOWED_DEPS.contains(&d.as_str())));
 }
 
 #[test]

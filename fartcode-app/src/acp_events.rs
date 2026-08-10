@@ -134,16 +134,18 @@ impl SessionEvents for TauriAcpEvents {
                 flipped.insert(conversation_id.to_string(), turn_id);
                 drop(flipped);
                 if let Some(app) = self.app.try_state::<std::sync::Arc<crate::app::App>>() {
-                    // E19-04 (#73; ADR-0038 item 7): the memory-value scan
-                    // reads `models`, which exists nowhere else — the
-                    // reducer's state dies with the session (ADR-0029 item
-                    // 5) and nothing persists a transcript. It runs BEFORE
-                    // the flip because an advancing settle moves the card
-                    // out of the column the observation is about. Bounded,
-                    // idempotent per session, and incapable of failing the
-                    // flip: it returns `()` and logs.
-                    crate::telemetry::observe_acp_session(&app, conversation_id, models);
-                    crate::dispatch::flip_issues_for_conversation(&app, conversation_id);
+                    // E19-04 (#73; ADR-0038 item 7): `models` is borrowed
+                    // down to the settle so memory-value telemetry can read
+                    // it — it exists nowhere else, since the reducer's state
+                    // dies with the session (ADR-0029 item 5) and nothing
+                    // persists a transcript. The recording happens only if
+                    // the step engine agrees a step settled, so the turns it
+                    // refuses cost nothing and record nothing.
+                    crate::dispatch::flip_issues_for_conversation_observed(
+                        &app,
+                        conversation_id,
+                        models,
+                    );
                 }
             }
         }

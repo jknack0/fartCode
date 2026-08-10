@@ -24,7 +24,7 @@ use fartcode_acp::transcript::{
 };
 use fartcode_acp::Lifecycle;
 use fartcode_app_lib::app::App;
-use fartcode_app_lib::{step_engine, telemetry};
+use fartcode_app_lib::{dispatch, step_engine, telemetry};
 use fartcode_core::conversations::{ConversationStore, CreateConversationParams};
 use fartcode_core::issues::{Issue, NewIssue};
 use fartcode_core::projects::ProjectStore;
@@ -205,9 +205,20 @@ impl Fixture {
     }
 
     fn report(&self) -> fartcode_telemetry::memory::MemoryValue {
-        telemetry::memory_value(&self.app, &self.project_id, DEFAULT_WINDOW_DAYS)
+        self.report_over(DEFAULT_WINDOW_DAYS)
+    }
+
+    /// A report over an explicit window. Used where the fixture's dates are
+    /// fixed literals and the test is about something other than the
+    /// window — otherwise the assertion would start failing on a calendar,
+    /// not on a regression.
+    fn report_over(&self, window_days: u32) -> fartcode_telemetry::memory::MemoryValue {
+        telemetry::memory_value(&self.app, &self.project_id, window_days)
     }
 }
+
+/// Wide enough that any fixed fixture date is inside it.
+const ALL_TIME_DAYS: u32 = 100_000;
 
 // -- transcript construction -------------------------------------------------
 
@@ -222,6 +233,22 @@ fn tool(kind: ToolItemKind, seq: u64, path: &str) -> TranscriptItem {
         None,
     );
     item.path = Some(path.to_string());
+    TranscriptItem::Tool(item)
+}
+
+/// An `execute-tool-call` carrying a shell command line — the shape
+/// `classify_shell` reads.
+fn exec(seq: u64, command: &str) -> TranscriptItem {
+    let mut item = ToolCallItem::base(
+        ToolItemKind::ExecuteToolCall,
+        format!("tool-{seq}"),
+        seq,
+        format!("call-{seq}"),
+        "shell".into(),
+        ToolStatus::Done,
+        None,
+    );
+    item.command = Some(command.to_string());
     TranscriptItem::Tool(item)
 }
 
@@ -280,7 +307,7 @@ fn a_session_that_read_the_dossier_is_recorded_as_citing() {
     let rel = issue.dossier_path.clone().unwrap();
     let conversation = fx.conversation(&task_id);
 
-    telemetry::observe_acp_session(
+    dispatch::flip_issues_for_conversation_observed(
         &fx.app,
         &conversation,
         &models(
@@ -309,7 +336,7 @@ fn the_seeded_prompt_alone_is_not_a_citation() {
     let rel = issue.dossier_path.clone().unwrap();
     let conversation = fx.conversation(&task_id);
 
-    telemetry::observe_acp_session(
+    dispatch::flip_issues_for_conversation_observed(
         &fx.app,
         &conversation,
         &models(
@@ -338,7 +365,7 @@ fn an_unrelated_path_containing_the_slug_does_not_count() {
     let (_issue, task_id) = fx.card_mid_step("OAuth login");
     let conversation = fx.conversation(&task_id);
 
-    telemetry::observe_acp_session(
+    dispatch::flip_issues_for_conversation_observed(
         &fx.app,
         &conversation,
         &models(
@@ -354,17 +381,19 @@ fn an_unrelated_path_containing_the_slug_does_not_count() {
     assert_eq!(fx.report().citations.not_cited, 1);
 }
 
-/// One session is one observation however many of its turns settle Done —
-/// the ACP hook fires per turn and each scan is a superset of the last.
+/// **One settled step run is one row**, and the step engine is what says
+/// so. The ACP hook fires on every turn that finishes Done and each scan is
+/// a superset of the last, but only the first is a settle the engine
+/// accepts — the rest are tombstoned and must record nothing at all.
 #[test]
-fn re_observing_the_same_session_does_not_double_count() {
+fn only_the_turn_the_engine_settles_is_recorded() {
     let fx = fixture();
     let (issue, task_id) = fx.card_mid_step("OAuth login");
     let rel = issue.dossier_path.clone().unwrap();
     let conversation = fx.conversation(&task_id);
 
     for _ in 0..3 {
-        telemetry::observe_acp_session(
+        dispatch::flip_issues_for_conversation_observed(
             &fx.app,
             &conversation,
             &models(
@@ -378,6 +407,78 @@ fn re_observing_the_same_session_does_not_double_count() {
     assert_eq!(report.citations.cited_read, 1);
 }
 
+/// The confounder, surfaced rather than buried: the step prompt tells every
+/// agent to append a section, so a session that only wrote is doing what it
+/// was told. It is not a citation, and the report says how many there were.
+#[test]
+fn writing_without_reading_is_counted_and_named() {
+    let fx = fixture();
+    let (issue, task_id) = fx.card_mid_step("OAuth login");
+    let rel = issue.dossier_path.clone().unwrap();
+    let conversation = fx.conversation(&task_id);
+
+    dispatch::flip_issues_for_conversation_observed(
+        &fx.app,
+        &conversation,
+        &models(
+            vec![
+                message(0, Role::User, &format!("decision log at `{rel}`")),
+                tool(ToolItemKind::ModifyFileToolCall, 1, &rel),
+            ],
+            Some(10_000),
+        ),
+    );
+
+    let report = fx.report();
+    assert_eq!(report.citations.not_cited, 1);
+    assert_eq!(report.citations.wrote_without_reading, 1);
+    assert!(
+        report
+            .citations
+            .label()
+            .contains("what the step prompt asks for"),
+        "{}",
+        report.citations.label()
+    );
+}
+
+/// Shell intent, through the real adapter: `git add <dossier>` is the
+/// staging the prompt's own instruction leads to and must not be a
+/// citation, while the `rg` the seeded skill teaches must be.
+#[test]
+fn shell_commands_land_in_the_right_tier_through_the_adapter() {
+    let staged = {
+        let fx = fixture();
+        let (issue, task_id) = fx.card_mid_step("OAuth login");
+        let rel = issue.dossier_path.clone().unwrap();
+        let conversation = fx.conversation(&task_id);
+        dispatch::flip_issues_for_conversation_observed(
+            &fx.app,
+            &conversation,
+            &models(vec![exec(0, &format!("git add {rel}"))], Some(10_000)),
+        );
+        fx.report().citations
+    };
+    assert_eq!(staged.not_cited, 1, "staging is authorship");
+    assert_eq!(staged.wrote_without_reading, 1);
+
+    let grepped = {
+        let fx = fixture();
+        let (_issue, task_id) = fx.card_mid_step("OAuth login");
+        let conversation = fx.conversation(&task_id);
+        dispatch::flip_issues_for_conversation_observed(
+            &fx.app,
+            &conversation,
+            &models(
+                vec![exec(0, "rg -n 'rate limit' docs/features/")],
+                Some(10_000),
+            ),
+        );
+        fx.report().citations
+    };
+    assert_eq!(grepped.cited_read, 1, "the taught grep is a real citation");
+}
+
 /// The durable half of the re-ask convention: tags committed in the agent's
 /// own dossier section, read from the repository on demand.
 #[test]
@@ -388,12 +489,13 @@ fn re_ask_tags_in_a_committed_section_are_read_from_the_dossier() {
         &issue,
         &task_id,
         &format!(
-            "\n## Grill — 2026-08-09\n\n\
+            "\n## Grill — {}\n\n\
              Settled the provider question.\n\n\
              {TAG_MEMORY} Which auth provider? — from the earlier dossier\n\
              {TAG_MEMORY} Token TTL? — same place\n\
              {TAG_MEMORY} Refresh strategy? — same place\n\
-             {TAG_HUMAN} Should refresh tokens rotate?\n"
+             {TAG_HUMAN} Should refresh tokens rotate?\n",
+            today()
         ),
     );
 
@@ -401,6 +503,34 @@ fn re_ask_tags_in_a_committed_section_are_read_from_the_dossier() {
     assert_eq!(report.dossiers_scanned, 1);
     // 1 of 4 clarifications went back to the human.
     assert_eq!(report.re_ask.rate(), Some(0.25));
+    assert_eq!(report.sections_undated, 0);
+}
+
+/// The window has to bound the dossier half too — otherwise the report is
+/// labelled "the last 90 days" over a figure covering all history. A
+/// section dated before it is out; a section with no date cannot be placed
+/// and is excluded and counted, rather than quietly treated as recent.
+#[test]
+fn dossier_sections_outside_the_window_or_undated_are_excluded() {
+    let fx = fixture();
+    let (issue, task_id) = fx.card_mid_step("OAuth login");
+    fx.append_to_dossier(
+        &issue,
+        &task_id,
+        &format!(
+            "\n## Grill — 2019-01-01\n\n\
+             {TAG_HUMAN} Ancient question?\n\
+             {TAG_HUMAN} Another ancient question?\n\
+             \n## Plan\n\n\
+             {TAG_HUMAN} Undated question?\n"
+        ),
+    );
+
+    let report = fx.report();
+    assert_eq!(report.dossiers_scanned, 1);
+    assert_eq!(report.sections_undated, 1);
+    // Nothing inside the window said anything — Unknown, not 100%.
+    assert_eq!(report.re_ask.rate(), None);
 }
 
 /// The degenerate case the ticket names: untagged work must not read as
@@ -415,7 +545,11 @@ fn an_untagged_project_reports_re_ask_as_unknown() {
         "\n## Plan — 2026-08-09\n\nChose PKCE. No clarifications were needed.\n",
     );
     let conversation = fx.conversation(&task_id);
-    telemetry::observe_acp_session(&fx.app, &conversation, &models(Vec::new(), Some(1_000)));
+    dispatch::flip_issues_for_conversation_observed(
+        &fx.app,
+        &conversation,
+        &models(Vec::new(), Some(1_000)),
+    );
 
     let report = fx.report();
     assert_eq!(report.re_ask.rate(), None);
@@ -496,7 +630,7 @@ fn one_landed_feature_is_a_point_not_a_trend() {
         .join("\n");
     std::fs::write(&path, text).unwrap();
 
-    let (kind, caveat) = fx.report().time_to_land.read();
+    let (kind, caveat) = fx.report_over(ALL_TIME_DAYS).time_to_land.read();
     assert_eq!(kind, TimeToLandKind::SinglePoint { hours: 48.0 });
     // And the number never arrives without the sentence.
     assert!(caveat.contains("Trend, not attribution"));
@@ -528,7 +662,11 @@ fn a_card_without_a_dossier_is_not_counted() {
     let (issue, task_id) = fx.card_mid_step("No memory here");
     assert!(issue.dossier_path.is_none(), "consent declined, no dossier");
     let conversation = fx.conversation(&task_id);
-    telemetry::observe_acp_session(&fx.app, &conversation, &models(Vec::new(), Some(1_000)));
+    dispatch::flip_issues_for_conversation_observed(
+        &fx.app,
+        &conversation,
+        &models(Vec::new(), Some(1_000)),
+    );
     assert_eq!(fx.report().sessions_observed, 0);
 }
 
@@ -556,10 +694,14 @@ fn a_conversation_with_no_task_records_nothing() {
         })
         .unwrap()
         .id;
-    telemetry::observe_acp_session(&fx.app, &conversation, &models(Vec::new(), Some(1_000)));
+    dispatch::flip_issues_for_conversation_observed(
+        &fx.app,
+        &conversation,
+        &models(Vec::new(), Some(1_000)),
+    );
     assert_eq!(fx.report().sessions_observed, 0);
     // An unknown conversation id is equally inert.
-    telemetry::observe_acp_session(&fx.app, "nope", &models(Vec::new(), None));
+    dispatch::flip_issues_for_conversation_observed(&fx.app, "nope", &models(Vec::new(), None));
     assert_eq!(fx.report().sessions_observed, 0);
 }
 
@@ -571,7 +713,7 @@ fn the_store_is_scoped_to_its_project() {
     let (issue, task_id) = fx.card_mid_step("OAuth login");
     let rel = issue.dossier_path.clone().unwrap();
     let conversation = fx.conversation(&task_id);
-    telemetry::observe_acp_session(
+    dispatch::flip_issues_for_conversation_observed(
         &fx.app,
         &conversation,
         &models(vec![tool(ToolItemKind::ReadToolCall, 0, &rel)], Some(1_000)),
@@ -586,21 +728,43 @@ fn the_store_is_scoped_to_its_project() {
 // -- the PTY path ------------------------------------------------------------
 
 /// A PTY agent session leaves fartCode a 64 KiB scrollback ring and nothing
-/// else — no roles, no tool calls, no usage metadata. The two tests below
-/// are the only place the managed-state lookup, the base64 tail decode, the
-/// ANSI strip and the truncated-fidelity rule are exercised together.
+/// else — no roles, no tool calls, no usage metadata. Worse, the ring
+/// **echoes the bracket-pasted step prompt**, which names the dossier and
+/// demonstrates both clarification tags, so anything scanned out of it is
+/// the instruction reflected back.
+///
+/// These tests drive `dispatch::flip_for_exited_agent` — the hook the
+/// terminal pump actually calls — so deleting the capture from it fails
+/// them.
 struct Pty {
     app: tauri::App<tauri::test::MockRuntime>,
     terminal_id: String,
 }
 
-fn pty_session(task_id: &str, echo: &str) -> Pty {
+/// The real seeded prompt for this card, as the terminal would echo it.
+/// Not a hand-written lookalike: if the instruction changes, the fixture
+/// changes with it.
+fn echoed_prompt(column: &str, rel: &str) -> String {
+    fartcode_core::skills::append_instruction(column, rel)
+}
+
+/// Today, as an agent section heading dates it. Keeps the dossier fixtures
+/// inside the report window however long this test lives.
+fn today() -> String {
+    fartcode_core::dossiers::now_stamp()[..10].to_string()
+}
+
+fn pty_session(app_state: &Arc<App>, task_id: &str, echo: &str) -> Pty {
     use fartcode_app_lib::terminals::{TerminalManager, TerminalSpec};
     use tauri::Manager as _;
 
     let app = tauri::test::mock_app();
+    app.manage(app_state.clone());
     let manager = Arc::new(TerminalManager::new(app.handle().clone()));
     let cwd = std::env::temp_dir();
+    // Single-quoted for `sh`, so the prompt's own quotes cannot end the
+    // string.
+    let escaped = echo.replace('\'', "'\\''");
     let terminal_id = manager
         .open(TerminalSpec {
             task_id,
@@ -608,7 +772,7 @@ fn pty_session(task_id: &str, echo: &str) -> Pty {
             agent: Some("claude"),
             tmux: false,
             program: "/bin/sh",
-            args: &["-c".into(), format!("printf '%s\\n' '{echo}'; sleep 30")],
+            args: &["-c".into(), format!("printf '%s\\n' '{escaped}'; sleep 30")],
             env: &[],
             remove: &[],
             cwd: &cwd,
@@ -631,38 +795,73 @@ fn pty_session(task_id: &str, echo: &str) -> Pty {
     Pty { app, terminal_id }
 }
 
+/// **The bug this fix round exists for.** The terminal echoes the seeded
+/// prompt verbatim; that prompt contains the dossier path and both tag
+/// literals. Scanned, every PTY step scored a citation and a fabricated
+/// 50/50 re-ask — on the mainstream dispatch path. Both must be Unknown.
 #[test]
-fn a_pty_session_that_mentions_the_dossier_is_a_weak_citation() {
+fn an_echoed_prompt_in_the_scrollback_scores_nothing() {
     let fx = fixture();
     let (issue, task_id) = fx.card_mid_step("OAuth login");
     let rel = issue.dossier_path.clone().unwrap();
-    let pty = pty_session(&task_id, &format!("read {rel}"));
+    let prompt = echoed_prompt("In Progress", &rel);
+    assert!(prompt.contains(&rel), "the fixture must contain the path");
+    assert!(prompt.contains(TAG_MEMORY) && prompt.contains(TAG_HUMAN));
 
-    telemetry::observe_pty_session(pty.app.handle(), &fx.app, &task_id, &pty.terminal_id);
+    let pty = pty_session(&fx.app, &task_id, &prompt);
+    dispatch::flip_for_exited_agent(pty.app.handle(), &task_id, &pty.terminal_id);
 
     let report = fx.report();
     assert_eq!(report.sessions_observed, 1);
-    // A scrollback ring has no tool-call structure, so the strongest a PTY
-    // session can score is a mention.
-    assert_eq!(report.citations.cited_mention, 1);
+    // Not a citation of any tier.
     assert_eq!(report.citations.cited_read, 0);
+    assert_eq!(report.citations.cited_mention, 0);
+    assert_eq!(report.citations.not_cited, 0);
+    assert_eq!(report.citations.unknown, 1);
+    assert_eq!(report.citations.rate(), None);
+    // Not a re-ask rate either — the tags in it are the instruction.
+    assert_eq!(report.re_ask.rate(), None);
+    assert!(report.re_ask.label().contains("could not be read"));
 }
 
-/// The honest half: silence from a 64 KiB window over an hour-long session
-/// is not a "no", and must never be counted as a miss.
+/// A whole project on the PTY path: every number is Unknown, and none of
+/// them is a plausible-looking lie.
 #[test]
-fn a_pty_session_with_no_mention_is_unknown_not_a_miss() {
+fn a_pty_only_project_reports_unknown_across_the_board() {
     let fx = fixture();
-    let (_issue, task_id) = fx.card_mid_step("OAuth login");
-    let pty = pty_session(&task_id, "nothing to see here");
+    for title in ["OAuth login", "Billing retries", "Search ranking"] {
+        let (issue, task_id) = fx.card_mid_step(title);
+        let rel = issue.dossier_path.clone().unwrap();
+        let pty = pty_session(&fx.app, &task_id, &echoed_prompt("In Progress", &rel));
+        dispatch::flip_for_exited_agent(pty.app.handle(), &task_id, &pty.terminal_id);
+    }
+    let report = fx.report();
+    assert_eq!(report.sessions_observed, 3);
+    assert_eq!(report.citations.unknown, 3);
+    assert_eq!(report.citations.rate(), None, "not 100%");
+    assert_eq!(report.re_ask.rate(), None, "not 50%");
+    assert!(matches!(
+        report.tokens_saved,
+        fartcode_telemetry::TokensSaved::Insufficient { .. }
+    ));
+}
 
-    telemetry::observe_pty_session(pty.app.handle(), &fx.app, &task_id, &pty.terminal_id);
+/// Even a scrollback that names the dossier for a real reason scores
+/// nothing: with the prompt echoed into the same blob there is no way to
+/// tell the two apart, and guessing is how the metric flattered itself.
+#[test]
+fn a_pty_mention_is_unknown_rather_than_a_guess() {
+    let fx = fixture();
+    let (issue, task_id) = fx.card_mid_step("OAuth login");
+    let rel = issue.dossier_path.clone().unwrap();
+    let pty = pty_session(&fx.app, &task_id, &format!("cat {rel}"));
+    dispatch::flip_for_exited_agent(pty.app.handle(), &task_id, &pty.terminal_id);
 
     let report = fx.report();
     assert_eq!(report.citations.unknown, 1);
-    assert_eq!(report.citations.not_cited, 0);
-    assert_eq!(report.citations.rate(), None, "no conclusive session");
-    // With no usage metadata on this path it takes no side in the token
+    assert_eq!(report.citations.unknown_with_hit, 0);
+    assert_eq!(report.citations.rate(), None);
+    // No usage metadata on this path, so it takes no side in the token
     // contrast either.
     assert!(matches!(
         report.tokens_saved,
@@ -672,4 +871,31 @@ fn a_pty_session_with_no_mention_is_unknown_not_a_miss() {
             ..
         }
     ));
+}
+
+/// ...but the tags it committed to its dossier still count. This is what
+/// "little is lost" means concretely.
+#[test]
+fn a_pty_step_is_still_counted_through_its_committed_section() {
+    let fx = fixture();
+    let (issue, task_id) = fx.card_mid_step("OAuth login");
+    let rel = issue.dossier_path.clone().unwrap();
+    fx.append_to_dossier(
+        &issue,
+        &task_id,
+        &format!(
+            "\n## In Progress — {}\n\n\
+             Settled the provider question.\n\n\
+             {TAG_MEMORY} Which auth provider? — from the earlier dossier\n\
+             {TAG_HUMAN} Should refresh tokens rotate?\n",
+            today()
+        ),
+    );
+    let pty = pty_session(&fx.app, &task_id, &echoed_prompt("In Progress", &rel));
+    dispatch::flip_for_exited_agent(pty.app.handle(), &task_id, &pty.terminal_id);
+
+    let report = fx.report();
+    // The transcript said nothing; the committed section said 1 of 2.
+    assert_eq!(report.re_ask.rate(), Some(0.5));
+    assert_eq!(report.citations.rate(), None);
 }
