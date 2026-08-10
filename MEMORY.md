@@ -4,7 +4,7 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
-## #81 worktree pool segments LANDED (2026-08-09) — ADR-0039
+## #81 worktree pool segments LANDED (2026-08-09, fef5f49 + 8ef46f2) — ADR-0039
 
 Pool dirs are now unique per project: `projects.worktree_pool_segment`
 (migration 0010) stores `<safePathSegment>-<hash8(stored path)>`; the
@@ -14,9 +14,30 @@ moves+repairs (`git worktree repair`, new `GitOps::worktree_repair`)
 colliding projects' worktrees out of shared pools. Deleting a project can
 no longer destroy a same-basename sibling's worktrees (FIRST-58). The
 per-project `worktree_directory` setting is finally consumed by
-`worktree_pool_path` (invalid override falls back to app default). Tests:
-projects_integration.rs covers delete isolation, collision adoption,
-sole-adopter, override; migration COUNT assertions bumped to 11.
+`worktree_pool_path` (invalid override falls back to app default).
+Review round: 9 findings, 8 CONFIRMED (1 high), 1 refuted — all fixed in
+8ef46f2. The hardened invariants to remember:
+- Gate is set ONLY on a fully successful pass; partial passes retry next
+  startup (stamping is `WHERE segment IS NULL`, moved rows repoint via the
+  `!old_path.exists()` branch — re-runs are churn-free).
+- Adoption is override-aware: legacy pools under the app default are
+  relocated to the project's override root (pre-#81 the override was dead,
+  so that's where every legacy pool lives).
+- Repairs are a post-move SWEEP over every row now under the new pool;
+  any repair failure blocks the stamp → retried, never half-linked.
+- Sole-member groups check the segment isn't already held before adopting
+  it in place (crash-between-stamps can't rebirth the shared-pool hazard).
+- Delete teardown canonicalizes both paths (symlink guard) and SKIPS
+  `remove_dir_all` when another project's workspace rows still live in
+  the pool dir (half-adopted leftovers survive the keeper's delete).
+- `remove_stale_path` refuses unless cleanliness is PROVEN, and
+  `CliGit::is_worktree_clean` errors on non-zero exit (broken linkage is
+  UNKNOWN, not clean).
+LESSON: the round-1 HIGH was masked by a flat test fixture — production
+worktrees nest under the branch prefix (`pool/fartCode/<branch>`), the
+fixtures used `b1`. Fixtures must mirror production path layout.
+Suites: 881 passed / 0 failed / 1 ignored (env-gated probe); migration
+COUNT assertions at 11; fmt + clippy clean.
 
 ## #76 memory value dashboard LANDED (2026-08-09) — E19 CLOSED (#69)
 
