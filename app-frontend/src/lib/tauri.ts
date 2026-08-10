@@ -75,6 +75,17 @@ export type FartcodeEvent =
    * (v3 system rules). Derived state: nothing is stored, so it lives only
    * for this session. */
   | { type: "step:settled"; issueId: string; projectId: string; columnId: string; taskId: string }
+  /** The chain guard refused the NEXT automatic launch (#82): depth cap,
+   * advance_to cycle, or exhausted project budget. The card stays on
+   * `columnId`; the refusal is also a durable step-ledger hold row. */
+  | {
+      type: "step:chain_held";
+      issueId: string;
+      projectId: string;
+      columnId: string;
+      targetColumnId: string | null;
+      reason: string;
+    }
   | { type: "setting:changed"; key: string };
 
 export function listProjects(): Promise<ProjectDto[]> {
@@ -199,6 +210,11 @@ export interface ProjectSettingsDto {
    * row, so a DTO that omitted this key would clear the app's memory of
    * the scaffold and resurrect files the user deleted. Never a UI field. */
   featureLogSeededVersion?: number | null;
+  /** #82 chain guard: cap on consecutive automatic step launches per card
+   * (null = built-in default of 3) and an optional per-project token
+   * budget (null = no budget). */
+  stepChainDepthCap?: number | null;
+  stepBudgetTokens?: number | null;
   preservePatterns?: string[] | null;
   shellSetup?: string | null;
   scripts?: ScriptsDto | null;
@@ -1499,6 +1515,27 @@ export interface ParkedStepDto {
  * query. Read-only: no state change, no events. */
 export function stepParkedList(projectId: string): Promise<ParkedStepDto[]> {
   return invoke("step_parked_list", { projectId });
+}
+
+/** One step-ledger row (#82): a launch (provider/model, auto vs
+ * human-confirmed, settle-backfilled token usage) or a chain-guard hold
+ * (reason + refused target). */
+export interface LedgerEntryDto {
+  id: string;
+  issueId: string;
+  projectId: string;
+  columnId: string;
+  kind: "launch" | "hold";
+  auto: boolean;
+  provider: string | null;
+  model: string | null;
+  reason: string | null;
+  targetColumnId: string | null;
+  tokensUsed: number | null;
+  createdAt: string;
+}
+export function stepLedgerList(issueId: string): Promise<LedgerEntryDto[]> {
+  return invoke("step_ledger_list", { issueId });
 }
 
 /** Project-scoped (PM chat) conversations (E17-04). */

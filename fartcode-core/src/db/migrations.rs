@@ -73,6 +73,7 @@ fn sql_for_tag(tag: &str) -> Option<&'static str> {
         "0010_project_pool_segment" => Some(include_str!(
             "../../migrations/0010_project_pool_segment.sql"
         )),
+        "0011_step_ledger" => Some(include_str!("../../migrations/0011_step_ledger.sql")),
         _ => None,
     }
 }

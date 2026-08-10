@@ -385,7 +385,21 @@ pub struct BaseProjectSettings {
     /// Base, not shareable, for the same reason as `feature_dossiers`: it
     /// describes what happened to this machine's checkout.
     pub feature_log_seeded_version: Option<u32>,
+    /// Chain-guard config (#82). `step_chain_depth_cap` caps consecutive
+    /// AUTOMATIC agent-step launches (settle-chained, no human confirm)
+    /// per card; `None` = the built-in default
+    /// [`DEFAULT_STEP_CHAIN_DEPTH_CAP`]. `step_budget_tokens` is an
+    /// optional per-project ceiling on total provider-reported token
+    /// usage in the step ledger; `None` = no budget. Both are base-only:
+    /// spend guardrails on this machine's launches are the local user's,
+    /// not something a teammate's `.fartCode.json` should loosen.
+    pub step_chain_depth_cap: Option<u32>,
+    pub step_budget_tokens: Option<i64>,
 }
+
+/// Default per-card chain depth cap (#82): after this many consecutive
+/// automatic launches with no human confirm, the chain holds.
+pub const DEFAULT_STEP_CHAIN_DEPTH_CAP: u32 = 3;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -452,6 +466,10 @@ pub struct ProjectSettings {
     /// [`BaseProjectSettings::feature_log_seeded_version`]. App-managed
     /// bookkeeping, not a user-facing switch.
     pub feature_log_seeded_version: Option<u32>,
+    /// Chain-guard config (#82) — see
+    /// [`BaseProjectSettings::step_chain_depth_cap`].
+    pub step_chain_depth_cap: Option<u32>,
+    pub step_budget_tokens: Option<i64>,
     // -- shareable (.fartCode.json-synced) --
     pub preserve_patterns: Option<Vec<String>>,
     pub shell_setup: Option<String>,
@@ -474,6 +492,8 @@ impl ProjectSettings {
             workspace_provider: self.workspace_provider.clone(),
             feature_dossiers: self.feature_dossiers,
             feature_log_seeded_version: self.feature_log_seeded_version,
+            step_chain_depth_cap: self.step_chain_depth_cap,
+            step_budget_tokens: self.step_budget_tokens,
         }
     }
 

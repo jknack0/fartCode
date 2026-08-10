@@ -221,6 +221,8 @@ impl DbSettingsStore {
             workspace_provider: base.workspace_provider,
             feature_dossiers: base.feature_dossiers,
             feature_log_seeded_version: base.feature_log_seeded_version,
+            step_chain_depth_cap: base.step_chain_depth_cap,
+            step_budget_tokens: base.step_budget_tokens,
             preserve_patterns: shareable.preserve_patterns,
             shell_setup: shareable.shell_setup,
             scripts: shareable.scripts,

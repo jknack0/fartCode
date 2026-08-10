@@ -193,6 +193,7 @@ pub fn run() {
             commands::steps::issue_enter_column,
             commands::steps::step_confirm,
             commands::steps::step_parked_list,
+            commands::steps::step_ledger_list,
             commands::files::write_workspace_file,
             commands::conversations::create_conversation,
             commands::conversations::list_conversations,

@@ -248,6 +248,34 @@ describe("wireStepEvents", () => {
     expect(useSteps.getState().byIssue["iss-1"]?.settledColumnId).toBe("col-progress");
   });
 
+  // #82: a chain hold rides in right after its StepSettled — both must
+  // stick, and the next launch clears them together.
+  it("keeps a chain hold alongside the settled flag until the next launch", async () => {
+    emit({
+      type: "step:settled",
+      issueId: "iss-1",
+      projectId: "p1",
+      columnId: "col-progress",
+      taskId: "task-1",
+    });
+    emit({
+      type: "step:chain_held",
+      issueId: "iss-1",
+      projectId: "p1",
+      columnId: "col-progress",
+      targetColumnId: "col-review",
+      reason: "depth",
+    });
+    const flags = useSteps.getState().byIssue["iss-1"];
+    expect(flags?.settledColumnId).toBe("col-progress");
+    expect(flags?.heldColumnId).toBe("col-progress");
+    expect(flags?.holdReason).toBe("depth");
+
+    emit({ ...LAUNCH, issueId: "iss-1" });
+    await flush();
+    expect(useSteps.getState().byIssue["iss-1"]?.heldColumnId).toBeUndefined();
+  });
+
   it("clears a park when the engine says it was cleared", () => {
     emit({
       type: "step:queued",

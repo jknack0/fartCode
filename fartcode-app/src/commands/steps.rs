@@ -72,6 +72,25 @@ pub async fn step_parked_list(
         .map_err(|e| e.to_string())?
 }
 
+/// The card's spend ledger (#82): every launch (with provider/model,
+/// human-confirmed vs settle-chained, and settle-backfilled token usage)
+/// and every chain-guard hold (with its reason), oldest first — the card
+/// detail's history and the visible record behind a `step:chain_held`
+/// hold. Read-only; one SQLite query, off the IPC thread like the other
+/// step commands.
+#[tauri::command]
+pub async fn step_ledger_list(
+    app: State<'_, Arc<App>>,
+    issue_id: String,
+) -> Result<Vec<fartcode_core::issues::ledger::LedgerEntry>, String> {
+    let app = app.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        app.ledger.list_for_issue(&issue_id).map_err(String::from)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

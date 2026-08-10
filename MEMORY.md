@@ -4,6 +4,37 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## #82 chain guard + step spend ledger LANDED (2026-08-09) — ADR-0040
+
+Run-mode column chains are now bounded and recorded. `chain_guard` in
+`step_engine::settle_issues_observed` (the ONE chaining site) refuses the
+next automatic launch on: cycle (visited set incl. the settling column),
+depth (default cap 3 consecutive auto launches, `step_chain_depth_cap`
+base setting), budget (`step_budget_tokens` vs summed reported tokens).
+Hold = card stays put + `step_ledger` hold row + StepSettled +
+StepChainHeld ("held · reason" card meta line; Spend section in card
+detail via `step_ledger_list`). Invariants to remember:
+- Chain state (`ChainState`) is MEMORY-ONLY, reset by every human gesture
+  (entry epoch, confirm); the ledger (migration 0011, table 12) is the
+  durable record. Restart forgets chain position by design.
+- Queue targets are never guarded — the confirm gate IS the human check,
+  and confirming resets depth.
+- Self-`advance_to` is already blocked by column validation; the guard's
+  `target == settled column` check is defense only (untestable via API).
+- Ledger ordering is `ORDER BY rowid` — `created_at` is second-granular
+  and uuid ids don't sort. Token backfill targets newest tokenless
+  launch row per (issue, column).
+- Budget fails CLOSED on ledger read error, but unreadable settings fall
+  back to default-cap/no-budget (never invent a budget).
+- Migration COUNT assertions now at 12 (tests/migrations.rs +
+  db_integration.rs); the 0009-upgrade test drops step_ledger too.
+- Nothing kills a running agent — the guard only refuses the next launch.
+DESIGN DEVIATIONS (frames pending, per #82's design gate): "held ·
+auto-run limit/loop detected/budget spent" copy on the card meta line;
+Spend section reuses card-detail-timeline styling; ProjectSettings rows
+"Step chain depth cap"/"Step token budget" as InlineInputs.
+Suites: 888 workspace tests + 243 frontend; fmt + clippy clean.
+
 ## #81 worktree pool segments LANDED (2026-08-09, fef5f49 + 8ef46f2) — ADR-0039
 
 Pool dirs are now unique per project: `projects.worktree_pool_segment`

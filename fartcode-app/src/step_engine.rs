@@ -78,6 +78,7 @@ use fartcode_core::events::{EventBus, InternalEvent};
 use fartcode_core::issues::columns::{
     compose_step_prompt, BoardColumn, ColumnKind, OnEnter, OnSettle,
 };
+use fartcode_core::issues::ledger::HoldReason;
 use fartcode_core::issues::{build_dispatch_prompt, Issue, Lane};
 use fartcode_core::settings::DEFAULT_AGENT;
 use fartcode_core::tasks::{TaskDto, TaskStore};
@@ -117,6 +118,25 @@ struct EngineState {
     /// issue id → session identities that have already settled that issue
     /// once. A consumed session's every later trigger is stale.
     consumed: HashMap<String, HashSet<String>>,
+    /// issue id → the card's CURRENT automatic chain (#82). Reset by any
+    /// human gesture (user entry epoch, step confirm); grown by
+    /// settle-chained launches and acted settles. Memory-only, same
+    /// doctrine as parks: after a restart the chain restarts from zero —
+    /// the durable record is the step ledger, the chain is the live
+    /// guard's working set.
+    chains: HashMap<String, ChainState>,
+}
+
+/// The per-card working set of the chain guard (#82).
+#[derive(Default, Debug, Clone)]
+struct ChainState {
+    /// Consecutive AUTOMATIC launches (settle-chained, no human confirm)
+    /// since the last human gesture — compared against the depth cap.
+    auto_launches: u32,
+    /// Columns already run for this card in the current chain (including
+    /// the human-launched origin, added when its settle acts) — the cycle
+    /// detector's visited set.
+    visited: HashSet<String>,
 }
 
 /// What a settle trigger may do for one issue (decided atomically in
@@ -300,6 +320,42 @@ impl StepEngine {
         let mut st = self.lock();
         st.consumed.remove(issue_id);
         st.launches.remove(issue_id);
+        // A human gesture ends the automatic chain (#82): the next
+        // settle-advance counts from zero again.
+        st.chains.remove(issue_id);
+    }
+
+    /// Marks `column_id` as run for this card's current chain and, when
+    /// the launch was automatic (settle-chained), counts it against the
+    /// depth cap (#82).
+    fn note_chain_launch(&self, issue_id: &str, column_id: &str, auto: bool) {
+        let mut st = self.lock();
+        let chain = st.chains.entry(issue_id.to_string()).or_default();
+        chain.visited.insert(column_id.to_string());
+        if auto {
+            chain.auto_launches += 1;
+        }
+    }
+
+    /// Marks `column_id` as visited (an acted settle happened there) so a
+    /// backwards `advance_to` cannot relaunch it in this chain (#82).
+    fn note_chain_visited(&self, issue_id: &str, column_id: &str) {
+        let mut st = self.lock();
+        st.chains
+            .entry(issue_id.to_string())
+            .or_default()
+            .visited
+            .insert(column_id.to_string());
+    }
+
+    /// Snapshot of the card's chain state: (consecutive automatic
+    /// launches, visited columns).
+    fn chain_snapshot(&self, issue_id: &str) -> (u32, HashSet<String>) {
+        let st = self.lock();
+        st.chains
+            .get(issue_id)
+            .map(|c| (c.auto_launches, c.visited.clone()))
+            .unwrap_or_default()
     }
 
     /// Atomic confirm take (fix round, finding 7): verify-and-take the
@@ -317,6 +373,8 @@ impl StepEngine {
             return ParkTake::Stale(parked);
         }
         st.parked.remove(issue_id);
+        // A confirm is a human gesture: it ends the automatic chain (#82).
+        st.chains.remove(issue_id);
         st.launches.insert(
             issue_id.to_string(),
             LaunchEntry {
@@ -336,6 +394,7 @@ impl StepEngine {
         let mut st = self.lock();
         st.launches.remove(issue_id);
         st.consumed.remove(issue_id);
+        st.chains.remove(issue_id);
         st.parked.remove(issue_id)
     }
 
@@ -355,6 +414,16 @@ impl StepEngine {
         for id in launched {
             st.launches.remove(&id);
             st.consumed.remove(&id);
+            st.chains.remove(&id);
+        }
+        let chained: Vec<String> = st
+            .parked
+            .iter()
+            .filter(|(_, p)| p.project_id == project_id)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in chained {
+            st.chains.remove(&id);
         }
         let dropped: Vec<String> = st
             .parked
@@ -419,6 +488,16 @@ impl Default for StepEngine {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// How a step launch happened (#82): whether same-column re-entry may
+/// reattach, and whether the launch is AUTOMATIC (settle-chained, no
+/// human confirm) — which is what the chain guard and the spend ledger
+/// key on.
+#[derive(Debug, Clone, Copy)]
+struct LaunchMode {
+    reattach_ok: bool,
+    auto: bool,
 }
 
 /// Launch payload — mirrors `DispatchOutcome`'s contract (empty prompt +
@@ -657,8 +736,20 @@ fn enter_column_inner(
             let reattach_ok = prev_column_id.as_deref() == Some(column.id.as_str())
                 && !had_park_here
                 && !undelivered_here;
-            let (issue, launch) =
-                launch_step(app, issue, &column, reattach_ok, provider, model, effort)?;
+            // A non-user entry into a run column is a settle-chained
+            // (automatic) launch — no human confirmed it (#82).
+            let (issue, launch) = launch_step(
+                app,
+                issue,
+                &column,
+                LaunchMode {
+                    reattach_ok,
+                    auto: !user_epoch,
+                },
+                provider,
+                model,
+                effort,
+            )?;
             let step = if launch.reattached {
                 "reattached"
             } else {
@@ -734,7 +825,18 @@ pub fn confirm_step(app: &App, issue_id: &str) -> Result<EnterOutcome, String> {
     let (provider, model, effort) = resolve_agent(app, &issue, &column)?;
     // Never "reattach" here: a parked entry means THIS entry's session was
     // never started — confirm always launches (provision or new session).
-    let (issue, launch) = launch_step(app, issue, &column, false, provider, model, effort)?;
+    let (issue, launch) = launch_step(
+        app,
+        issue,
+        &column,
+        LaunchMode {
+            reattach_ok: false,
+            auto: false,
+        },
+        provider,
+        model,
+        effort,
+    )?;
     app.steps.mark_delivered(&issue.id);
     Ok(EnterOutcome {
         issue,
@@ -755,11 +857,12 @@ fn launch_step(
     app: &App,
     issue: Issue,
     column: &BoardColumn,
-    reattach_ok: bool,
+    mode: LaunchMode,
     provider: String,
     model: Option<String>,
     effort: Option<String>,
 ) -> Result<(Issue, StepLaunchInfo), String> {
+    let LaunchMode { reattach_ok, auto } = mode;
     let existing_task = match &issue.linked_task_id {
         Some(task_id) => app.tasks.get(task_id).map_err(String::from)?,
         None => None,
@@ -787,6 +890,20 @@ fn launch_step(
     if !reattached {
         app.steps
             .record_launch(&issue.id, &issue.project_id, &column.id);
+        // #82: chain bookkeeping (memory) + spend ledger (durable). The
+        // ledger write must never fail a launch — it is a record, not a
+        // gate; the gate already ran (chain guard, settle path).
+        app.steps.note_chain_launch(&issue.id, &column.id, auto);
+        if let Err(e) = app.ledger.record_launch(
+            &issue.id,
+            &issue.project_id,
+            &column.id,
+            auto,
+            &provider,
+            model.as_deref(),
+        ) {
+            tracing::warn!(issue = %issue.id, error = %e, "step ledger write failed");
+        }
     }
     let info = StepLaunchInfo {
         task,
@@ -906,6 +1023,20 @@ pub fn settle_issues_observed(
         // Same posture as the reindex above — bounded, off the main
         // thread, returns `()` and logs.
         crate::telemetry::observe_settled_step(app, &issue, &column, session, transcript);
+        // #82: backfill the ledger's launch row with the session's
+        // provider-reported token usage (the only usage metadata that
+        // reaches this process), and mark this column visited so a
+        // backwards `advance_to` cannot relaunch it in this chain. Both
+        // are records/bookkeeping — neither can fail the settle.
+        if let Some(tokens) = transcript.and_then(|t| t.context_used) {
+            if let Err(e) = app
+                .ledger
+                .record_tokens(&issue.id, &column.id, tokens as i64)
+            {
+                tracing::warn!(issue = %issue.id, error = %e, "ledger token backfill failed");
+            }
+        }
+        app.steps.note_chain_visited(&issue.id, &column.id);
         match column.on_settle {
             OnSettle::Hold => {
                 app.event_bus.send(InternalEvent::StepSettled {
@@ -947,17 +1078,143 @@ pub fn settle_issues_observed(
                         });
                         settled += 1;
                     }
-                    Some(target) => match enter_column(app, &issue.id, &target, None) {
-                        Ok(_) => settled += 1,
-                        Err(e) => {
-                            tracing::warn!(issue = %issue.id, error = %e, "settle advance failed")
+                    Some(target) => {
+                        // #82 chain guard: the ONE place automatic
+                        // launches chain. Nothing here touches a running
+                        // agent — a hold refuses the NEXT launch and
+                        // leaves the card where it settled.
+                        if let Some(reason) = chain_guard(app, &issue, &column, &target) {
+                            hold_chain(app, &issue, &column, &target, reason, task_id);
+                            settled += 1;
+                        } else {
+                            match enter_column(app, &issue.id, &target, None) {
+                                Ok(_) => settled += 1,
+                                Err(e) => {
+                                    tracing::warn!(issue = %issue.id, error = %e, "settle advance failed")
+                                }
+                            }
                         }
-                    },
+                    }
                 }
             }
         }
     }
     settled
+}
+
+/// The project's chain-guard config (#82): (depth cap, optional token
+/// budget). An unreadable settings row falls back to the default cap and
+/// NO budget — the cap alone still bounds spend, and inventing a budget
+/// that may not exist would freeze pipelines on a read error.
+fn chain_config(app: &App, project_id: &str) -> (u32, Option<i64>) {
+    use fartcode_core::projects::ProjectStore as _;
+    use fartcode_core::settings::DEFAULT_STEP_CHAIN_DEPTH_CAP;
+    let Ok(Some(project)) = app.projects.get(project_id) else {
+        return (DEFAULT_STEP_CHAIN_DEPTH_CAP, None);
+    };
+    match app
+        .settings
+        .get_project_settings(project_id, std::path::Path::new(&project.path))
+    {
+        Ok(s) => (
+            s.step_chain_depth_cap
+                .unwrap_or(DEFAULT_STEP_CHAIN_DEPTH_CAP),
+            s.step_budget_tokens,
+        ),
+        Err(e) => {
+            tracing::warn!(project_id, error = %e, "chain config unreadable — default cap, no budget");
+            (DEFAULT_STEP_CHAIN_DEPTH_CAP, None)
+        }
+    }
+}
+
+/// Decides whether the settle-chained launch of `target` must be refused
+/// (#82). `None` = safe to advance. Only a RUN-mode agent step can chain
+/// spend without a human — queue columns park behind the confirm gate,
+/// shelves and human gates are inert — so everything else passes.
+///
+/// Checks, in order:
+/// - **cycle**: `target` was already run (or settled) for this card in the
+///   current chain — including the column that just settled, so
+///   `advance_to` pointing at itself or backwards holds instead of
+///   looping;
+/// - **depth**: the card already chained the cap's worth of consecutive
+///   automatic launches with no human confirm;
+/// - **budget**: the project has a token budget and the ledger's known
+///   spend has reached it. A ledger that cannot be read while a budget is
+///   configured FAILS CLOSED (hold): "we could not check" must not spend.
+fn chain_guard(
+    app: &App,
+    issue: &Issue,
+    settled_column: &BoardColumn,
+    target_id: &str,
+) -> Option<HoldReason> {
+    let target = match app.columns.get(target_id) {
+        Ok(Some(c)) => c,
+        Ok(None) => return None, // vanished target: enter_column will refuse
+        Err(e) => {
+            tracing::warn!(issue = %issue.id, error = %e, "chain guard target read failed");
+            return None;
+        }
+    };
+    if target.kind != ColumnKind::AgentStep || target.on_enter != OnEnter::Run {
+        return None;
+    }
+    let (auto_launches, visited) = app.steps.chain_snapshot(&issue.id);
+    if visited.contains(target_id) || target_id == settled_column.id {
+        return Some(HoldReason::Cycle);
+    }
+    let (cap, budget) = chain_config(app, &issue.project_id);
+    if auto_launches >= cap {
+        return Some(HoldReason::Depth);
+    }
+    if let Some(budget) = budget {
+        match app.ledger.project_tokens_total(&issue.project_id) {
+            Ok(total) if total >= budget => return Some(HoldReason::Budget),
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(issue = %issue.id, error = %e, "budget check failed — holding");
+                return Some(HoldReason::Budget);
+            }
+        }
+    }
+    None
+}
+
+/// The guard's hold: the card stays on the settled column; the refusal is
+/// recorded durably (a `step_ledger` hold row — what the card detail
+/// shows) and announced live (`StepSettled` so the step-done accent
+/// paints, `StepChainHeld` with the reason for the card's hold line).
+fn hold_chain(
+    app: &App,
+    issue: &Issue,
+    column: &BoardColumn,
+    target_id: &str,
+    reason: HoldReason,
+    task_id: &str,
+) {
+    if let Err(e) = app.ledger.record_hold(
+        &issue.id,
+        &issue.project_id,
+        &column.id,
+        reason,
+        Some(target_id),
+    ) {
+        tracing::warn!(issue = %issue.id, error = %e, "ledger hold write failed");
+    }
+    app.event_bus.send(InternalEvent::StepSettled {
+        issue_id: issue.id.clone(),
+        project_id: issue.project_id.clone(),
+        column_id: column.id.clone(),
+        task_id: task_id.to_string(),
+    });
+    app.event_bus.send(InternalEvent::StepChainHeld {
+        issue_id: issue.id.clone(),
+        project_id: issue.project_id.clone(),
+        column_id: column.id.clone(),
+        target_column_id: Some(target_id.to_string()),
+        reason: reason.as_str().to_string(),
+    });
 }
 
 /// The issue's current column: the authoritative `column_id` (E18-07,
@@ -2070,5 +2327,314 @@ mod tests {
             &step_events(&mut rx)[..],
             [InternalEvent::StepQueueCleared { issue_id, .. }] if issue_id == &parked_card.id
         ));
+    }
+
+    /// #82: a chain of run-mode columns stops at the depth cap. Default
+    /// cap is 3 consecutive automatic launches — the fourth hop holds,
+    /// the card stays where it settled, and the refusal is a durable
+    /// ledger hold row plus a `StepChainHeld` announcement.
+    #[test]
+    fn chain_depth_cap_holds_the_fourth_automatic_launch() {
+        let app = fixture();
+        let issue = new_issue(&app, "card");
+        with_task(&app, "t1");
+        app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
+        let e = make_step(&app, "E", OnEnter::Run, OnSettle::Hold, None);
+        let d = make_step(
+            &app,
+            "D",
+            OnEnter::Run,
+            OnSettle::Advance,
+            Some(e.id.clone()),
+        );
+        let c = make_step(
+            &app,
+            "C",
+            OnEnter::Run,
+            OnSettle::Advance,
+            Some(d.id.clone()),
+        );
+        let b = make_step(
+            &app,
+            "B",
+            OnEnter::Run,
+            OnSettle::Advance,
+            Some(c.id.clone()),
+        );
+        let a = make_step(
+            &app,
+            "A",
+            OnEnter::Run,
+            OnSettle::Advance,
+            Some(b.id.clone()),
+        );
+
+        // Human launch of A, then three automatic hops: B, C, D.
+        enter_column_from_command(&app, &issue.id, &a.id, None).unwrap();
+        assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:sA")), 1);
+        assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:sB")), 1);
+        assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:sC")), 1);
+        assert_eq!(
+            issue_column_id(&app, &issue.id).as_deref(),
+            Some(d.id.as_str())
+        );
+
+        // D settles: the fourth automatic launch (E) is REFUSED — the
+        // card holds on D with a visible reason; nothing entered E.
+        let mut rx = app.event_bus.subscribe();
+        assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:sD")), 1);
+        assert_eq!(
+            issue_column_id(&app, &issue.id).as_deref(),
+            Some(d.id.as_str()),
+            "card must hold on D, not advance into E"
+        );
+        let mut held = false;
+        while let Ok(event) = rx.try_recv() {
+            if let InternalEvent::StepChainHeld {
+                issue_id,
+                column_id,
+                target_column_id,
+                reason,
+                ..
+            } = event
+            {
+                assert_eq!(issue_id, issue.id);
+                assert_eq!(column_id, d.id);
+                assert_eq!(target_column_id.as_deref(), Some(e.id.as_str()));
+                assert_eq!(reason, "depth");
+                held = true;
+            }
+        }
+        assert!(held, "expected a StepChainHeld event");
+
+        // The ledger recorded the whole story: one human launch, three
+        // automatic launches, one hold.
+        let rows = app.ledger.list_for_issue(&issue.id).unwrap();
+        let launches: Vec<_> = rows.iter().filter(|r| r.kind == "launch").collect();
+        assert_eq!(launches.len(), 4);
+        assert!(!launches[0].auto, "A was human-launched");
+        assert!(launches[1..].iter().all(|r| r.auto));
+        let holds: Vec<_> = rows.iter().filter(|r| r.kind == "hold").collect();
+        assert_eq!(holds.len(), 1);
+        assert_eq!(holds[0].reason.as_deref(), Some("depth"));
+        assert_eq!(holds[0].target_column_id.as_deref(), Some(e.id.as_str()));
+
+        // A human gesture (re-enter D) resets the chain: the next settle
+        // advances into E again.
+        enter_column_from_command(&app, &issue.id, &d.id, None).unwrap();
+        assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:sD2")), 1);
+        assert_eq!(
+            issue_column_id(&app, &issue.id).as_deref(),
+            Some(e.id.as_str())
+        );
+    }
+
+    /// #82: a backwards `advance_to` (A → B, B → A) holds when it would
+    /// revisit a column already run in this chain.
+    #[test]
+    fn backwards_advance_holds_as_a_cycle() {
+        let app = fixture();
+        let issue = new_issue(&app, "card");
+        with_task(&app, "t1");
+        app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
+        let b = make_step(&app, "B", OnEnter::Run, OnSettle::Advance, None);
+        let a = make_step(
+            &app,
+            "A",
+            OnEnter::Run,
+            OnSettle::Advance,
+            Some(b.id.clone()),
+        );
+        ColumnStore::new(app.db.clone())
+            .update(
+                &b.id,
+                ColumnPatch {
+                    advance_to: Some(Some(a.id.clone())),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        enter_column_from_command(&app, &issue.id, &a.id, None).unwrap();
+
+        // A settles → B launches (automatic hop 1).
+        assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:sA")), 1);
+        assert_eq!(
+            issue_column_id(&app, &issue.id).as_deref(),
+            Some(b.id.as_str())
+        );
+
+        // B settles → its advance target is A, already run this chain:
+        // hold, not an infinite A↔B loop.
+        let mut rx = app.event_bus.subscribe();
+        assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:sB")), 1);
+        assert_eq!(
+            issue_column_id(&app, &issue.id).as_deref(),
+            Some(b.id.as_str())
+        );
+        let held = step_and_hold_events(&mut rx)
+            .into_iter()
+            .any(|e| matches!(e, InternalEvent::StepChainHeld { reason, .. } if reason == "cycle"));
+        assert!(held, "backwards advance must hold as a cycle");
+    }
+
+    /// #82: an exhausted per-project token budget refuses the next
+    /// automatic launch (reason `budget`) — and the guard only reads the
+    /// ledger, so nothing running is touched.
+    #[test]
+    fn exhausted_budget_holds_the_chain() {
+        let app = fixture();
+        let issue = new_issue(&app, "card");
+        with_task(&app, "t1");
+        app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
+        let b = make_step(&app, "B", OnEnter::Run, OnSettle::Hold, None);
+        let a = make_step(
+            &app,
+            "A",
+            OnEnter::Run,
+            OnSettle::Advance,
+            Some(b.id.clone()),
+        );
+
+        // Budget of 100 tokens, already spent by a prior recorded launch.
+        let repo = std::path::Path::new("/tmp/proj");
+        let mut settings = app.settings.get_project_settings("p1", repo).unwrap();
+        settings.step_budget_tokens = Some(100);
+        app.settings
+            .update_project_settings("p1", repo, &settings)
+            .unwrap();
+        let prior = app
+            .ledger
+            .record_launch(&issue.id, "p1", &a.id, false, "claude", None)
+            .unwrap();
+        app.ledger.record_tokens(&issue.id, &a.id, 150).unwrap();
+        assert_eq!(app.ledger.project_tokens_total("p1").unwrap(), 150);
+        let _ = prior;
+
+        enter_column_from_command(&app, &issue.id, &a.id, None).unwrap();
+        let mut rx = app.event_bus.subscribe();
+        assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:s1")), 1);
+        assert_eq!(
+            issue_column_id(&app, &issue.id).as_deref(),
+            Some(a.id.as_str()),
+            "card must hold on A — the budget is spent"
+        );
+        let held = step_and_hold_events(&mut rx).into_iter().any(
+            |e| matches!(e, InternalEvent::StepChainHeld { reason, .. } if reason == "budget"),
+        );
+        assert!(held, "expected a budget hold");
+        let rows = app.ledger.list_for_issue(&issue.id).unwrap();
+        assert_eq!(
+            rows.iter()
+                .filter(|r| r.kind == "hold" && r.reason.as_deref() == Some("budget"))
+                .count(),
+            1
+        );
+    }
+
+    /// #82: advancing into a QUEUE column is never guarded — the confirm
+    /// gate is the human check, and confirming resets the chain depth.
+    #[test]
+    fn queue_columns_pass_the_guard_and_confirm_resets_depth() {
+        let app = fixture();
+        let issue = new_issue(&app, "card");
+        with_task(&app, "t1");
+        app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
+        let d = make_step(&app, "D", OnEnter::Run, OnSettle::Hold, None);
+        let gate = make_step(
+            &app,
+            "Gate",
+            OnEnter::Queue,
+            OnSettle::Advance,
+            Some(d.id.clone()),
+        );
+        let c = make_step(
+            &app,
+            "C",
+            OnEnter::Run,
+            OnSettle::Advance,
+            Some(gate.id.clone()),
+        );
+        let b = make_step(
+            &app,
+            "B",
+            OnEnter::Run,
+            OnSettle::Advance,
+            Some(c.id.clone()),
+        );
+        let a = make_step(
+            &app,
+            "A",
+            OnEnter::Run,
+            OnSettle::Advance,
+            Some(b.id.clone()),
+        );
+
+        enter_column_from_command(&app, &issue.id, &a.id, None).unwrap();
+        assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:sA")), 1); // → B
+        assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:sB")), 1); // → C
+                                                                           // C settles at the cap — but the target is a queue column: PARK,
+                                                                           // never a guard hold (the human confirm is the check).
+        assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:sC")), 1);
+        assert_eq!(
+            issue_column_id(&app, &issue.id).as_deref(),
+            Some(gate.id.as_str())
+        );
+        assert!(app.steps.peek_park(&issue.id).is_some());
+
+        // Confirm is a human gesture: chain resets, the gate's settle
+        // advances into D freely.
+        confirm_step(&app, &issue.id).unwrap();
+        assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:sG")), 1);
+        assert_eq!(
+            issue_column_id(&app, &issue.id).as_deref(),
+            Some(d.id.as_str())
+        );
+    }
+
+    /// #82: a settle carrying a transcript backfills the launch row's
+    /// token usage.
+    #[test]
+    fn settle_backfills_token_usage_onto_the_ledger() {
+        let app = fixture();
+        let issue = new_issue(&app, "card");
+        with_task(&app, "t1");
+        app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
+        let a = make_step(&app, "A", OnEnter::Run, OnSettle::Hold, None);
+        enter_column_from_command(&app, &issue.id, &a.id, None).unwrap();
+
+        let view = fartcode_telemetry::observation::TranscriptView {
+            segments: Vec::new(),
+            context_used: Some(4321),
+            context_size: Some(200_000),
+            fidelity: fartcode_telemetry::observation::Fidelity::Full,
+        };
+        assert_eq!(
+            settle_issues_observed(&app, "t1", Some("acp:s1"), Some(&view)),
+            1
+        );
+        let rows = app.ledger.list_for_issue(&issue.id).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].tokens_used, Some(4321));
+        assert_eq!(app.ledger.project_tokens_total("p1").unwrap(), 4321);
+    }
+
+    /// Drains the bus into step events INCLUDING chain holds.
+    fn step_and_hold_events(
+        rx: &mut tokio::sync::broadcast::Receiver<InternalEvent>,
+    ) -> Vec<InternalEvent> {
+        let mut out = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if matches!(
+                event,
+                InternalEvent::StepLaunch { .. }
+                    | InternalEvent::StepQueued { .. }
+                    | InternalEvent::StepQueueCleared { .. }
+                    | InternalEvent::StepSettled { .. }
+                    | InternalEvent::StepChainHeld { .. }
+            ) {
+                out.push(event);
+            }
+        }
+        out
     }
 }

@@ -33,6 +33,7 @@
 /// Configurable pipeline columns (E18, ADR-0037) — authoritative for
 /// board placement since the E18-07 flip (#66).
 pub mod columns;
+pub mod ledger;
 
 use std::collections::HashMap;
 use std::sync::Arc;

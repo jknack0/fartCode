@@ -153,6 +153,20 @@ pub enum InternalEvent {
         column_id: String,
         task_id: String,
     },
+    /// The chain guard held a card instead of chaining the next automatic
+    /// launch (#82): depth cap reached, `advance_to` cycle detected, or
+    /// the project's token budget exhausted. The card stays on
+    /// `column_id`; `target_column_id` is the launch that was refused.
+    /// The refusal is also a durable `step_ledger` hold row — this event
+    /// is the live announcement, the ledger the record.
+    StepChainHeld {
+        issue_id: String,
+        project_id: String,
+        column_id: String,
+        target_column_id: Option<String>,
+        /// `"depth"` | `"cycle"` | `"budget"`.
+        reason: String,
+    },
 
     // Conversations
     ConversationCreated {

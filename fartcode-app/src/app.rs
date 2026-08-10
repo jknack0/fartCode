@@ -55,6 +55,9 @@ pub struct App {
     /// E18-01 configurable pipeline columns (ADR-0037) — authoritative
     /// for board placement since the E18-07 flip (#66).
     pub columns: Arc<fartcode_core::issues::columns::ColumnStore>,
+    /// #82 step spend ledger: durable launch/hold history + the budget
+    /// guard's token totals.
+    pub ledger: Arc<fartcode_core::issues::ledger::StepLedgerStore>,
     /// E18-04 step engine state: in-memory parked (queue-mode) steps.
     pub steps: crate::step_engine::StepEngine,
     /// E3-02 host dependencies (agent CLIs): detection cache +
@@ -160,6 +163,9 @@ impl App {
         // come from migration 0006 (existing projects) and the project
         // create hook (new projects).
         let columns = Arc::new(fartcode_core::issues::columns::ColumnStore::new(db.clone()));
+        let ledger = Arc::new(fartcode_core::issues::ledger::StepLedgerStore::new(
+            db.clone(),
+        ));
 
         Ok(Arc::new(Self {
             db,
@@ -177,6 +183,7 @@ impl App {
             pr_sync,
             issues,
             columns,
+            ledger,
             steps: crate::step_engine::StepEngine::new(),
             host_dependencies,
         }))
@@ -316,6 +323,16 @@ pub fn event_to_value(event: &InternalEvent) -> Option<serde_json::Value> {
         } => Some(json!({
             "type": "step:settled", "issueId": issue_id, "projectId": project_id,
             "columnId": column_id, "taskId": task_id,
+        })),
+        InternalEvent::StepChainHeld {
+            issue_id,
+            project_id,
+            column_id,
+            target_column_id,
+            reason,
+        } => Some(json!({
+            "type": "step:chain_held", "issueId": issue_id, "projectId": project_id,
+            "columnId": column_id, "targetColumnId": target_column_id, "reason": reason,
         })),
         // App settings (set_default_agent): consumers refetch the changed
         // key (the ProjectSettings "Default agent · model" row).

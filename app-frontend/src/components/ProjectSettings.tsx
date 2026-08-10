@@ -619,6 +619,45 @@ export function ProjectSettingsPane({ projectId }: { projectId: string }) {
           value={s.featureDossiers ? "on" : "off"}
           onClick={() => void commit({ featureDossiers: !s.featureDossiers })}
         />
+        {/* #82 chain guard: both local, like every spend decision. Depth
+            cap empty = built-in default (3 consecutive auto launches);
+            budget empty = no budget. */}
+        <Row
+          label="Step chain depth cap"
+          value={s.stepChainDepthCap != null ? String(s.stepChainDepthCap) : "default (3)"}
+          open={openRow === "stepChainDepthCap"}
+          onClick={() => toggle("stepChainDepthCap")}
+        >
+          <InlineInput
+            initial={s.stepChainDepthCap != null ? String(s.stepChainDepthCap) : ""}
+            placeholder="consecutive auto launches before the chain holds — empty = 3"
+            onCancel={() => setOpenRow(null)}
+            onSave={(v) => {
+              const n = parseInt(v.trim(), 10);
+              void commit({
+                stepChainDepthCap: Number.isFinite(n) && n >= 0 ? n : null,
+              });
+            }}
+          />
+        </Row>
+        <Row
+          label="Step token budget"
+          value={s.stepBudgetTokens != null ? s.stepBudgetTokens.toLocaleString() : "—"}
+          open={openRow === "stepBudgetTokens"}
+          onClick={() => toggle("stepBudgetTokens")}
+        >
+          <InlineInput
+            initial={s.stepBudgetTokens != null ? String(s.stepBudgetTokens) : ""}
+            placeholder="total reported tokens before chains hold — empty = no budget"
+            onCancel={() => setOpenRow(null)}
+            onSave={(v) => {
+              const n = parseInt(v.trim(), 10);
+              void commit({
+                stepBudgetTokens: Number.isFinite(n) && n >= 0 ? n : null,
+              });
+            }}
+          />
+        </Row>
       </div>
 
       <div className="fc-set-spacer" />

@@ -25,11 +25,13 @@ import {
   issueUpdate,
   listProviders,
   onFartcodeEvent,
+  stepLedgerList,
   terminalOpenAgent,
   terminalWrite,
   type DossierDto,
   type DossierTimelineEntryDto,
   type IssueDto,
+  type LedgerEntryDto,
   type TaskDto,
 } from "../../lib/tauri";
 import { renderMarkdown } from "../../lib/markdown";
@@ -48,6 +50,35 @@ import { agentLive, elapsedShort } from "./runState";
 
 const NO_COLUMNS: never[] = [];
 const NO_SECTIONS: never[] = [];
+
+/** yyyy-mm-dd of a ledger row's SQLite UTC stamp. */
+function ledgerDate(createdAt: string): string {
+  return createdAt.slice(0, 10);
+}
+
+/** One ledger row's copy (#82). */
+function ledgerLine(
+  row: LedgerEntryDto,
+  columnName: (id: string | null) => string,
+): string {
+  if (row.kind === "hold") {
+    const why =
+      row.reason === "depth"
+        ? "auto-run limit"
+        : row.reason === "cycle"
+          ? "loop detected"
+          : row.reason === "budget"
+            ? "budget spent"
+            : (row.reason ?? "held");
+    return `held on ${columnName(row.columnId)} — ${why} (next: ${columnName(
+      row.targetColumnId,
+    )})`;
+  }
+  const agent = row.model ? `${row.provider} · ${row.model}` : (row.provider ?? "agent");
+  const how = row.auto ? "auto" : "confirmed";
+  const tokens = row.tokensUsed != null ? ` · ${row.tokensUsed.toLocaleString()} tok` : "";
+  return `${columnName(row.columnId)} ran ${agent} (${how})${tokens}`;
+}
 
 export default function CardDetail({
   projectId,
@@ -69,6 +100,8 @@ export default function CardDetail({
   const [dispatching, setDispatching] = useState(false);
   // Dossier (§8f). `null` = this card has none — no group renders at all.
   const [dossier, setDossier] = useState<DossierDto | null>(null);
+  // Spend ledger (#82): every launch and chain-guard hold for this card.
+  const [ledger, setLedger] = useState<LedgerEntryDto[]>([]);
   /** Which agent-written section the inset card shows; j/k walks it. */
   const [sectionIdx, setSectionIdx] = useState(0);
   /** Ticks the running step's elapsed. Derived from the launch stamp, never
@@ -86,6 +119,8 @@ export default function CardDetail({
   const mdRef = useRef<HTMLDivElement | null>(null);
   const projectTasks = useSidebar((s) => s.tasksByProject[projectId]);
   const columns = useColumns((s) => s.byProject[projectId] ?? NO_COLUMNS);
+  const ledgerColumnName = (id: string | null): string =>
+    (id && columns.find((c) => c.id === id)?.name) || "a step";
   const agentByTask = useScripts((s) => s.agentByTask);
   const close = () => useUi.getState().setBoardDetailIssueId(null);
 
@@ -103,6 +138,11 @@ export default function CardDetail({
       void dossierRead(issueId)
         .then((d) => !cancelled && setDossier(d))
         .catch(() => !cancelled && setDossier(null));
+      // The spend ledger reloads with the card — a failed read renders no
+      // section, never an error surface.
+      void stepLedgerList(issueId)
+        .then((rows) => !cancelled && setLedger(rows))
+        .catch(() => !cancelled && setLedger([]));
       return issueList(projectId)
         .then((list) => {
           if (cancelled) return;
@@ -136,6 +176,15 @@ export default function CardDetail({
       }
       // Task status changes recolor the lane dot.
       if (ev.type === "task:deleted" || ev.type === "task:status_changed") {
+        void reload();
+      }
+      // Ledger rows land on launch, settle, and chain hold (#82).
+      if (
+        (ev.type === "step:launch" ||
+          ev.type === "step:settled" ||
+          ev.type === "step:chain_held") &&
+        ev.issueId === issueId
+      ) {
         void reload();
       }
     });
@@ -482,6 +531,29 @@ export default function CardDetail({
                     </div>
                   </article>
                 )}
+              </section>
+            )}
+
+            {/* Spend ledger (#82): the durable record of every step launch
+                (human vs auto, provider · model, settle-backfilled tokens)
+                and every chain-guard hold. Timeline-row treatment (§8f's
+                nearest pattern; frames pending per the ticket's design
+                gate). No rows → no section. */}
+            {ledger.length > 0 && (
+              <section className="card-detail-dossier" aria-label="Spend ledger">
+                <div className="card-detail-dossier-head">
+                  <h3>Spend</h3>
+                </div>
+                <ol className="card-detail-timeline">
+                  {ledger.map((row) => (
+                    <li key={row.id}>
+                      <span className="card-detail-timeline-date">
+                        {ledgerDate(row.createdAt)}
+                      </span>
+                      {ledgerLine(row, ledgerColumnName)}
+                    </li>
+                  ))}
+                </ol>
               </section>
             )}
 

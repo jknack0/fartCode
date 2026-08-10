@@ -780,6 +780,11 @@ export default function BoardView({ projectId }: { projectId: string }) {
               }
               stepDone={steps[issue.id]?.settledColumnId === column.id}
               queued={steps[issue.id]?.queuedColumnId === column.id}
+              holdReason={
+                steps[issue.id]?.heldColumnId === column.id
+                  ? (steps[issue.id]?.holdReason ?? null)
+                  : null
+              }
               artifact={artifact}
               selected={detailIssueId === issue.id}
               focused={focusId === issue.id}
@@ -1085,12 +1090,27 @@ function ConfirmOverlay({
  * "↵ read" (the linked task). A settled step adds the accent dot and, when
  * the step declares an artifact, the "↵ read <artifact> · drag on" hint.
  * Blockedness is derived, never stored. */
+/** Human copy for a chain-guard hold reason (#82). */
+function holdReasonCopy(reason: string): string {
+  switch (reason) {
+    case "depth":
+      return "auto-run limit";
+    case "cycle":
+      return "loop detected";
+    case "budget":
+      return "budget spent";
+    default:
+      return reason;
+  }
+}
+
 function BoardCard({
   issue,
   task,
   agent,
   stepDone,
   queued,
+  holdReason,
   artifact,
   selected,
   focused,
@@ -1106,6 +1126,8 @@ function BoardCard({
   agent: { running: boolean } | undefined;
   stepDone: boolean;
   queued: boolean;
+  /** #82 chain-guard hold reason for THIS column, null when not held. */
+  holdReason: string | null;
   artifact: string | null;
   selected: boolean;
   focused: boolean;
@@ -1130,6 +1152,16 @@ function BoardCard({
     if (task.statusChangedAt) {
       segs.push(<span key="elapsed">{elapsedShort(task.statusChangedAt)}</span>);
     }
+  }
+  if (holdReason) {
+    // #82: the chain guard refused the next automatic launch — say why,
+    // in the meta line's failure voice (nearest pattern: the step-done
+    // hint line; frames pending per the ticket's design gate).
+    segs.push(
+      <span key="held" className="board-meta-bad">
+        held · {holdReasonCopy(holdReason)}
+      </span>,
+    );
   }
   if (issue.blocked && activeBlockers.length > 0) {
     segs.push(

@@ -17,6 +17,7 @@ vi.mock("../../lib/tauri", () => ({
   issueLink: vi.fn(),
   issueUnlink: vi.fn(),
   dossierRead: vi.fn(() => Promise.resolve(null)),
+  stepLedgerList: vi.fn(() => Promise.resolve([])),
   listProviders: vi.fn(() => Promise.resolve([])),
   acpStart: vi.fn(),
   terminalOpenAgent: vi.fn(),

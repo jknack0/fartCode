@@ -40,6 +40,11 @@ export interface StepFlags {
   settledColumnId?: string;
   /** step:queued parked a step here, awaiting the confirm. */
   queuedColumnId?: string;
+  /** step:chain_held — the guard refused the next automatic launch while
+   * the card sat here (#82). Cleared by the next launch/entry. */
+  heldColumnId?: string;
+  /** Why: "depth" | "cycle" | "budget". */
+  holdReason?: string;
   /** Agent the parked step will run, for the confirm copy. */
   queuedProvider?: string;
   queuedModel?: string | null;
@@ -274,10 +279,33 @@ export function wireStepEvents(): () => void {
     }
     if (event.type === "step:settled") {
       useSteps.setState((s) => ({
-        byIssue: { ...s.byIssue, [event.issueId]: { settledColumnId: event.columnId } },
+        byIssue: {
+          ...s.byIssue,
+          [event.issueId]: {
+            // A chain hold rides in right after its StepSettled — keep it.
+            ...s.byIssue[event.issueId],
+            settledColumnId: event.columnId,
+            queuedColumnId: undefined,
+            queuedProvider: undefined,
+            queuedModel: undefined,
+            queuedEffort: undefined,
+          },
+        },
       }));
       // The agent exited — refresh the card's live-session truth.
       void useScripts.getState().hydrate(event.taskId);
+    }
+    if (event.type === "step:chain_held") {
+      useSteps.setState((s) => ({
+        byIssue: {
+          ...s.byIssue,
+          [event.issueId]: {
+            ...s.byIssue[event.issueId],
+            heldColumnId: event.columnId,
+            holdReason: event.reason,
+          },
+        },
+      }));
     }
   }).then((off) => {
     if (disposed) off();
