@@ -163,6 +163,12 @@ export function ProjectSettingsPane({ projectId }: { projectId: string }) {
   const deps = useDependencies((st) => st.deps);
   const loadDeps = useDependencies((st) => st.load);
   const noticeTimer = useRef<number | null>(null);
+  /** Serializes commits — see `commit`. */
+  const writeChain = useRef<Promise<void>>(Promise.resolve());
+  /** Latest settings for the chained closures, which would otherwise
+   * capture the `s` of the render that queued them. */
+  const sRef = useRef<ProjectSettingsDto>({});
+  sRef.current = s;
 
   // The Agent group names the default agent — serve the 300s detection
   // cache if the App pane hasn't populated the store yet.
@@ -232,19 +238,27 @@ export function ProjectSettingsPane({ projectId }: { projectId: string }) {
    * send the pre-change values back and silently undo them. Toggling
    * `tmux` must not un-answer the dossier consent card or make the app
    * forget a scaffold it already seeded. The patch still wins over the
-   * fresh read: it is this pane's actual edit. */
-  const commit = async (patch: Partial<ProjectSettingsDto>) => {
-    setS({ ...s, ...patch });
+   * fresh read: it is this pane's actual edit.
+   *
+   * **And the read-write pair is serialized.** Two quick toggles would
+   * otherwise interleave — B's read starts before A's write commits, so B
+   * reads the pre-A row and its full-replace write silently undoes A.
+   * Chaining on a ref keeps every commit's read strictly after the
+   * previous commit's write. */
+  const commit = (patch: Partial<ProjectSettingsDto>): Promise<void> => {
+    setS((cur) => ({ ...cur, ...patch }));
     setOpenRow(null);
     setError(null);
-    try {
-      const fresh = await getProjectSettings(projectId).catch(() => s);
-      const saved = await updateProjectSettings(projectId, { ...fresh, ...patch });
-      setS(saved);
-      setProv(await projectSettingsProvenance(projectId).catch(() => prov));
-    } catch (e) {
-      setError(String(e));
-    }
+    const run = writeChain.current
+      .then(async () => {
+        const fresh = await getProjectSettings(projectId).catch(() => sRef.current);
+        const saved = await updateProjectSettings(projectId, { ...fresh, ...patch });
+        setS(saved);
+        setProv(await projectSettingsProvenance(projectId).catch(() => prov));
+      })
+      .catch((e) => setError(String(e)));
+    writeChain.current = run;
+    return run;
   };
 
   /** Default-agent pick: app-wide setting, then a cache-served refetch so

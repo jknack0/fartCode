@@ -66,11 +66,7 @@ import {
   issueRefParts,
   runStateFor,
 } from "./runState";
-import DossierConsentCard, {
-  readDossierConsent,
-  writeDossierConsent,
-  type DossierConsent,
-} from "./DossierConsent";
+import { ensureDossierConsent, useDossierConsent } from "../../store/dossierConsent";
 
 // GitHub issue sync autoruns on view entry (formerly the header's manual
 // "Sync from GitHub" button): import every open issue not already on the
@@ -138,23 +134,6 @@ type PendingConfirm = {
   position: number | null;
 };
 
-/** The first-dispatch dossier consent card, waiting on its answer (§8e,
- * #74). It sits AHEAD of `PendingConfirm` in the same sequence rather than
- * beside it: §8e is explicit that consent comes before the queue confirm
- * when both would show, and the queue confirm cannot exist until
- * `issueEnterColumn` has already run — so the gate has to be earlier than
- * the confirm, not parallel to it.
- *
- * `deferred` is the entry this card is holding back, and null when there
- * is none: a park the board is only RECONCILING has already entered its
- * column backend-side, so answering there resumes the queue confirm
- * instead of re-entering. */
-type PendingConsent = {
-  issue: IssueDto;
-  column: BoardColumnDto;
-  deferred: { position: number | null } | null;
-};
-
 /** Insertion point during a drag — rendered as a 1px accent line between
  * cards, never a ghost box (frame 4b). */
 interface DropTarget {
@@ -178,13 +157,14 @@ export default function BoardView({ projectId }: { projectId: string }) {
   const [pending, setPending] = useState<PendingConfirm | null>(null);
   /** Linked task's branch for the confirm footer (fetched lazily). */
   const [pendingBranch, setPendingBranch] = useState<string | null>(null);
-  /** §8e first-dispatch consent, and this project's cached answer.
-   * `undefined` = not read yet, `null` = never asked — both mean the gate
-   * must re-check before dispatching, so neither is treated as a grant. */
-  const [consent, setConsent] = useState<PendingConsent | null>(null);
-  const [dossierConsent, setDossierConsent] = useState<DossierConsent | undefined>(
-    undefined,
-  );
+  /** §8e consent, owned app-level (store/dossierConsent.ts). The board
+   * only needs two facts: whether a card is on screen (it must not fight
+   * it for ↵/esc) and whether this project has settled (the park-reconcile
+   * path must not raise its confirm in front of the question). */
+  const consentAsk = useDossierConsent((s) => s.ask);
+  const consentError = useDossierConsent((s) => s.error);
+  const consentByProject = useDossierConsent((s) => s.byProject);
+  const consentSettled = consentByProject[projectId] !== undefined;
   /** Keyboard focus (frame 4b "focused"): roving, by issue id. */
   const [focusId, setFocusId] = useState<string | null>(null);
   /** Column focus is its OWN cursor: h/l walks every column, including
@@ -228,18 +208,15 @@ export default function BoardView({ projectId }: { projectId: string }) {
     }
   }, [projectId]);
 
-  // §8e consent, read once per project so the common case (already
-  // answered) costs the drag path nothing. It is a CACHE, not the
-  // authority — the gate re-reads before it decides to ask.
+  // A project switch does NOT remount this component (App.tsx renders
+  // ProjectView without a key), so every cross-project pointer has to be
+  // dropped by hand. `pending` is the one that bites: a queue confirm
+  // raised for project A stays on screen over project B's board, and its
+  // ↵ would fire A's parked step from B. The consent card has the same
+  // shape and is cancelled app-level (App.tsx).
   useEffect(() => {
-    let cancelled = false;
-    setDossierConsent(undefined);
-    void readDossierConsent(projectId).then((v) => {
-      if (!cancelled) setDossierConsent(v);
-    });
-    return () => {
-      cancelled = true;
-    };
+    setPending(null);
+    setDismissedPark(null);
   }, [projectId]);
 
   useEffect(() => {
@@ -421,62 +398,27 @@ export default function BoardView({ projectId }: { projectId: string }) {
     }
   };
 
-  /** Has this project answered the dossier question? `false` means the
-   * card must fire first. Re-reads whenever the cache is unresolved, so a
-   * pane (or a sibling window) that answered since the board mounted is
-   * honoured instead of re-asked. */
-  const consentResolved = async (): Promise<boolean> => {
-    if (dossierConsent === true || dossierConsent === false) return true;
-    const fresh = await readDossierConsent(projectId);
-    setDossierConsent(fresh);
-    return fresh !== null;
-  };
-
   /** THE gate (§8e). Every entry into an `agent_step` funnels through
-   * `enter`, so asking here — and only here — makes the card fire exactly
-   * at the card's first agent_step entry, which is the same moment the
-   * worktree provisions. Shelves and human gates never ask: they spend
-   * nothing and write nothing.
+   * `enter`, so asking here covers the whole board — the task view's two
+   * paths await the same gate from their own surfaces. Shelves and human
+   * gates never ask: they spend nothing and write nothing.
    *
    * It sits BEFORE `issueEnterColumn`, not after, for two reasons that
    * both matter: the backend reads consent at launch time (so an answer
    * arriving later would miss its own dispatch), and the queue confirm is
-   * MADE by that call — gating afterwards would put consent second. */
+   * MADE by that call — gating afterwards would put consent second.
+   *
+   * A false result means the ask was withdrawn (project switched), not
+   * that consent was refused — a refusal still dispatches. */
   const enterGated = async (
     issue: IssueDto,
     column: BoardColumnDto,
     position: number | null,
   ) => {
-    if (column.kind === "agent_step" && !(await consentResolved())) {
-      setConsent({ issue, column, deferred: { position } });
+    if (column.kind === "agent_step" && !(await ensureDossierConsent(projectId, issue))) {
       return;
     }
     await enter(issue, column, position);
-  };
-
-  /** Both answers persist an EXPLICIT boolean — that is the whole point of
-   * the card. A decline that left the setting null would fail closed and
-   * ask again on the next dispatch, forever.
-   *
-   * And both answers dispatch. `esc run without memory` is a promise about
-   * the repo, never about the agent: a failed settings write is surfaced
-   * and then stepped over, because the feature is memory, not a gate. */
-  const answerConsent = (write: boolean) => {
-    const gate = consent;
-    if (!gate) return;
-    setConsent(null);
-    setDossierConsent(write);
-    void writeDossierConsent(projectId, write)
-      .catch((e) => {
-        // The answer did NOT land, so the cache must stop claiming it did
-        // — otherwise this session behaves as though a project consented
-        // to writes the backend will (correctly) refuse to make.
-        setDossierConsent(null);
-        setError(String(e));
-      })
-      .finally(() => {
-        if (gate.deferred) void enter(gate.issue, gate.column, gate.deferred.position);
-      });
   };
 
   /** Within-column reorder — position only. Deliberately NOT the enter
@@ -538,11 +480,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
   // used to be dropped on the floor — and a dismissed park is remembered
   // by id so the overlay does not immediately reopen.
   useEffect(() => {
-    if (pending || consent) return;
-    // Consent still in flight: raising the confirm now could put it in
-    // front of a card that §8e says comes first. The read settles in
-    // milliseconds and is a dep, so this re-runs the moment it lands.
-    if (dossierConsent === undefined) return;
+    if (pending || consentAsk) return;
     for (const [issueId, flags] of Object.entries(steps)) {
       if (!flags.queuedColumnId || dismissedPark === issueId) continue;
       const issue = issues.find((i) => i.id === issueId);
@@ -551,18 +489,24 @@ export default function BoardView({ projectId }: { projectId: string }) {
       // §8e holds here too: a park the board did NOT raise (a settle that
       // chained into a queue-mode step, or a rehydrated one after a
       // reload) is still an agent_step entry, and consent comes before the
-      // dispatch confirm wherever the confirm comes from. Nothing is
-      // deferred — answering re-runs this effect, which then raises the
-      // confirm it was standing in front of.
-      if (dossierConsent === null) {
-        setConsent({ issue, column, deferred: null });
+      // dispatch confirm wherever the confirm comes from.
+      //
+      // It resolves through the SAME gate the drag path awaits, so this
+      // branch cannot trust a cache the drag path would have re-read —
+      // and, because the gate only settles once the consent write has
+      // committed, the confirm below can never become interactive ahead of
+      // the write. Nothing is deferred: the gate settling updates the
+      // store, which re-runs this effect, which then raises the confirm it
+      // was standing in front of.
+      if (!consentSettled) {
+        void ensureDossierConsent(projectId, issue);
         return;
       }
       setPending({ kind: "queued", issue, column, from: columnOf(issue), position: null });
       return;
     }
     // columnOf is derived from columns/issues, both already deps.
-  }, [steps, columns, issues, pending, consent, dossierConsent, dismissedPark]);
+  }, [steps, columns, issues, pending, consentAsk, consentSettled, projectId, dismissedPark]);
 
   // A park that goes away (confirmed, superseded, card dragged out) frees
   // its dismissal, so the next park on that card asks again.
@@ -606,17 +550,9 @@ export default function BoardView({ projectId }: { projectId: string }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isEditableTarget(e.target)) return;
-      // Consent is in front of the confirm, so it owns ↵/esc first.
-      if (consent) {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          answerConsent(true);
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          answerConsent(false);
-        }
-        return;
-      }
+      // The consent card is in front of everything and owns ↵/esc itself
+      // (DossierConsentCard). Stand down completely rather than racing it.
+      if (consentAsk) return;
       if (pending) {
         if (e.key === "Enter") {
           e.preventDefault();
@@ -732,8 +668,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
     focusId,
     focusColumnId,
     pending,
-    consent,
-    dossierConsent,
+    consentAsk,
     agentByTask,
     projectId,
   ]);
@@ -880,7 +815,10 @@ export default function BoardView({ projectId }: { projectId: string }) {
   // A launch directive that could not be carried out (agent binary gone,
   // PTY refused) fails in the app-lifetime store — surface it here rather
   // than letting the card sit looking dispatched with nothing running.
-  const shown = error ?? stepError ?? columnsError;
+  // A failed consent write has no dialog to report to — the card is gone
+  // by then (see DossierConsentCard) — so it lands here, beside the other
+  // "the app tried and could not" messages.
+  const shown = error ?? stepError ?? columnsError ?? consentError;
 
   return (
     <div className="board" ref={boardRef}>
@@ -1019,17 +957,9 @@ export default function BoardView({ projectId }: { projectId: string }) {
         </div>
       )}
 
-      {/* §8e: consent → then the dispatch confirm. The gate keeps them from
-          overlapping, and the render order says so out loud. */}
-      {consent && (
-        <DossierConsentCard
-          issue={consent.issue}
-          onWrite={() => answerConsent(true)}
-          onDecline={() => answerConsent(false)}
-        />
-      )}
-
-      {!consent && pending && (
+      {/* §8e: consent → then the dispatch confirm. The card itself renders
+          app-level (App.tsx); the board just stays out of its way. */}
+      {!consentAsk && pending && (
         <ConfirmOverlay
           pending={pending}
           branch={pendingBranch}

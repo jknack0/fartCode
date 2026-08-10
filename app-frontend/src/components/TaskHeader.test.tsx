@@ -11,7 +11,10 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 
 vi.mock("../lib/tauri", () => ({
-  getProjectSettings: vi.fn(() => Promise.resolve({ scripts: {} })),
+  // #74: the task view's move/advance paths now await dossier consent, so
+  // this fixture's project has already answered — these tests are about
+  // the picker, not the gate (DossierConsent.test.tsx owns that).
+  getProjectSettings: vi.fn(() => Promise.resolve({ scripts: {}, featureDossiers: true })),
   issueList: vi.fn(() => Promise.resolve([])),
   columnList: vi.fn(() => Promise.resolve([])),
   issueEnterColumn: vi.fn(() =>
@@ -89,6 +92,7 @@ import {
 } from "../lib/tauri";
 import { useColumns } from "../store/columns";
 import { useDependencies } from "../store/dependencies";
+import { useDossierConsent } from "../store/dossierConsent";
 import { useScripts } from "../store/scripts";
 import { useSidebar } from "../store/sidebar";
 import { useSteps } from "../store/steps";
@@ -215,6 +219,9 @@ const ACTION = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The consent gate caches per project for the process lifetime — clear
+  // it so each test re-reads the mock rather than a neighbour's answer.
+  useDossierConsent.getState().reset();
   vi.mocked(columnList).mockResolvedValue(COLUMNS);
   vi.mocked(issueList).mockResolvedValue([issue()]);
   useSidebar.setState({

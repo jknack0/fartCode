@@ -5,6 +5,7 @@
 import { useEffect } from "react";
 import ChangesSidebar from "./components/ChangesSidebar";
 import CommandPalette from "./components/CommandPalette";
+import DossierConsentCard from "./components/DossierConsentCard";
 import Modals from "./components/Modals";
 import Onboarding from "./components/Onboarding";
 import ProjectView from "./components/ProjectView";
@@ -13,6 +14,7 @@ import Nav from "./components/Nav";
 import TaskView from "./components/TaskView";
 import { useCommands, hint } from "./lib/useCommands";
 import { wireChangesEvents } from "./store/changes";
+import { useDossierConsent } from "./store/dossierConsent";
 import { wireDiffsEvents } from "./store/diffs";
 import { useSidebar, wireSidebarEvents } from "./store/sidebar";
 import { useConversations, wireConversationEvents } from "./store/conversations";
@@ -57,6 +59,16 @@ function App() {
     if (selectedTaskId) void ensureConversations(selectedTaskId).catch(() => {});
   }, [selectedTaskId, ensureConversations]);
 
+  // #74: a consent card asking about a project the user has navigated away
+  // from is withdrawn. Consent belongs to the project that was ASKED —
+  // answering it here, after a switch, would write the answer to a project
+  // nobody was asked about (and could flip an explicit decline back on).
+  // App owns this because App owns the selection; the board is not
+  // remounted by a project switch and cannot see it.
+  useEffect(() => {
+    useDossierConsent.getState().cancelForeignAsk(selectedProjectId);
+  }, [selectedProjectId]);
+
   useCommands();
 
   return (
@@ -64,6 +76,10 @@ function App() {
       <Nav />
       <Onboarding />
       <CommandPalette />
+      {/* App-level, beside Onboarding: two of the three surfaces that can
+          start an agent step live in the task view, where the board is
+          unmounted (#74 §8e). */}
+      <DossierConsentCard />
       <Modals />
       <ResourceMonitor />
       <section className="main">
