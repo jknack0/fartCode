@@ -107,6 +107,10 @@ pub trait GitOps: Send + Sync {
     /// (task deletion, E2-09) must never hang on a wedged git. Returns
     /// `Error::GitTimeout` when prune does not finish within `timeout`.
     fn worktree_prune_timed(&self, repo_path: &Path, timeout: Duration) -> Result<(), Error>;
+    /// `git -C <repo> worktree repair <worktree_path>` — re-link gitdir
+    /// metadata after a worktree directory moved (#81 pool adoption).
+    fn worktree_repair(&self, repo_path: &Path, worktree_path: &Path) -> Result<(), Error>;
+
     /// `git -C <worktree> status --porcelain` — empty output means the
     /// worktree is clean (no uncommitted changes or untracked files). Used as
     /// a dirty-check before `rm -rf` (E2-07 follow-up).

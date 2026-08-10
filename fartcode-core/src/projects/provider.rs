@@ -160,20 +160,70 @@ fn is_windows_reserved(name: &str) -> bool {
     )
 }
 
-/// Local worktree pool path: `join(worktreeDirectory, safePathSegment(name,
-/// id))` (reference `create-project-provider.ts`). SSH pools land in Phase 3.
+/// New-scheme pool segment (#81): `<safe_path_segment(name,id)>-<hash8>`,
+/// hash8 = first 8 hex chars of sha256 over the project's STORED path
+/// (canonicalized at create time — see ADR-0039). Human-navigable and unique
+/// per project, unlike the legacy name-only segment.
+pub fn new_pool_segment(project: &crate::projects::model::Project) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(project.path.to_string_lossy().as_bytes());
+    let hash8 = &format!("{:x}", hasher.finalize())[..8];
+    format!("{}-{hash8}", safe_path_segment(&project.name, &project.id))
+}
+
+/// Persists `segment` on the project row when unset (lazy stamping — never
+/// overwrites a segment the adoption pass chose, e.g. an adopted legacy one).
+fn stamp_pool_segment(db: &dyn Db, project_id: &str, segment: &str) -> Result<(), Error> {
+    let conn = db
+        .conn()
+        .lock()
+        .map_err(|_| Error::Internal("db connection mutex poisoned".into()))?;
+    conn.execute(
+        "UPDATE projects SET worktree_pool_segment = ?1, updated_at = datetime('now')
+         WHERE id = ?2 AND worktree_pool_segment IS NULL",
+        rusqlite::params![segment, project_id],
+    )?;
+    Ok(())
+}
+
+/// Local worktree pool path (#81): `join(root, segment)` where
+/// - root = the project's `worktree_directory` override (already normalized +
+///   invalid-fallback handled by `get_project_settings`) when set, else the
+///   app-level `default_worktree_directory`;
+/// - segment = the project's stored `worktree_pool_segment`, stamped on first
+///   resolve with the deterministic `new_pool_segment` scheme when missing.
+///
+/// SSH pools land in Phase 3.
 pub fn worktree_pool_path(
+    db: &dyn Db,
     settings: &dyn SettingsStore,
     project: &crate::projects::model::Project,
 ) -> Result<PathBuf, Error> {
-    let json = settings.get_json("localProject")?;
-    let local: crate::settings::LocalProjectGroup =
-        serde_json::from_value(json).map_err(|e| Error::InvalidSettingValue {
-            key: "localProject".into(),
-            reason: e.to_string(),
-        })?;
-    let segment = safe_path_segment(&project.name, &project.id);
-    Ok(PathBuf::from(local.default_worktree_directory).join(segment))
+    let root = match settings
+        .get_project_settings(&project.id, &project.path)
+        .ok()
+        .and_then(|ps| ps.worktree_directory)
+    {
+        Some(dir) => PathBuf::from(dir),
+        None => {
+            let json = settings.get_json("localProject")?;
+            let local: crate::settings::LocalProjectGroup =
+                serde_json::from_value(json).map_err(|e| Error::InvalidSettingValue {
+                    key: "localProject".into(),
+                    reason: e.to_string(),
+                })?;
+            PathBuf::from(local.default_worktree_directory)
+        }
+    };
+    let segment = match &project.worktree_pool_segment {
+        Some(segment) => segment.clone(),
+        None => {
+            let segment = new_pool_segment(project);
+            stamp_pool_segment(db, &project.id, &segment)?;
+            segment
+        }
+    };
+    Ok(root.join(segment))
 }
 
 /// Result of opening a project: the project itself plus re-detected state.

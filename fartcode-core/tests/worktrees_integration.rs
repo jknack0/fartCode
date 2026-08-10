@@ -304,6 +304,7 @@ fn remove_worktree_refuses_dirty_worktree() {
         base_ref: None,
         ssh_connection_id: None,
         repository_workspace_id: None,
+        worktree_pool_segment: None,
         created_at: Some("2025-01-01".into()),
         updated_at: None,
     };

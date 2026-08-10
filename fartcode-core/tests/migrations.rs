@@ -33,10 +33,10 @@ fn test_full_migration_chain_applies_from_scratch() {
             Ok((row.get(0)?, row.get::<_, String>(1)?.len()))
         })
         .unwrap();
-    // 0000–0009. (Was asserting 8 against a 9-entry journal since #66 added
+    // 0000–0010. (Was asserting 8 against a 9-entry journal since #66 added
     // 0008 without bumping it — this binary has been red on main; corrected
     // here rather than left broken under a new migration.)
-    assert_eq!(count, 10, "expected all journal migrations applied");
+    assert_eq!(count, 11, "expected all journal migrations applied");
     assert_eq!(hash_len, 64, "sha256 hex must be 64 chars");
 
     // FTS tables exist and the kv gates are set to the expected versions.
@@ -135,7 +135,7 @@ fn test_migrations_reinit_is_noop() {
         .unwrap()
         .query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(count, 10);
+    assert_eq!(count, 11);
     drop(db);
 
     let db2 = SqliteDb::init(Some(db_path.to_str().unwrap())).unwrap();
@@ -145,7 +145,7 @@ fn test_migrations_reinit_is_noop() {
         .unwrap()
         .query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(count2, 10, "re-init must not re-apply migrations");
+    assert_eq!(count2, 11, "re-init must not re-apply migrations");
 }
 
 /// E19-01 (#70): migration 0009 adds `issues.dossier_path` as a plain
@@ -158,8 +158,8 @@ fn test_dossier_path_upgrade_leaves_existing_rows_intact() {
     let db_path = tmp.path().join("test.db");
 
     // Stand up a DB, then rewind it to the pre-0009 shape: drop the column
-    // and forget the journal entry, so re-init has to apply 0009 for real
-    // against rows that already exist.
+    // and forget the journal entries (0009 + the later 0010), so re-init has
+    // to apply 0009 for real against rows that already exist.
     {
         let db = SqliteDb::init(Some(db_path.to_str().unwrap())).unwrap();
         let conn = db.conn().lock().unwrap();
@@ -177,8 +177,10 @@ fn test_dossier_path_upgrade_leaves_existing_rows_intact() {
         .unwrap();
         conn.execute("ALTER TABLE issues DROP COLUMN dossier_path", [])
             .unwrap();
+        conn.execute("ALTER TABLE projects DROP COLUMN worktree_pool_segment", [])
+            .unwrap();
         conn.execute(
-            "DELETE FROM migrations WHERE created_at = 1800000000009",
+            "DELETE FROM migrations WHERE created_at IN (1800000000009, 1800000000010)",
             [],
         )
         .unwrap();

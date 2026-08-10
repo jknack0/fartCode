@@ -71,6 +71,13 @@
       "when": 1800000000009,
       "tag": "0009_issue_dossier_path",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1800000000010,
+      "tag": "0010_project_pool_segment",
+      "breakpoints": true
     }
   ]
 }

@@ -232,6 +232,11 @@ impl GitOps for Git2Ops {
         self.cli.worktree_prune_timed(repo_path, timeout)
     }
 
+    fn worktree_repair(&self, repo_path: &Path, worktree_path: &Path) -> Result<(), Error> {
+        // git2 has no repair; the CLI covers it (same as prune_timed).
+        self.cli.worktree_repair(repo_path, worktree_path)
+    }
+
     fn is_worktree_clean(&self, repo: &Path, worktree: &Path) -> Result<bool, Error> {
         // Delegates to the shell — git2's status API requires index
         // manipulation; the CLI porcelain is simpler and reference-parity.

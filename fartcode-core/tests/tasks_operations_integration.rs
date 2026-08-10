@@ -81,6 +81,11 @@ impl Fixture {
         }
     }
 
+    /// The project's worktree pool directory name (#81): `<name>-<hash8>`.
+    fn pool_segment(&self) -> String {
+        fartcode_core::projects::provider::new_pool_segment(&self.project)
+    }
+
     fn params(&self) -> CreateTaskParams {
         CreateTaskParams {
             id: None,
@@ -236,7 +241,7 @@ fn create_with_new_worktree_provisions_rows_worktree_and_events() {
     // Worktree provisioned on disk with the branch checked out.
     let wt_path = fx
         .worktrees_dir
-        .join("demo")
+        .join(fx.pool_segment())
         .join("fartCode/fix-the-bug-ab12c");
     assert!(wt_path.join("README.md").exists(), "worktree checked out");
     assert_eq!(
@@ -397,7 +402,7 @@ fn create_project_root_runs_in_project_root_with_warning() {
     // No worktree directory created for the branch.
     let wt_path = fx
         .worktrees_dir
-        .join("demo")
+        .join(fx.pool_segment())
         .join("fartCode/fix-the-bug-ab12c");
     assert!(!wt_path.exists());
 }
@@ -431,7 +436,7 @@ fn provision_is_idempotent_and_reads_intent_from_config() {
     let task_id = created.task.id.clone();
     let wt_path = fx
         .worktrees_dir
-        .join("demo")
+        .join(fx.pool_segment())
         .join("fartCode/fix-the-bug-ab12c");
     assert!(!wt_path.exists(), "create() alone must not provision");
 
@@ -472,7 +477,10 @@ fn create_use_branch_checks_out_existing_branch() {
     params.task_config.name = "reuse branch".into();
 
     let result = fx.service.create_with_provision(params).unwrap();
-    let wt_path = fx.worktrees_dir.join("demo").join("fartCode/existing-fix");
+    let wt_path = fx
+        .worktrees_dir
+        .join(fx.pool_segment())
+        .join("fartCode/existing-fix");
     assert!(wt_path.exists(), "worktree on the existing branch");
     assert_eq!(
         fx.git.current_branch(&wt_path).unwrap().as_deref(),

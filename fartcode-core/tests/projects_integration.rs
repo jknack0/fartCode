@@ -11,7 +11,9 @@ use std::sync::Arc;
 use fartcode_core::db::{Db, SqliteDb};
 use fartcode_core::events::{BroadcastEventBus, EventBus, InternalEvent};
 use fartcode_core::projects::{
-    provider::worktree_pool_path, DbProjectStore, ProjectStore, WorkspaceProviderKind,
+    provider::{new_pool_segment, worktree_pool_path},
+    worktrees::{EnsureWorktreeOptions, WorktreeManager},
+    DbProjectStore, Project, ProjectStore, WorkspaceProviderKind,
 };
 use fartcode_core::settings::{DbSettingsStore, LocalProjectGroup, LOCAL_PROJECT};
 use fartcode_git::{CliGit, GitOps};
@@ -287,8 +289,367 @@ fn test_worktree_pool_path_uses_safe_segment() {
     let repo = fx.make_repo("demo");
     let project = fx.store.create_local(&repo, false).unwrap();
 
-    let pool = worktree_pool_path(fx.settings.as_ref(), &project).unwrap();
-    assert_eq!(pool, fx.worktrees_dir.join("demo"));
+    // #81 scheme: `<safe_path_segment>-<hash8(sha256(stored path))>`.
+    let expected = format!("demo-{}", &sha256_hex(&repo.to_string_lossy())[..8]);
+    let pool = worktree_pool_path(fx.db.as_ref(), fx.settings.as_ref(), &project).unwrap();
+    assert_eq!(pool, fx.worktrees_dir.join(&expected));
+
+    // The resolver stamps + persists the segment; a second resolution with
+    // the stored segment returns the same pool.
+    let stored: String = fx
+        .db
+        .conn()
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT worktree_pool_segment FROM projects WHERE id = ?1",
+            [&project.id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored, expected);
+    let fetched = fx.store.get(&project.id).unwrap().unwrap();
+    assert_eq!(
+        fetched.worktree_pool_segment.as_deref(),
+        Some(expected.as_str())
+    );
+    let again = worktree_pool_path(fx.db.as_ref(), fx.settings.as_ref(), &fetched).unwrap();
+    assert_eq!(pool, again);
+}
+
+#[test]
+fn test_pool_path_honors_project_override_and_falls_back() {
+    let fx = Fixture::new();
+    let repo = fx.make_repo("demo");
+    let project = fx.store.create_local(&repo, false).unwrap();
+    let segment = new_pool_segment(&project);
+
+    // Per-project worktree_directory override wins over the app default (#81).
+    let override_dir = fx._tmp.path().join("custom-pools");
+    let mut ps = fx
+        .settings
+        .get_project_settings(&project.id, &repo)
+        .unwrap();
+    ps.worktree_directory = Some(override_dir.to_string_lossy().into_owned());
+    fx.settings
+        .update_project_settings(&project.id, &repo, &ps)
+        .unwrap();
+    let pool = worktree_pool_path(fx.db.as_ref(), fx.settings.as_ref(), &project).unwrap();
+    assert_eq!(pool, override_dir.join(&segment));
+
+    // Invalid override → normalization drops it on read → app default.
+    ps.worktree_directory = Some("relative/path".into());
+    fx.settings
+        .update_project_settings(&project.id, &repo, &ps)
+        .unwrap();
+    let fetched = fx.store.get(&project.id).unwrap().unwrap();
+    let pool = worktree_pool_path(fx.db.as_ref(), fx.settings.as_ref(), &fetched).unwrap();
+    assert_eq!(pool, fx.worktrees_dir.join(&segment));
+}
+
+// ---------------------------------------------------------------------------
+// #81: pool segments are unique per project (FIRST-58 regression)
+// ---------------------------------------------------------------------------
+
+/// Gives the project a real task worktree + workspace row via ensure_worktree.
+fn add_task_worktree(fx: &Fixture, project: &Project, branch: &str) -> PathBuf {
+    let wm = WorktreeManager::new(fx.db.clone(), fx.settings.clone(), Arc::new(CliGit));
+    let workspace_id = format!("ws-{branch}");
+    let task_id = format!("task-{branch}");
+    {
+        let conn = fx.db.conn().lock().unwrap();
+        conn.execute(
+            "INSERT INTO workspaces (id, type, kind, location) VALUES (?1, 'local', 'worktree', 'local')",
+            [&workspace_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tasks (id, project_id, name, status, workspace_id)
+             VALUES (?1, ?2, ?3, 'todo', ?4)",
+            rusqlite::params![task_id, project.id, branch, workspace_id],
+        )
+        .unwrap();
+    }
+    wm.ensure_worktree(&EnsureWorktreeOptions {
+        project,
+        task_id: &task_id,
+        workspace_id: &workspace_id,
+        branch_name: branch,
+        source_ref: Some("main"),
+        worktree_enabled: true,
+    })
+    .unwrap()
+    .path
+}
+
+#[test]
+fn test_delete_same_basename_projects_keeps_sibling_worktrees() {
+    // FIRST-58 regression (#81): two projects sharing a basename used to share
+    // one pool, so deleting one destroyed the other's on-disk worktrees.
+    let fx = Fixture::new();
+    let repo_a = fx.make_repo("work/ade");
+    let repo_b = fx.make_repo("archive/ade");
+    let a = fx.store.create_local(&repo_a, false).unwrap();
+    let b = fx.store.create_local(&repo_b, false).unwrap();
+    assert_eq!(a.name, "ade");
+    assert_eq!(b.name, "ade");
+
+    let wt_a = add_task_worktree(&fx, &a, "task-a");
+    let wt_b = add_task_worktree(&fx, &b, "task-b");
+    assert_ne!(
+        wt_a.parent().unwrap(),
+        wt_b.parent().unwrap(),
+        "pools must be distinct"
+    );
+
+    fx.store.delete(&a.id).unwrap();
+
+    // A's worktree gone with its pool; B's worktree + recorded path intact.
+    assert!(!wt_a.exists());
+    assert!(wt_b.exists(), "sibling worktree must survive");
+    git_ok(&wt_b, ["status"]);
+    let recorded: String = fx
+        .db
+        .conn()
+        .lock()
+        .unwrap()
+        .query_row("SELECT path FROM workspaces WHERE id IN (SELECT workspace_id FROM tasks WHERE project_id = ?1)", [&b.id], |r| r.get(0))
+        .unwrap();
+    assert_eq!(recorded, wt_b.to_string_lossy().into_owned());
+}
+
+/// Standalone git repo helper for the adoption tests (rows are inserted
+/// BEFORE the store exists, so the fixture's create flow doesn't apply).
+fn init_repo(tmp: &tempfile::TempDir, name: &str) -> PathBuf {
+    let repo = tmp.path().join(name);
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = CliGit;
+    git.init(&repo).unwrap();
+    std::fs::write(repo.join("README.md"), "# demo\n").unwrap();
+    git_ok(&repo, ["add", "."]);
+    git_ok(
+        &repo,
+        [
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=t@fartCode.dev",
+            "commit",
+            "-m",
+            "init",
+        ],
+    );
+    git_ok(&repo, ["branch", "-M", "main"]);
+    std::fs::canonicalize(&repo).unwrap()
+}
+
+/// Pre-#81 fixture: migrated DB, two same-basename project rows with no
+/// segment, worktrees in the shared legacy pool. Returns the pieces.
+fn legacy_collision_fixture(
+    tmp: &tempfile::TempDir,
+) -> (
+    Arc<SqliteDb>,
+    Arc<DbSettingsStore>,
+    PathBuf,
+    PathBuf,
+    PathBuf,
+) {
+    let db = SqliteDb::init(Some(tmp.path().join("test.db").to_str().unwrap())).unwrap();
+    let settings = Arc::new(DbSettingsStore::new(db.clone()));
+    let worktrees_dir = tmp.path().join("worktrees");
+    std::fs::create_dir_all(&worktrees_dir).unwrap();
+    settings
+        .set(
+            &LOCAL_PROJECT,
+            LocalProjectGroup {
+                default_projects_directory: tmp
+                    .path()
+                    .join("repositories")
+                    .to_string_lossy()
+                    .into_owned(),
+                default_worktree_directory: worktrees_dir.to_string_lossy().into_owned(),
+                write_agent_config_to_git_ignore: true,
+            },
+        )
+        .unwrap();
+
+    let repo1 = init_repo(tmp, "work/ade");
+    let repo2 = init_repo(tmp, "archive/ade");
+
+    // Pre-upgrade rows: no worktree_pool_segment.
+    let conn = db.conn().lock().unwrap();
+    conn.execute(
+        "INSERT INTO projects (id, name, path, workspace_provider, created_at)
+         VALUES ('p1', 'ade', ?1, 'local', '2024-01-01 00:00:00')",
+        [repo1.to_string_lossy()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO projects (id, name, path, workspace_provider, created_at)
+         VALUES ('p2', 'ade', ?1, 'local', '2024-01-02 00:00:00')",
+        [repo2.to_string_lossy()],
+    )
+    .unwrap();
+    drop(conn);
+
+    // Legacy shared pool: one worktree per project.
+    let shared = worktrees_dir.join("ade");
+    let git = CliGit;
+    git.branch_create(&repo1, "b1", "main").unwrap();
+    git.worktree_add(&repo1, &shared.join("b1"), "b1").unwrap();
+    git.branch_create(&repo2, "b2", "main").unwrap();
+    git.worktree_add(&repo2, &shared.join("b2"), "b2").unwrap();
+    let conn = db.conn().lock().unwrap();
+    conn.execute(
+        "INSERT INTO workspaces (id, kind, path) VALUES ('w1', 'worktree', ?1)",
+        [shared.join("b1").to_string_lossy()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO workspaces (id, kind, path) VALUES ('w2', 'worktree', ?1)",
+        [shared.join("b2").to_string_lossy()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO tasks (id, project_id, name, status, workspace_id)
+         VALUES ('t1', 'p1', 'task', 'todo', 'w1')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO tasks (id, project_id, name, status, workspace_id)
+         VALUES ('t2', 'p2', 'task', 'todo', 'w2')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    (db, settings, worktrees_dir, repo1, repo2)
+}
+
+#[test]
+fn test_adoption_moves_colliding_legacy_pool_worktrees() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (db, settings, worktrees_dir, _repo1, repo2) = legacy_collision_fixture(&tmp);
+    let shared = worktrees_dir.join("ade");
+
+    // Store construction runs the one-shot adoption pass (#81).
+    let store = DbProjectStore::new(
+        db.clone(),
+        settings.clone(),
+        Arc::new(CliGit),
+        Arc::new(BroadcastEventBus::new(16)),
+    );
+    assert_eq!(
+        db.kv_get("worktree_pool_adoption_v1").unwrap().as_deref(),
+        Some("done")
+    );
+
+    // Both had worktrees on disk → tiebreak by earliest created_at: p1 keeps
+    // the legacy dir, p2 moves to its new-scheme pool.
+    let p1 = store.get("p1").unwrap().unwrap();
+    let p2 = store.get("p2").unwrap().unwrap();
+    assert_eq!(p1.worktree_pool_segment.as_deref(), Some("ade"));
+    assert_eq!(p2.worktree_pool_segment, Some(new_pool_segment(&p2)));
+
+    let pool1 = worktree_pool_path(db.as_ref(), settings.as_ref(), &p1).unwrap();
+    let pool2 = worktree_pool_path(db.as_ref(), settings.as_ref(), &p2).unwrap();
+    assert_eq!(pool1, shared, "sole keeper keeps the legacy dir");
+    assert_ne!(pool1, pool2, "pools must be distinct after adoption");
+
+    // p2's worktree moved + repaired: valid on disk, DB row repointed.
+    let moved = pool2.join("b2");
+    assert!(!shared.join("b2").exists());
+    assert!(moved.exists());
+    git_ok(&moved, ["status"]);
+    let recorded: String = db
+        .conn()
+        .lock()
+        .unwrap()
+        .query_row("SELECT path FROM workspaces WHERE id = 'w2'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(recorded, moved.to_string_lossy().into_owned());
+
+    // ensure_worktree REUSE finds the moved worktree.
+    let wm = WorktreeManager::new(db.clone(), settings.clone(), Arc::new(CliGit));
+    let result = wm
+        .ensure_worktree(&EnsureWorktreeOptions {
+            project: &p2,
+            task_id: "t2",
+            workspace_id: "w2",
+            branch_name: "b2",
+            source_ref: Some("main"),
+            worktree_enabled: true,
+        })
+        .unwrap();
+    assert!(result.reused);
+    // git reports realpath (/private/var vs /var) — compare canonicalized.
+    assert_eq!(result.path, std::fs::canonicalize(&moved).unwrap());
+
+    // Re-run is a no-op: another store construction changes nothing.
+    let store2 = DbProjectStore::new(
+        db.clone(),
+        settings.clone(),
+        Arc::new(CliGit),
+        Arc::new(BroadcastEventBus::new(16)),
+    );
+    assert_eq!(
+        store2.get("p2").unwrap().unwrap().worktree_pool_segment,
+        Some(new_pool_segment(&store2.get("p2").unwrap().unwrap()))
+    );
+    let _ = repo2;
+}
+
+#[test]
+fn test_adoption_sole_project_keeps_legacy_segment() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = SqliteDb::init(Some(tmp.path().join("test.db").to_str().unwrap())).unwrap();
+    let settings = Arc::new(DbSettingsStore::new(db.clone()));
+    let worktrees_dir = tmp.path().join("worktrees");
+    settings
+        .set(
+            &LOCAL_PROJECT,
+            LocalProjectGroup {
+                default_projects_directory: tmp
+                    .path()
+                    .join("repositories")
+                    .to_string_lossy()
+                    .into_owned(),
+                default_worktree_directory: worktrees_dir.to_string_lossy().into_owned(),
+                write_agent_config_to_git_ignore: true,
+            },
+        )
+        .unwrap();
+    let repo = init_repo(&tmp, "demo");
+    db.conn()
+        .lock()
+        .unwrap()
+        .execute(
+            "INSERT INTO projects (id, name, path, workspace_provider) VALUES ('p1', 'demo', ?1, 'local')",
+            [repo.to_string_lossy()],
+        )
+        .unwrap();
+
+    let store = DbProjectStore::new(
+        db.clone(),
+        settings.clone(),
+        Arc::new(CliGit),
+        Arc::new(BroadcastEventBus::new(16)),
+    );
+
+    // Sole claimant adopts the legacy segment in place — no dir churn.
+    let p = store.get("p1").unwrap().unwrap();
+    assert_eq!(p.worktree_pool_segment.as_deref(), Some("demo"));
+    let pool = worktree_pool_path(db.as_ref(), settings.as_ref(), &p).unwrap();
+    assert_eq!(pool, worktrees_dir.join("demo"));
+}
+
+fn sha256_hex(input: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(input.as_bytes());
+    format!("{:x}", h.finalize())
 }
 
 // ---------------------------------------------------------------------------

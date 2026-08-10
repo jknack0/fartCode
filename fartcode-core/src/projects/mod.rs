@@ -1,6 +1,7 @@
 //! Projects domain: create (local/clone), open/close lifecycle, CRUD
 //! (ARCHITECTURE.md §2, ticket E1-03).
 
+pub mod adoption;
 pub mod model;
 pub mod provider;
 pub mod worktrees;
@@ -62,12 +63,23 @@ impl DbProjectStore {
         git: Arc<dyn GitOps>,
         event_bus: Arc<dyn EventBus>,
     ) -> Self {
-        Self {
+        let store = Self {
             db,
             settings,
             git,
             event_bus,
+        };
+        // #81: one-shot adoption of per-project pool segments, before anything
+        // resolves a pool. Never blocks startup — failures warn and continue
+        // (skipped projects lazily get fresh unique pools on first resolve).
+        if let Err(e) = adoption::adopt_pool_segments(
+            store.db.as_ref(),
+            store.settings.as_ref(),
+            store.git.as_ref(),
+        ) {
+            tracing::warn!(error = %e, "worktree pool segment adoption failed (non-fatal)");
         }
+        store
     }
 
     fn with_conn<T>(
@@ -317,16 +329,15 @@ impl DbProjectStore {
             Ok(())
         })?;
 
-        // Teardown (E1-04): remove the project's worktree pool dir
-        // (default_worktree_directory/<project>) best-effort — never the
-        // project root itself. On-disk worktrees would otherwise orphan
-        // their git metadata. Note: the pool segment is the project NAME
-        // (reference parity), so two same-named projects share a pool and
-        // deleting one removes the other's on-disk worktrees — documented
-        // limitation until the segment scheme changes (ADR-0015).
-        if let Ok(pool) =
-            crate::projects::provider::worktree_pool_path(self.settings.as_ref(), &project)
-        {
+        // Teardown (E1-04): remove the project's worktree pool dir best-effort
+        // — never the project root itself. The segment is stored per project
+        // (or lazily stamped with a path-hash suffix), so pools are unique and
+        // deleting one project can never touch another's worktrees (#81).
+        if let Ok(pool) = crate::projects::provider::worktree_pool_path(
+            self.db.as_ref(),
+            self.settings.as_ref(),
+            &project,
+        ) {
             if pool.exists() && pool != project.path {
                 if let Err(e) = std::fs::remove_dir_all(&pool) {
                     tracing::warn!(path = %pool.display(), error = %e, "worktree pool teardown failed (non-fatal)");

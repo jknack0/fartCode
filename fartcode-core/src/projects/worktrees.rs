@@ -100,7 +100,7 @@ impl WorktreeManager {
     pub fn reconcile(&self, project: &Project) -> Result<Vec<WorktreeEntry>, Error> {
         self.prune(project)?;
         let entries = self.git.worktree_list(&project.path)?;
-        let pool = worktree_pool_path(self.settings.as_ref(), project)?;
+        let pool = worktree_pool_path(self.db.as_ref(), self.settings.as_ref(), project)?;
         let pool_real = std::fs::canonicalize(&pool).unwrap_or(pool);
         Ok(entries
             .into_iter()
@@ -134,7 +134,7 @@ impl WorktreeManager {
             });
         }
 
-        let pool = worktree_pool_path(self.settings.as_ref(), opts.project)?;
+        let pool = worktree_pool_path(self.db.as_ref(), self.settings.as_ref(), opts.project)?;
         let worktree_path = pool.join(opts.branch_name);
         self.prune(opts.project)?;
 
@@ -258,7 +258,7 @@ impl WorktreeManager {
         if worktree_real == project_real {
             return Err(Error::CannotRemoveProjectRoot);
         }
-        let pool = worktree_pool_path(self.settings.as_ref(), project)?;
+        let pool = worktree_pool_path(self.db.as_ref(), self.settings.as_ref(), project)?;
         let pool_real = std::fs::canonicalize(&pool).unwrap_or(pool);
         if !worktree_real.starts_with(&pool_real) {
             return Err(Error::Internal(format!(

@@ -47,6 +47,9 @@ pub struct Project {
     pub base_ref: Option<String>,
     pub ssh_connection_id: Option<String>,
     pub repository_workspace_id: Option<String>,
+    /// Worktree pool directory segment (#81). NULL until the adoption pass or
+    /// the first pool resolution stamps it.
+    pub worktree_pool_segment: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -97,7 +100,8 @@ impl From<Project> for ProjectDto {
 
 /// Maps a `projects` row to a `Project` (columns must match the SELECT order
 /// used by the store: id, name, path, workspace_provider, base_ref,
-/// ssh_connection_id, repository_workspace_id, created_at, updated_at).
+/// ssh_connection_id, repository_workspace_id, worktree_pool_segment,
+/// created_at, updated_at).
 pub(crate) fn project_from_row(row: &Row<'_>) -> rusqlite::Result<Project> {
     let workspace_provider = row.get::<_, String>(3)?;
     Ok(Project {
@@ -109,11 +113,12 @@ pub(crate) fn project_from_row(row: &Row<'_>) -> rusqlite::Result<Project> {
         base_ref: row.get(4)?,
         ssh_connection_id: row.get(5)?,
         repository_workspace_id: row.get(6)?,
-        created_at: row.get(7)?,
-        updated_at: row.get(8)?,
+        worktree_pool_segment: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
     })
 }
 
 pub(crate) const PROJECT_COLUMNS: &str =
     "id, name, path, workspace_provider, base_ref, ssh_connection_id, \
-     repository_workspace_id, created_at, updated_at";
+     repository_workspace_id, worktree_pool_segment, created_at, updated_at";

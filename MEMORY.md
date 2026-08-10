@@ -4,6 +4,20 @@ Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if
 one exists).
 
+## #81 worktree pool segments LANDED (2026-08-09) — ADR-0039
+
+Pool dirs are now unique per project: `projects.worktree_pool_segment`
+(migration 0010) stores `<safePathSegment>-<hash8(stored path)>`; the
+one-shot kv-gated adoption pass (`worktree_pool_adoption_v1`, runs in
+`DbProjectStore::new`) stamps legacy segments in place when unique and
+moves+repairs (`git worktree repair`, new `GitOps::worktree_repair`)
+colliding projects' worktrees out of shared pools. Deleting a project can
+no longer destroy a same-basename sibling's worktrees (FIRST-58). The
+per-project `worktree_directory` setting is finally consumed by
+`worktree_pool_path` (invalid override falls back to app default). Tests:
+projects_integration.rs covers delete isolation, collision adoption,
+sole-adopter, override; migration COUNT assertions bumped to 11.
+
 ## #76 memory value dashboard LANDED (2026-08-09) — E19 CLOSED (#69)
 
 732c391 + 73de08e. Memory pane at settings → project → Memory renders

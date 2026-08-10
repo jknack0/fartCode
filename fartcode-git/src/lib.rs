@@ -583,6 +583,19 @@ impl GitOps for CliGit {
         self.run_ok(Some(repo_path), ["worktree", "prune"])
     }
 
+    fn worktree_repair(&self, repo_path: &Path, worktree_path: &Path) -> Result<(), Error> {
+        // Bounded by the Local timeout class (run_ok) — startup adoption must
+        // not hang on a wedged git (AGENTS.md main-thread rules).
+        self.run_ok(
+            Some(repo_path),
+            [
+                "worktree",
+                "repair",
+                worktree_path.to_string_lossy().as_ref(),
+            ],
+        )
+    }
+
     fn worktree_prune_timed(&self, repo_path: &Path, timeout: Duration) -> Result<(), Error> {
         // Bounded prune (reference pruneGitWorktrees: 5s timeout + the
         // NON_INTERACTIVE_ENV already applied by git_cmd). The caller names
