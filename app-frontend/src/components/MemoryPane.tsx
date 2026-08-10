@@ -121,7 +121,16 @@ export function MemoryPane({ projectId }: { projectId: string }) {
       );
     }
     if (citations.unknown > 0) {
-      citationsSubParts.push(`${plural(citations.unknown, "session")} excluded as unattributable`);
+      // The excluded-but-cited count travels with the exclusion (its whole
+      // reason to exist in the payload): the rate is a floor when some of
+      // the sessions it could not count did name the dossier.
+      citationsSubParts.push(
+        `${plural(citations.unknown, "session")} excluded as unattributable${
+          citations.unknownWithHit > 0
+            ? ` (${citations.unknownWithHit} of them did name it)`
+            : ""
+        }`,
+      );
     }
   }
 

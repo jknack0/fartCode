@@ -64,7 +64,7 @@ function populatedPayload(timeToLand: TimeToLandKindDto): MemoryValueDto {
       citedMention: 1,
       notCited: 3,
       unknown: 1,
-      unknownWithHit: 0,
+      unknownWithHit: 1,
       wroteWithoutReading: 1,
     },
     reAsk: {
@@ -141,7 +141,9 @@ describe("MemoryPane", () => {
     expect(text).toContain("50% · 3 of 6 steps");
     expect(text).toContain("2 through a read or search, 1 named it only");
     expect(text).toContain("1 wrote their section without reading the file");
-    expect(text).toContain("1 session excluded as unattributable");
+    // The excluded-but-cited count must travel with the exclusion — an
+    // excluded session that named the dossier makes the rate a floor.
+    expect(text).toContain("1 session excluded as unattributable (1 of them did name it)");
     // Re-ask: 1 of 8 tagged clarifications → 13%.
     expect(text).toContain("13% re-asked · 1 to you, 7 from memory · 3 tagged steps");
     expect(text).toContain("1 step could not be read");
