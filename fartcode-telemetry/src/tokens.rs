@@ -121,7 +121,11 @@ impl EstimatedTokens {
 /// The signal. `Insufficient` is the normal answer for a young project and
 /// is not a zero.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum TokensSaved {
     /// Not enough sessions with usage metadata on both sides of the
     /// contrast. Carries what it has so the dashboard can say how far off

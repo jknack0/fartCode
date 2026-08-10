@@ -905,6 +905,86 @@
   color: var(--foreground);
 }
 
+/* -- Memory pane (#76, handoff v3 §8g) ------------------------------------
+   Four settings-style rows under a title headline. Honest blanks render in
+   the same grammar as figures; the time-to-land caveat is a permanent mono
+   meta line under its row. No chart lib, no icons, no animation. */
+
+.fc-mem-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fc-mem-headline {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+  color: var(--foreground);
+}
+
+.fc-mem-subline {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--meta);
+}
+
+.fc-mem-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.fc-mem-row-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.fc-mem-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.fc-mem-row .fc-set-label {
+  color: var(--text-key);
+}
+
+/* machine value may wrap — a sparkline plus counts beats an ellipsis */
+.fc-mem-row .fc-set-value {
+  white-space: normal;
+  text-align: right;
+}
+
+.fc-mem-sub {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--meta);
+  text-align: right;
+}
+
+/* the caveat — welded under time to land, never conditional */
+.fc-mem-caveat {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--meta);
+}
+
+.fc-mem-footer {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--meta);
+  border-top: 1px solid var(--hairline);
+  padding-top: 16px;
+}
+
 /* -- onboarding (E1-08): the 7d card, system grammar — no .modal plate --- */
 
 .fc-onboard {

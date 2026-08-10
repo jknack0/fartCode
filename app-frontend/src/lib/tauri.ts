@@ -1584,3 +1584,94 @@ export function issueImportGithub(args: {
 }): Promise<IssueDto> {
   return invoke("issue_import_github", { request: args });
 }
+
+// -- E19-07 memory value dashboard (#76, ADR-0038 item 7) ----------------------
+//
+// Mirrors fartcode-telemetry's serde output exactly. The tagged enums use
+// `kind` with camelCase variant names AND camelCase fields
+// (`rename_all_fields`); `TokensSaved::Estimated` is an internally-tagged
+// newtype, so EstimatedTokens' fields flatten beside `kind`. The signals
+// deliberately carry "don't know" variants — render them, never coerce
+// them to numbers.
+
+export interface MemoryCitationsDto {
+  sessions: number;
+  citedRead: number;
+  citedMention: number;
+  notCited: number;
+  unknown: number;
+  unknownWithHit: number;
+  wroteWithoutReading: number;
+}
+
+export type ReAskRateDto =
+  | { kind: "unknown"; stepsScanned: number; stepsUnreadable: number }
+  | {
+      kind: "observed";
+      memoryAnswered: number;
+      humanAsked: number;
+      stepsTagged: number;
+      stepsScanned: number;
+      stepsUnreadable: number;
+    };
+
+export type TokensSavedDto =
+  | {
+      kind: "insufficient";
+      citingWithUsage: number;
+      notCitingWithUsage: number;
+      neededPerArm: number;
+    }
+  | {
+      kind: "estimated";
+      perSession: number;
+      windowTotal: number;
+      citingMedian: number;
+      notCitingMedian: number;
+      citingSessions: number;
+      notCitingSessions: number;
+      basis: "contextWindowGauge";
+    };
+
+export type TimeToLandKindDto =
+  | { kind: "noData" }
+  | { kind: "singlePoint"; hours: number }
+  | {
+      kind: "trend";
+      earlierMedianHours: number;
+      laterMedianHours: number;
+      landed: number;
+      /** Per-cycle hours in landing order — the sparkline series. */
+      landedHours: number[];
+    };
+
+/** The caveat is structurally welded to the figures — every payload carries
+ * it, for every variant. Never render the kind without it. */
+export interface TimeToLandDto {
+  caveat: string;
+  kind: TimeToLandKindDto;
+}
+
+export interface MemoryValueDto {
+  projectId: string;
+  windowDays: number;
+  windowSince: number;
+  citations: MemoryCitationsDto;
+  reAsk: ReAskRateDto;
+  tokensSaved: TokensSavedDto;
+  timeToLand: TimeToLandDto;
+  sessionsObserved: number;
+  dossiersScanned: number;
+  cyclesOutsideWindow: number;
+  sectionsUndated: number;
+  clipped: boolean;
+}
+
+/** The four local memory-value signals for one project. Read-only and
+ * computed on demand; nothing leaves the machine. */
+export function telemetryMemoryValue(
+  projectId: string,
+  windowDays?: number,
+): Promise<MemoryValueDto> {
+  return invoke("telemetry_memory_value", { projectId, windowDays });
+}

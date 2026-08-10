@@ -12,6 +12,7 @@ import { useSidebar } from "../store/sidebar";
 import { useUi } from "../store/ui";
 import AgentsList from "./AgentsList";
 import { ColumnsPane } from "./ColumnsEditor";
+import { MemoryPane } from "./MemoryPane";
 import { ProjectSettingsPane } from "./ProjectSettings";
 import ProviderAccounts from "./ProviderAccounts";
 
@@ -168,21 +169,37 @@ export default function SettingsModal({
   // Hints re-render live when bindings change (spec: subscribe bindingsVersion).
   useUi((s) => s.bindingsVersion);
 
-  // Sections: "app" · "keys" · "project:<id>" · "project:<id>:columns".
-  const columnsChild = section.startsWith("project:") && section.endsWith(":columns");
-  const sectionProjectId = section.startsWith("project:")
-    ? section.slice("project:".length, columnsChild ? -":columns".length : undefined)
-    : null;
+  // Sections: "app" · "keys" · "project:<id>[:<child>]" — parsed
+  // generically, so every child (Columns, Memory, …) routes the same way.
+  // Project ids are ULID-shaped (no ":"), so the last segment is the child
+  // exactly when the section has three parts.
+  const PROJECT_CHILDREN = [
+    { suffix: "columns", label: "Columns" },
+    { suffix: "memory", label: "Memory" },
+  ];
+  let sectionProjectId: string | null = null;
+  let sectionChild: string | null = null;
+  if (section.startsWith("project:")) {
+    const rest = section.slice("project:".length);
+    const sep = rest.lastIndexOf(":");
+    if (sep >= 0 && PROJECT_CHILDREN.some((c) => c.suffix === rest.slice(sep + 1))) {
+      sectionProjectId = rest.slice(0, sep);
+      sectionChild = rest.slice(sep + 1);
+    } else {
+      sectionProjectId = rest;
+    }
+  }
   const activeProject = sectionProjectId
     ? projects.find((p) => p.id === sectionProjectId) ?? null
     : null;
+  const childLabel = PROJECT_CHILDREN.find((c) => c.suffix === sectionChild)?.label ?? null;
   const title =
     section === "app"
       ? "App"
       : section === "keys"
         ? "Keys"
-        : columnsChild
-          ? `Columns · ${activeProject?.name ?? ""}`
+        : childLabel
+          ? `${childLabel} · ${activeProject?.name ?? ""}`
           : activeProject?.name ?? "";
 
   return (
@@ -207,7 +224,7 @@ export default function SettingsModal({
             // (Memory, …) slot into this list.
             const expanded =
               section === `project:${p.id}` || section.startsWith(`project:${p.id}:`);
-            const children = [{ suffix: "columns", label: "Columns" }];
+            const children = PROJECT_CHILDREN;
             return (
               <Fragment key={p.id}>
                 <button
@@ -252,8 +269,10 @@ export default function SettingsModal({
             </div>
           )}
           {activeProject &&
-            (columnsChild ? (
+            (sectionChild === "columns" ? (
               <ColumnsPane projectId={activeProject.id} />
+            ) : sectionChild === "memory" ? (
+              <MemoryPane projectId={activeProject.id} />
             ) : (
               <ProjectSettingsPane projectId={activeProject.id} />
             ))}

@@ -123,8 +123,15 @@ pub fn cycle_of(events: &[TimelineEvent]) -> Option<FeatureCycle> {
 }
 
 /// What the window's landed features add up to.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+///
+/// Not `Copy`: `Trend` carries the per-cycle series (#76's sparkline), and
+/// a `Vec` cannot be `Copy`. Callers clone through [`TimeToLand::read`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum TimeToLandKind {
     /// No feature in this project has both a `created` and a `pr merged`
     /// breadcrumb. The ordinary state of a project that has not merged a
@@ -143,6 +150,11 @@ pub enum TimeToLandKind {
         earlier_median_hours: f64,
         later_median_hours: f64,
         landed: u32,
+        /// Per-cycle hours in **landing order** — the same order the two
+        /// medians were split on. The dashboard's sparkline is drawn from
+        /// this; `NoData` and `SinglePoint` deliberately carry no series,
+        /// so a single point can never grow a chart.
+        landed_hours: Vec<f64>,
     },
 }
 
@@ -150,7 +162,7 @@ pub enum TimeToLandKind {
 ///
 /// Both fields are private; see the module docs for why, and for the
 /// `compile_fail` doctest that proves it.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimeToLand {
     /// Always serialized. No `skip_serializing_if`, no `Option`, no
@@ -178,10 +190,12 @@ impl TimeToLand {
                 let mut earlier: Vec<f64> =
                     cycles[..split].iter().map(FeatureCycle::hours).collect();
                 let mut later: Vec<f64> = cycles[split..].iter().map(FeatureCycle::hours).collect();
+                let landed_hours: Vec<f64> = cycles.iter().map(FeatureCycle::hours).collect();
                 TimeToLandKind::Trend {
                     earlier_median_hours: median(&mut earlier),
                     later_median_hours: median(&mut later),
                     landed: n as u32,
+                    landed_hours,
                 }
             }
         };
@@ -193,9 +207,10 @@ impl TimeToLand {
 
     /// The only way to read the figures — and it hands you the caveat in
     /// the same expression. There is deliberately no accessor that returns
-    /// the numbers alone.
+    /// the numbers alone. A clone, since `Trend` carries the per-cycle
+    /// series and the enum is no longer `Copy`.
     pub fn read(&self) -> (TimeToLandKind, &'static str) {
-        (self.kind, self.caveat)
+        (self.kind.clone(), self.caveat)
     }
 
     /// One rendering that cannot lose the sentence.
@@ -213,6 +228,7 @@ impl TimeToLand {
                 earlier_median_hours,
                 later_median_hours,
                 landed,
+                ..
             } => format!(
                 "median time to land: {earlier_median_hours:.1}h for the earlier half, \
                  {later_median_hours:.1}h for the later half, over {landed} landed feature(s)"
@@ -450,6 +466,8 @@ mod tests {
                 earlier_median_hours: 90.0,
                 later_median_hours: 25.0,
                 landed: 4,
+                // Landing order — cycle(10,…) landed first, cycle(40,…) last.
+                landed_hours: vec![100.0, 80.0, 30.0, 20.0],
             }
         );
         // No percentage, no slope — the caveat forbids the attribution one
@@ -467,8 +485,30 @@ mod tests {
                 earlier_median_hours: 10.0,
                 later_median_hours: 40.0,
                 landed: 2,
+                landed_hours: vec![10.0, 40.0],
             }
         );
+    }
+
+    /// #76's sparkline series: Trend serializes the per-cycle hours in
+    /// landing order; NoData and SinglePoint carry no series at all; and
+    /// every serialization still contains "caveat".
+    #[test]
+    fn only_a_trend_serializes_a_landing_ordered_series() {
+        let trend = TimeToLand::from_cycles(vec![cycle(30, 5), cycle(10, 90), cycle(20, 40)]);
+        let json = serde_json::to_string(&trend).unwrap();
+        assert!(json.contains("\"landedHours\":[90.0,40.0,5.0]"), "{json}");
+
+        for value in [
+            TimeToLand::from_cycles(Vec::new()),
+            TimeToLand::from_cycles(vec![cycle(1, 12)]),
+        ] {
+            let json = serde_json::to_string(&value).unwrap();
+            assert!(!json.contains("landedHours"), "{json}");
+            assert!(json.contains("\"caveat\""), "{json}");
+        }
+        let json = serde_json::to_string(&trend).unwrap();
+        assert!(json.contains("\"caveat\""), "{json}");
     }
 
     /// The caveat is inseparable from the value: it is in `read`, in

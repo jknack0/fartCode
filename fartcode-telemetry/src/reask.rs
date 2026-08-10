@@ -194,7 +194,11 @@ fn count(haystack: &str, needle: &str) -> u32 {
 /// The aggregate. Two variants, and the difference between them is the
 /// point of the type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ReAskRate {
     /// Not one readable step emitted a tag. There is no rate — not zero,
     /// not a hundred percent.

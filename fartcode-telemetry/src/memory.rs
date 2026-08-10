@@ -438,6 +438,7 @@ mod tests {
                 earlier_median_hours: 100.0,
                 later_median_hours: 20.0,
                 landed: 2,
+                landed_hours: vec![100.0, 20.0],
             }
         );
         assert_eq!(value.sessions_observed, 7);
