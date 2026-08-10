@@ -248,6 +248,11 @@ pub fn flip_for_exited_agent<R: tauri::Runtime>(
 ) {
     if let Some(state) = app.try_state::<Arc<App>>() {
         let session = format!("pty:{terminal_id}");
+        // E19-04 (#73): observe before settling — an advancing settle moves
+        // the card out of the column this is about, and the terminal entry
+        // is dropped right after this call, taking its scrollback with it.
+        // Best-effort and bounded; it cannot fail the settle.
+        crate::telemetry::observe_pty_session(app, &state, task_id, terminal_id);
         crate::step_engine::settle_issues_for_task(&state, task_id, Some(&session));
     }
 }

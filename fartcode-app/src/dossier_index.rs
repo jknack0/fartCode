@@ -115,9 +115,12 @@ pub fn reindex_issue(app: &App, issue: &Issue) {
 /// copies is THIS CARD'S and was modified most recently. `None` when neither
 /// qualifies.
 ///
-/// Shared with the card-detail read command (E19-06, #75) so the file ⌘K
-/// indexed and the file the card renders are the same bytes — a second
-/// resolver is a second answer to "which copy is current".
+/// Shared with the card-detail read command (E19-06, #75) and with
+/// `crate::telemetry` (E19-04, #73), which reads the same file for
+/// time-to-land and the durable half of the re-ask signal. One resolver for
+/// all three: a second one is a second answer to "which copy is current",
+/// and search, the card detail, and telemetry must never disagree about
+/// which file a card owns — the ownership rule below is the whole point.
 ///
 /// **Ownership, not existence.** `docs/features/` is a common hand-written
 /// convention, so a file sitting at the card's slug path in the main

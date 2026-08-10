@@ -13,6 +13,7 @@ pub mod dossiers;
 pub mod indexer;
 pub mod skills;
 pub mod step_engine;
+pub mod telemetry;
 pub mod terminals;
 mod watchers;
 
@@ -237,6 +238,10 @@ pub fn run() {
             commands::search::resource_sample,
             commands::search::get_resource_monitor_enabled,
             commands::search::set_resource_monitor_enabled,
+            // E19-04 (#73; ADR-0038 item 7): the local memory-value
+            // signals. Read-only, and nothing behind it can leave the
+            // machine.
+            commands::telemetry::telemetry_memory_value,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

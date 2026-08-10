@@ -19,5 +19,6 @@ pub mod search;
 pub mod settings;
 pub mod steps;
 pub mod tasks;
+pub mod telemetry;
 pub mod terminals;
 pub mod view_state;

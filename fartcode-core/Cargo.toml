@@ -7,6 +7,14 @@ rust-version.workspace = true
 
 [dependencies]
 fartcode-providers = { path = "../fartcode-providers" }
+# The re-ask tagging convention (E19-04, #73; ADR-0038 item 7): `skills.rs`
+# WRITES the tags into the seeded prompt and skill, `fartcode-telemetry`
+# READS them back. One definition, in the parser, so the two halves cannot
+# drift — the same doctrine `FEATURE_LOG_VERSION` applies to the rest of the
+# convention. ARCHITECTURE.md §1 draws this edge (telemetry sits below
+# core); the reverse edge stays closed, and `fartcode-telemetry`'s
+# `tests/no_egress.rs` enforces that.
+fartcode-telemetry = { path = "../fartcode-telemetry" }
 rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

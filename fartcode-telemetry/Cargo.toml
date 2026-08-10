@@ -5,4 +5,19 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+# ── NO NETWORK DEPENDENCY, EVER ────────────────────────────────────────
+# ADR-0038 item 7: every memory-value signal is computed "in-app only" and
+# "no metric leaves the machine". The workspace manifest still lists
+# `reqwest` under "declared for integrations/telemetry" — that reservation
+# is now void for this crate. `tests/no_egress.rs` fails the build if an
+# HTTP/socket dependency or API ever appears here, so the constraint is
+# enforced rather than remembered.
+#
+# This crate also performs NO I/O of any kind: no fs, no db, no clock. It
+# is pure computation over values the app layer hands it. That is what
+# makes the no-egress claim checkable instead of merely stated.
 [dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
