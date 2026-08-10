@@ -199,6 +199,14 @@ pub enum Error {
     #[error("SSH authentication failed: {0}")]
     SshAuth(String),
 
+    /// No SSH connection profile with this id (E12-03).
+    #[error("SSH connection not found: {0}")]
+    SshConnectionNotFound(String),
+
+    /// Profile still referenced by projects/workspaces (E12-03).
+    #[error("SSH connection {id} is still used by {count} project(s)/workspace(s)")]
+    SshConnectionInUse { id: String, count: i64 },
+
     #[error("SSH channel error: {0}")]
     SshChannel(String),
 

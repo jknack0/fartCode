@@ -1,4 +1,29 @@
 # MEMORY.md — fartCode
+## #87 E12-03 connection profiles + ssh -G LANDED (2026-08-11)
+
+`fartcode-ssh/src/config.rs` — `ssh -G <alias>` is the source of truth; we parse
+its output instead of reimplementing `~/.ssh/config`. `fartcode-core/src/ssh_connections/`
+— profile CRUD, secrets in keyring (`ssh-connection:<id>`), delete blocked while
+`projects`/`workspaces` still point at the row (no FK on those columns).
+`SshClient::connect_alias()` ties it together; ProxyJump beats ProxyCommand.
+
+Bites:
+- **Alias goes into argv, so it must be validated first** — an alias of
+  `-oProxyCommand=...` would otherwise become an ssh flag. `validate_alias`
+  rejects leading `-` and anything outside OpenSSH host syntax.
+- **Never guess the agent socket.** `IdentityAgent` disagreeing with
+  `SSH_AUTH_SOCK` returns `AgentSocket::Ambiguous`, not a pick — forwarding the
+  wrong agent hands a remote host the wrong keys.
+- ProxyJump is a **direct-tcpip channel**, not a shell hop: the handshake and
+  auth are end-to-end, so the bastion never sees target credentials. Every hop
+  client must stay alive (`SshClient::via`) or the tunnel collapses.
+- ProxyCommand runs under `/bin/sh -c` **verbatim** — `ssh -G` already expanded
+  `%h`/`%p`, and re-quoting a user's shell command line would break it. The
+  child is `kill_on_drop`, held in `SshClient::proxy`.
+- `AuthMethod`/`SshClient` have **hand-written `Debug`** — the derive printed
+  passwords and passphrases into any `{:?}` of `ConnectionParams`.
+- `ssh_connections` already exists in `0000_initial.sql`; no migration needed.
+
 ## #86 E12-02 SFTP layer LANDED (2026-08-10)
 
 `fartcode-ssh/src/sftp.rs` — `RemoteSftp` over russh-sftp 2.4 (workspace dep bumped
