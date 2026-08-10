@@ -16,11 +16,13 @@
 //! synchronous — it is a single indexed DB read.
 
 use fartcode_core::projects::{ProjectDto, ProjectStore};
+use fartcode_core::tasks::TaskStore;
 use std::sync::Arc;
 
 use tauri::State;
 
 use crate::app::App;
+use crate::terminals::TerminalManager;
 
 #[tauri::command]
 pub fn list_projects(app: State<'_, Arc<App>>) -> Result<Vec<ProjectDto>, String> {
@@ -51,20 +53,46 @@ fn create_project_blocking(app: &App, path: &str) -> Result<ProjectDto, String> 
 }
 
 #[tauri::command]
-pub async fn delete_project(app: State<'_, Arc<App>>, id: String) -> Result<(), String> {
+pub async fn delete_project(
+    app: State<'_, Arc<App>>,
+    terminals: State<'_, Arc<TerminalManager>>,
+    acp: State<'_, Arc<crate::acp_runtime::AcpRuntime>>,
+    id: String,
+) -> Result<(), String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || delete_project_blocking(&app, &id))
-        .await
-        .map_err(|e| e.to_string())?
+    let terminals = terminals.inner().clone();
+    let acp = acp.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        delete_project_blocking(&app, &terminals, &acp, &id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Body of [`delete_project`], run on the blocking pool.
-fn delete_project_blocking(app: &App, id: &str) -> Result<(), String> {
+fn delete_project_blocking<R: tauri::Runtime>(
+    app: &App,
+    terminals: &TerminalManager<R>,
+    acp: &crate::acp_runtime::AcpRuntime,
+    id: &str,
+) -> Result<(), String> {
+    // #84: the same teardown `delete_task` runs, scoped to every task of
+    // the project — ACP stop runs BEFORE the row deletion (the FK cascade
+    // wipes the conversation rows `stop_task` reads); terminal close +
+    // tmux sweep run after. Both teardowns are best-effort and bounded
+    // internally, so a wedged process cannot hang the delete.
+    let tasks = app.tasks.list_by_project(id).map_err(|e| e.to_string())?;
+    for task in &tasks {
+        acp.stop_task(&task.id);
+    }
     app.projects.delete(id).map_err(|e| e.to_string())?;
     // E18-04 fix round (finding 4): the FK cascade deletes the project's
     // issues without per-issue events — sweep their step-engine state
     // (parks + launch registry) by project.
     crate::step_engine::on_project_deleted(app, id);
+    for task in &tasks {
+        terminals.close_task(id, &task.id);
+    }
     Ok(())
 }
 
@@ -119,6 +147,47 @@ mod tests {
 
     fn app() -> Arc<App> {
         App::init(Some(":memory:")).expect("app init")
+    }
+
+    /// A no-op ACP runtime: project teardown only calls `stop_task`, and
+    /// the fixtures' tasks own no conversations, so the adapter resolver
+    /// never fires.
+    fn acp_runtime(app: &Arc<App>) -> Arc<crate::acp_runtime::AcpRuntime> {
+        struct NoEvents;
+        impl fartcode_acp::session::SessionEvents for NoEvents {
+            fn update(&self, _: &str, _: &fartcode_acp::client::SessionUpdateEvent) {}
+            fn transcript_changed(&self, _: &str, _: &fartcode_acp::LiveModels) {}
+            fn permission_requested(
+                &self,
+                _: &str,
+                _: &fartcode_acp::session::PermissionRequestedEvent,
+            ) {
+            }
+        }
+        crate::acp_runtime::AcpRuntime::new(
+            app.conversations.clone(),
+            app.tasks.clone(),
+            app.db.clone(),
+            app.provider_accounts.clone(),
+            Arc::new(NoEvents),
+            Arc::new(|provider: &str| {
+                Err(fartcode_acp::Error::InvalidState(format!(
+                    "no adapter in tests: {provider}"
+                )))
+            }),
+        )
+    }
+
+    /// MockRuntime terminal manager — command-level tests cannot build a
+    /// Wry `TerminalManager` (`EventLoop` panics off the main thread), so
+    /// the tests drive `delete_project_blocking` directly, the same
+    /// pattern `tasks_terminals_offload` uses for `delete_task`. The
+    /// command's async + spawn_blocking shape is gated by
+    /// `tests/no_blocking_tauri_commands.rs`.
+    fn manager() -> Arc<TerminalManager<tauri::test::MockRuntime>> {
+        Arc::new(TerminalManager::new(
+            tauri::test::mock_app().handle().clone(),
+        ))
     }
 
     /// A path that cannot exist — the deterministic error path of
@@ -206,11 +275,10 @@ mod tests {
         let app = app();
         let project = app.projects.create_local(repo.path(), false).unwrap();
         let mut events = app.event_bus.subscribe();
-        let mock = tauri::test::mock_app();
-        mock.manage(app.clone());
-        let state = mock.state::<Arc<App>>();
+        let wry = manager();
 
-        block_on_bounded(delete_project(state, project.id.clone())).expect("delete_project");
+        delete_project_blocking(&app, &wry, &acp_runtime(&app), &project.id)
+            .expect("delete_project");
 
         assert!(app.projects.list().unwrap().is_empty());
         assert!(
@@ -223,13 +291,10 @@ mod tests {
 
     #[test]
     fn delete_project_preserves_the_error_string() {
-        let expected = delete_project_blocking(&app(), "no-such-project").expect_err("unknown id");
-
-        let mock = tauri::test::mock_app();
-        mock.manage(app());
-        let state = mock.state::<Arc<App>>();
-        let got = block_on_bounded(delete_project(state, "no-such-project".to_string()))
+        let app = app();
+        let got = delete_project_blocking(&app, &manager(), &acp_runtime(&app), "no-such-project")
             .expect_err("unknown id");
+        let expected = got.clone();
 
         assert_eq!(got, expected);
         assert!(got.contains("no-such-project"), "{got}");
@@ -266,31 +331,46 @@ mod tests {
         );
     }
 
-    /// Same property for the unbounded one (a full worktree-pool
-    /// `remove_dir_all`).
+    /// #84 regression: deleting a project with a live task closes that
+    /// task's terminals (tmux sweep included — see ADR-0025).
     #[test]
-    fn delete_project_yields_the_calling_thread() {
+    fn delete_project_closes_the_tasks_terminals() {
         let repo = repo_fixture();
         let app = app();
         let project = app.projects.create_local(repo.path(), false).unwrap();
-        let mock = tauri::test::mock_app();
-        mock.manage(app);
-        let state = mock.state::<Arc<App>>();
+        let task = app
+            .tasks
+            .create(fartcode_core::tasks::CreateTaskOptions::new(
+                &project.id,
+                "demo",
+            ))
+            .unwrap();
+        let terminals = manager();
+        terminals
+            .open(crate::terminals::TerminalSpec {
+                task_id: &task.id,
+                project_id: &project.id,
+                agent: None,
+                tmux: false,
+                program: "/bin/sh",
+                args: &["-c".into(), "sleep 30".into()],
+                env: &[],
+                remove: &[],
+                cwd: &std::env::temp_dir(),
+                rows: 24,
+                cols: 80,
+                lifecycle: None,
+            })
+            .expect("open terminal");
+        assert_eq!(terminals.list_for_task(&task.id).len(), 1);
 
-        let order = Arc::new(Mutex::new(Vec::<&'static str>::new()));
-        let probe_order = order.clone();
-        let command_order = order.clone();
-        block_on_bounded(async move {
-            tokio::spawn(async move { probe_order.lock().unwrap().push("probe") });
-            let deleted = delete_project(state, project.id).await;
-            command_order.lock().unwrap().push("command");
-            deleted.expect("delete_project");
-        });
+        delete_project_blocking(&app, &terminals, &acp_runtime(&app), &project.id)
+            .expect("delete_project");
 
-        assert_eq!(
-            order.lock().unwrap().as_slice(),
-            ["probe", "command"],
-            "delete_project blocked its caller instead of yielding"
+        assert!(
+            terminals.list_for_task(&task.id).is_empty(),
+            "task terminal closed on project delete"
         );
+        assert!(app.projects.list().unwrap().is_empty());
     }
 }
