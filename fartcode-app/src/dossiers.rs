@@ -180,6 +180,70 @@ pub fn create_for_task(app: &App, issue: &Issue, task_id: &str) -> Option<Issue>
 // Timeline appender
 // ---------------------------------------------------------------------------
 
+/// Resolves a card to `(worktree root, repo-relative dossier path)`, or
+/// `None` when there is nothing we may write — consent withdrawn, no
+/// dossier, no linked task, no worktree on disk, or the file itself is gone
+/// with the branch.
+///
+/// The consent check lives HERE, in the one resolver every writer goes
+/// through, so there is exactly one place to forget it. An existing dossier
+/// is not standing permission: flipping the project switch off must stop
+/// the breadcrumbs too, or "off" would only mean "no NEW files".
+fn write_target(app: &App, issue: &Issue) -> Option<(PathBuf, String)> {
+    if !consented(app, &issue.project_id) {
+        return None;
+    }
+    let rel = issue.dossier_path.clone()?;
+    let task_id = issue.linked_task_id.as_deref()?;
+    // A deleted task clears the link (ON DELETE SET NULL), but check
+    // anyway: the row may be mid-teardown.
+    app.tasks.get(task_id).ok().flatten()?;
+    let worktree = task_worktree(app, task_id)?;
+    if !worktree.join(&rel).is_file() {
+        return None;
+    }
+    Some((worktree, rel))
+}
+
+/// A column's display name, or its id when the column is gone.
+fn column_display_name(app: &App, column_id: &str) -> String {
+    app.columns
+        .get(column_id)
+        .ok()
+        .flatten()
+        .map(|c| c.name)
+        .unwrap_or_else(|| column_id.to_string())
+}
+
+/// Writes the `<Column> · settled` breadcrumb.
+///
+/// **Called from two places, because the engine settles through two paths
+/// and only one of them emits an event.** `StepSettled` fires on the
+/// `on_settle: hold` arms; the `advance`-with-a-target arm moves the card
+/// instead, and BOTH seeded agent-step columns (Quick, In Progress) are
+/// advance — so on the default board the event-only version wrote no settle
+/// line at all, and the card detail rendered every step as permanently
+/// running (E19-06 fix round). `crate::step_engine` calls this directly on
+/// that arm, exactly as it already calls `dossier_index::reindex_issue`
+/// there and for the same reason.
+///
+/// One function so the line's text and the consent/target resolution have
+/// one definition; two callers because the fact genuinely has two sources.
+/// They are disjoint — an advance-with-target emits no `StepSettled` — so a
+/// settle never records twice.
+pub(crate) fn append_settled(app: &App, issue: &Issue, column_id: &str) {
+    let Some((worktree, rel)) = write_target(app, issue) else {
+        return;
+    };
+    let line = dossiers::timeline_line(&format!(
+        "{} · settled",
+        column_display_name(app, column_id)
+    ));
+    if let Err(e) = dossiers::append_timeline(&worktree, &rel, &line, None) {
+        tracing::warn!(issue = %issue.id, path = %rel, error = %e, "dossier settle breadcrumb failed");
+    }
+}
+
 /// Subscriber that appends machine breadcrumbs under `## Timeline`
 /// (ADR-0038 item 2) from events the app ALREADY emits.
 ///
@@ -219,19 +283,7 @@ impl TimelineAppender {
     /// [`Self::target`] for a card already in hand — lets the PR fan-out
     /// resolve many cards without re-reading each row.
     fn target_for(&self, issue: &Issue) -> Option<(PathBuf, String)> {
-        if !consented(&self.app, &issue.project_id) {
-            return None;
-        }
-        let rel = issue.dossier_path.clone()?;
-        let task_id = issue.linked_task_id.as_deref()?;
-        // A deleted task clears the link (ON DELETE SET NULL), but check
-        // anyway: the row may be mid-teardown.
-        self.app.tasks.get(task_id).ok().flatten()?;
-        let worktree = task_worktree(&self.app, task_id)?;
-        if !worktree.join(&rel).is_file() {
-            return None;
-        }
-        Some((worktree, rel))
+        write_target(&self.app, issue)
     }
 
     fn append(&self, issue_id: &str, fact: &str, once_key: Option<&str>) {
@@ -245,13 +297,7 @@ impl TimelineAppender {
     }
 
     fn column_name(&self, column_id: &str) -> String {
-        self.app
-            .columns
-            .get(column_id)
-            .ok()
-            .flatten()
-            .map(|c| c.name)
-            .unwrap_or_else(|| column_id.to_string())
+        column_display_name(&self.app, column_id)
     }
 
     /// Handles one event. Synchronous and self-contained so tests can drive
@@ -274,13 +320,17 @@ impl TimelineAppender {
                 }
                 self.append(issue_id, &fact, None);
             }
+            // Only the `on_settle: hold` arms emit this — the advance arm
+            // calls [`append_settled`] directly. Same function, so the two
+            // paths cannot drift.
             InternalEvent::StepSettled {
                 issue_id,
                 column_id,
                 ..
             } => {
-                let fact = format!("{} · settled", self.column_name(column_id));
-                self.append(issue_id, &fact, None);
+                if let Some(issue) = self.app.issues.get(issue_id).ok().flatten() {
+                    append_settled(&self.app, &issue, column_id);
+                }
             }
             // The move arrives with BOTH endpoints from the emitter, which
             // is the only place that knows them. (This used to diff the

@@ -81,7 +81,8 @@ export default function CommandPalette() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResultDto[]>([]);
   /** Feature hits' cards, by item id (§8h) — the index carries the section
-   * heading, not the feature's title, its ref, or whether it landed. */
+   * heading, not the feature's own title or its display ref. Cosmetic
+   * only: the hit itself carries the card ↵ opens. */
   const [features, setFeatures] = useState<Record<string, FeatureRowDto>>({});
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -110,9 +111,10 @@ export default function CommandPalette() {
     return () => clearTimeout(t);
   }, [query, open]);
 
-  // A feature hit needs its card before it can render §8h's row or open
-  // anything. Until it resolves the row still shows (as its heading) —
-  // a hit that flickers away would be worse than one that fills in.
+  // The feature's TITLE and ref (cosmetics only — the hit already carries
+  // the card ↵ opens, so a row is routable before this resolves). A failed
+  // lookup leaves whatever was already resolved in place: wiping the map
+  // would blank rows that are rendering correctly.
   useEffect(() => {
     const ids = results
       .filter((r) => r.itemType === FEATURE_ITEM_TYPE)
@@ -127,7 +129,7 @@ export default function CommandPalette() {
         if (cancelled) return;
         setFeatures(Object.fromEntries(rows.map((row) => [row.itemId, row])));
       })
-      .catch(() => !cancelled && setFeatures({}));
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -189,19 +191,28 @@ export default function CommandPalette() {
     ...commandEntries,
     ...results.map((r) => {
       // §8h feature hit: `<Column> — <feature title>` with a mono
-      // `feature · #id[ · landed]` right meta, and ↵ opens the CARD
-      // DETAIL — one destination whether the feature is live or landed,
-      // since issue rows outlive their tasks.
-      const feature =
-        r.itemType === FEATURE_ITEM_TYPE ? features[r.itemId] : undefined;
-      if (feature) {
-        const { ref, title } = issueRefParts(feature.title, feature.externalRef);
+      // `feature · #id` right meta, and ↵ opening the CARD DETAIL — one
+      // destination whether the feature is live or landed, since issue
+      // rows outlive their tasks.
+      //
+      // Gated on the ITEM TYPE and the card the HIT carries, never on the
+      // title lookup: keying the branch on that lookup left the row
+      // falling through to the project/task runner, which matches neither
+      // — so ↵ closed the palette and opened nothing, for the whole IPC
+      // window and forever if the lookup failed. The title fills in when
+      // it arrives; the route works from the first frame.
+      if (r.itemType === FEATURE_ITEM_TYPE && r.issueId) {
+        const issueId = r.issueId;
+        const feature = features[r.itemId];
+        const { ref, title } = feature
+          ? issueRefParts(feature.title, feature.externalRef)
+          : { ref: null, title: null };
         return {
           key: `res-${r.itemId}`,
-          title: `${columnOfHeading(r.title)} — ${title}`,
-          hint: `${FEATURE_ITEM_TYPE}${ref ? ` · ${ref}` : ""}${
-            feature.landed ? " · landed" : ""
-          }`,
+          // Until the card resolves, the indexed heading is the honest
+          // label — it is what the row matched on.
+          title: title ? `${columnOfHeading(r.title)} — ${title}` : r.title,
+          hint: `${FEATURE_ITEM_TYPE}${ref ? ` · ${ref}` : ""}`,
           hintIsChord: false,
           feature: true,
           run: () => {
@@ -209,7 +220,7 @@ export default function CommandPalette() {
             // The detail lives in the project view's one right-panel slot
             // (the same route `runOpenCardDetail` takes).
             const ui = useUi.getState();
-            ui.setBoardDetailIssueId(feature.issueId);
+            ui.setBoardDetailIssueId(issueId);
             ui.setChangesOpen(true);
             if (r.projectId) selectProject(r.projectId);
           },
@@ -228,11 +239,16 @@ export default function CommandPalette() {
         hint: archived ? `${r.itemType} · archived — ↵ restores` : r.itemType,
         hintIsChord: false,
         run: () => {
-          setOpen(false);
+          // Close only when there is somewhere to go. A row this runner
+          // does not know how to open must leave the palette standing:
+          // dismissing it makes ↵ look like it worked and eats the
+          // keystroke, where a visible no-op is at least honest.
           if (r.itemType === "project" && r.itemId) {
+            setOpen(false);
             selectProject(r.itemId);
           } else if (r.itemType === "task" && r.itemId) {
-            if (archived && r.itemId) void restoreTask(r.itemId).catch(() => {});
+            setOpen(false);
+            if (archived) void restoreTask(r.itemId).catch(() => {});
             if (r.projectId) selectProject(r.projectId);
             selectTask(r.itemId);
           }

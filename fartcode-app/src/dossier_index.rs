@@ -160,15 +160,17 @@ fn live_copy(app: &App, issue: &Issue, rel: &str) -> Option<PathBuf> {
         .filter(|p| dossiers::inspect(p, &issue.id) == dossiers::Occupant::OurDossier)
 }
 
-/// This card's dossier in the PROJECT CHECKOUT — the copy that only exists
-/// once the feature branch merged and the checkout was pulled (ADR-0038
-/// item 5, "merge is publication").
+/// This card's dossier in the PROJECT CHECKOUT — usually the copy that
+/// arrived when the feature branch merged and the checkout was pulled
+/// (ADR-0038 item 5, "merge is publication").
 ///
-/// Crate-visible since E19-06 (#75): §8h's ` · landed` tag on a ⌘K feature
-/// hit is exactly this predicate. Same ownership rule as everywhere else —
-/// a file at the slug path in the main checkout is only OURS when
-/// [`dossiers::inspect`] says so.
-pub(crate) fn landed_copy(app: &App, issue: &Issue, rel: &str) -> Option<PathBuf> {
+/// **Presence here is not proof of a merge**, which is why nothing renders
+/// a ` · landed` tag off it (E19-06): the same file is present while
+/// someone has the feature branch checked out, and absent on a merge nobody
+/// has pulled. It is a freshness candidate, not an ancestry answer. Same
+/// ownership rule as everywhere else — a file at the slug path in the main
+/// checkout is only OURS when [`dossiers::inspect`] says so.
+fn landed_copy(app: &App, issue: &Issue, rel: &str) -> Option<PathBuf> {
     app.projects
         .get(&issue.project_id)
         .ok()

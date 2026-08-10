@@ -1,10 +1,16 @@
 //! The card-detail READ of a dossier (E19-06, #75; handoff v3 §8f).
 //!
 //! `dossiers` writes the file and `dossier_index` turns it into ⌘K rows;
-//! this module is the third reader — the one the card detail renders. All
-//! three go through the SAME section scan (`dossiers::sections`), so the
-//! file the appender writes into, the file search indexes, and the file the
-//! card shows can never disagree about where a section begins.
+//! this module is the third reader — the one the card detail renders.
+//!
+//! **Nothing here resolves structure on its own.** Sections come from
+//! [`dossiers::sections`] and the Timeline block from
+//! [`dossiers::timeline_block`] — the appender's own anchor — so the file
+//! the appender writes into, the file search indexes, and the file the card
+//! shows can never disagree about where anything begins. Resolving the
+//! block by heading TEXT instead was the E19-06 defect: it stole the block
+//! from a `## Timeline` an agent quoted in prose, and found nothing at all
+//! once a heading was retitled.
 //!
 //! **Why this is not TypeScript.** The Timeline line format is written by
 //! [`dossiers::timeline_line`], the section boundaries are decided by
@@ -84,25 +90,16 @@ pub fn timeline(content: &str) -> Vec<TimelineEntry> {
     fold(&raw_entries(content))
 }
 
-/// `dossiers::TIMELINE_HEADING` minus its `## ` marker — the heading text
-/// [`dossiers::sections`] yields for the app's own block. Derived rather
-/// than spelled again, so the two can never drift.
-fn timeline_heading() -> &'static str {
-    dossiers::TIMELINE_HEADING.trim_start_matches('#').trim()
-}
-
 /// `(stamp, fact)` for every `- ` line of the Timeline block.
 ///
-/// The LAST Timeline section wins, mirroring the append anchor's
-/// `rposition` rule: a `## Timeline` quoted earlier in the document (in card
-/// text the header copied) is not the app's block, and the breadcrumbs are
-/// being written to the last one.
+/// The block comes from [`dossiers::timeline_block`] — the appender's own
+/// anchor, sentinel first — so the lines rendered here are exactly the
+/// lines an append lands among. Resolving it by heading TEXT instead was
+/// the E19-06 defect: a `## Timeline` an agent quotes in prose stole the
+/// block, and a retitled heading (which the sentinel exists to survive)
+/// matched nothing.
 fn raw_entries(content: &str) -> Vec<(String, String)> {
-    let Some(block) = dossiers::sections(content)
-        .into_iter()
-        .rev()
-        .find(|s| s.heading == timeline_heading())
-    else {
+    let Some(block) = dossiers::timeline_block(content) else {
         return Vec::new();
     };
     block
@@ -148,13 +145,48 @@ fn parse_settle(fact: &str) -> Option<&str> {
     (parts.next()? == "settled" && parts.next().is_none()).then_some(column)
 }
 
-/// Folds `launched` + its `settled` into one §8f line, and marks a launch
-/// with no settle as running.
+/// The column a `column · <from> → <to>` fact moved the card OUT of.
 ///
-/// Pairing is by column, first settle after the launch — the shape a
-/// re-entered step actually produces (launch A, settle A, launch A, settle
-/// A). An interleaving that does not pair leaves both lines standing on
-/// their own rather than inventing a match.
+/// `crate::issues::IssueStore::enter_column` emits the move with both
+/// endpoints and the appender writes both, so this is the app's own record
+/// that the card left a column. The one-endpoint variant (`column → <to>`,
+/// written when the card had no previous column) names nothing to close and
+/// is deliberately not matched.
+fn parse_move_out(fact: &str) -> Option<&str> {
+    let (from, _to) = fact.strip_prefix("column")?.split_once('→')?;
+    let from = from.trim_start_matches([' ', '·']).trim();
+    (!from.is_empty()).then_some(from)
+}
+
+/// What ended a launched run, and when.
+enum RunEnd {
+    /// A settle or a move out of the column — the run is over. Carries the
+    /// index of the closing breadcrumb, whose stamp gives the duration.
+    Closed(usize),
+    /// A LATER launch of the same column with nothing in between: the first
+    /// run ended, but no breadcrumb says when. Rendered without a duration
+    /// rather than as a run that is somehow still going.
+    Superseded,
+}
+
+/// Folds a launched run into one §8f line, and marks a launch nothing has
+/// ended as running.
+///
+/// **A move out of the column closes the run.** On the seeded board BOTH
+/// agent-step columns are `on_settle: advance`, and until E19-06 the settle
+/// event fired only on the hold arms — so real dossiers on disk carry
+/// launches with no settle line, and treating those as running rendered
+/// `In Progress · fable · running · 3w` on features that merged weeks ago.
+/// The `column · <from> → <to>` breadcrumb the appender writes on every
+/// advance proves the card left, and its stamp is when. Newer dossiers get
+/// a real settle line (written at the settle site now, on every arm); this
+/// keeps the files already on disk — including landed copies nobody will
+/// ever rewrite — honest.
+///
+/// Pairing is per column and NEAREST-FIRST: the scan forward from a launch
+/// stops at the next launch of the same column, so a reworked card
+/// (launch, launch, settle) reports the second run's duration rather than
+/// one spanning both.
 fn fold(entries: &[(String, String)]) -> Vec<TimelineEntry> {
     let mut consumed = vec![false; entries.len()];
     let mut out: Vec<TimelineEntry> = Vec::with_capacity(entries.len());
@@ -174,11 +206,13 @@ fn fold(entries: &[(String, String)]) -> Vec<TimelineEntry> {
             });
             continue;
         };
-        let settle = (i + 1..entries.len())
-            .find(|&j| !consumed[j] && parse_settle(&entries[j].1) == Some(launch.column));
-        let (text, running) = match settle {
-            Some(j) => {
-                consumed[j] = true;
+        let (text, running) = match run_end(entries, &consumed, i, launch.column) {
+            Some(RunEnd::Closed(j)) => {
+                // Only a settle line is absorbed: a column move is its own
+                // fact and keeps its own row.
+                if parse_settle(&entries[j].1).is_some() {
+                    consumed[j] = true;
+                }
                 let dur = match (at.as_ref(), parse_stamp(&entries[j].0)) {
                     (Some((from, _)), Some((to, _))) if to >= *from => {
                         Some(duration_label(to - from))
@@ -195,6 +229,12 @@ fn fold(entries: &[(String, String)]) -> Vec<TimelineEntry> {
                 }
                 (text, false)
             }
+            // Superseded: launched, and something restarted it. Neither a
+            // duration nor a claim that it settled.
+            Some(RunEnd::Superseded) => (
+                format!("{} · {} · launched", launch.column, launch.provider),
+                false,
+            ),
             // The renderer appends `running · <elapsed>` in --text-card.
             None => (format!("{} · {}", launch.column, launch.provider), true),
         };
@@ -206,6 +246,27 @@ fn fold(entries: &[(String, String)]) -> Vec<TimelineEntry> {
         });
     }
     out
+}
+
+/// Scans forward from the launch at `start` for whatever ended its run.
+fn run_end(
+    entries: &[(String, String)],
+    consumed: &[bool],
+    start: usize,
+    column: &str,
+) -> Option<RunEnd> {
+    for (j, (_, fact)) in entries.iter().enumerate().skip(start + 1) {
+        if !consumed[j] && parse_settle(fact) == Some(column) {
+            return Some(RunEnd::Closed(j));
+        }
+        if parse_move_out(fact) == Some(column) {
+            return Some(RunEnd::Closed(j));
+        }
+        if parse_launch(fact).map(|l| l.column) == Some(column) {
+            return Some(RunEnd::Superseded);
+        }
+    }
+    None
 }
 
 /// `41m` / `2h 5m` / `3d` — coarse, because the stamps are minute-resolution.
@@ -248,7 +309,15 @@ fn parse_stamp(stamp: &str) -> Option<(i64, String)> {
     let year: i64 = date_parts.next()?.parse().ok()?;
     let month: i64 = date_parts.next()?.parse().ok()?;
     let day: i64 = date_parts.next()?.parse().ok()?;
-    if date_parts.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+    // The year is bounded with the rest: `days_from_civil` multiplies by
+    // 146_097, so an absurd year (a hand-edited line, a pasted number)
+    // overflows INSIDE it — before any post-hoc range check could catch it.
+    // Four digits is also all the stamp format can express.
+    if date_parts.next().is_some()
+        || !(1..=9_999).contains(&year)
+        || !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+    {
         return None;
     }
     let mut clock = time.split(':');
@@ -375,6 +444,82 @@ mod tests {
         );
     }
 
+    /// THE defect this fix round exists for: on the seeded board both agent
+    /// steps are `on_settle: advance`, so dossiers already on disk carry
+    /// launches with no settle line. Treating those as running rendered
+    /// `running · 3w` on features that merged weeks ago. The move-out
+    /// breadcrumb closes the run, and its stamp is the duration.
+    #[test]
+    fn a_move_out_of_the_column_closes_a_run_that_never_got_a_settle_line() {
+        let file = "## Timeline\n\n\
+                    - 2026-08-09 10:00 · In Progress · launched · fable\n\
+                    - 2026-08-09 10:41 · column · In Progress → In Review\n";
+        let entries = timeline(file);
+        assert_eq!(
+            entries[0].text,
+            "In Progress · fable · launched → settled · 41m"
+        );
+        assert!(!entries[0].running, "the card left the column weeks ago");
+        // The move keeps its own row — it is its own fact, not a pairing
+        // artifact.
+        assert_eq!(entries[1].text, "column · In Progress → In Review");
+    }
+
+    #[test]
+    fn a_move_out_of_a_different_column_does_not_close_the_run() {
+        let file = "## Timeline\n\n\
+                    - 2026-08-09 10:00 · In Progress · launched · fable\n\
+                    - 2026-08-09 10:41 · column · Ready → Backlog\n";
+        let entries = timeline(file);
+        assert!(
+            entries[0].running,
+            "In Progress is still going: {entries:?}"
+        );
+    }
+
+    /// A settle wins over a later move-out, and the duration is the
+    /// settle's — the move is when the card advanced, which is the same
+    /// moment or later.
+    #[test]
+    fn a_settle_closes_the_run_even_when_a_move_follows() {
+        let file = "## Timeline\n\n\
+                    - 2026-08-09 10:00 · In Progress · launched · fable\n\
+                    - 2026-08-09 10:41 · In Progress · settled\n\
+                    - 2026-08-09 10:41 · column · In Progress → In Review\n";
+        let texts: Vec<String> = timeline(file).into_iter().map(|e| e.text).collect();
+        assert_eq!(
+            texts,
+            vec![
+                "In Progress · fable · launched → settled · 41m",
+                "column · In Progress → In Review",
+            ],
+            "the settle is absorbed; the move keeps its row"
+        );
+    }
+
+    /// A reworked card: launch, launch, settle with no move between them
+    /// (re-entering the SAME column emits no column change). The settle
+    /// belongs to the SECOND run — reporting a duration spanning both was
+    /// the defect.
+    #[test]
+    fn an_intervening_launch_is_a_barrier_not_a_pairing() {
+        let file = "## Timeline\n\n\
+                    - 2026-08-09 09:00 · Plan · launched · fable\n\
+                    - 2026-08-09 11:00 · Plan · launched · fable\n\
+                    - 2026-08-09 11:30 · Plan · settled\n";
+        let texts: Vec<String> = timeline(file).into_iter().map(|e| e.text).collect();
+        assert_eq!(
+            texts,
+            vec![
+                // Superseded: ended, but nothing says when. No duration,
+                // and not "still running" either.
+                "Plan · fable · launched",
+                "Plan · fable · launched → settled · 30m",
+            ]
+        );
+        assert!(timeline(file).iter().all(|e| !e.running));
+    }
+
     #[test]
     fn a_settle_for_another_column_never_closes_the_launch() {
         let file = "## Timeline\n\n\
@@ -464,6 +609,11 @@ mod tests {
         );
         assert_eq!(parse_stamp("2026-13-01 00:00"), None);
         assert_eq!(parse_stamp("not a stamp"), None);
+        // An absurd year overflows `days_from_civil` internally, so it is
+        // rejected in the same guard as month and day rather than after.
+        assert_eq!(parse_stamp("9223372036854775807-01-01"), None);
+        assert_eq!(parse_stamp("99999-01-01 00:00"), None);
+        assert_eq!(parse_stamp("0000-01-01 00:00"), None);
     }
 
     #[test]

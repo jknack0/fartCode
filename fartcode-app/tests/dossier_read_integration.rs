@@ -5,9 +5,10 @@
 //! only be proven here is the RESOLUTION: that the read finds the card's
 //! own dossier in a real worktree, that it refuses a file at the same path
 //! that is not ours (`docs/features/` is a common hand-written convention —
-//! that bug was found twice in this epic), and that `landed` flips exactly
-//! when the dossier appears in the project checkout, which is what merging
-//! the feature branch does (ADR-0038 item 5).
+//! that bug was found twice in this epic), and — the E19-06 fix round —
+//! that a REAL settle driven through `settle_issues_for_task` leaves a
+//! settle breadcrumb, on the `on_settle: advance` arm the seeded board
+//! actually uses.
 //!
 //! Real provisioning runs (git init, `worktree add`) inside a tempdir, for
 //! the same reason E19-01's and E19-03's suites do: the two-copies premise
@@ -18,10 +19,12 @@ use std::process::Command;
 use std::sync::Arc;
 
 use fartcode_app_lib::app::App;
-use fartcode_app_lib::commands::dossiers::{feature_row, read_dossier};
+use fartcode_app_lib::commands::dossiers::{feature_rows, read_dossier};
+use fartcode_app_lib::dossiers::TimelineAppender;
 use fartcode_app_lib::step_engine;
 use fartcode_core::dossier_index as core_index;
 use fartcode_core::dossiers;
+use fartcode_core::events::InternalEvent;
 use fartcode_core::issues::{Issue, NewIssue};
 use fartcode_core::projects::ProjectStore;
 use fartcode_core::settings::{LocalProjectGroup, LOCAL_PROJECT};
@@ -180,48 +183,57 @@ impl Fixture {
             .path
     }
 
-    /// A card mid-step: worktree provisioned, dossier born, a launch/settle
-    /// pair on the Timeline (written by the app's own appender), and the
-    /// agent's sections appended.
-    fn card_mid_step(&self, title: &str) -> (Issue, PathBuf) {
+    /// A card in a step column: worktree provisioned, dossier born, the
+    /// launch breadcrumb written by the app's own appender.
+    fn card_in_step(&self, title: &str) -> (Issue, PathBuf) {
         let issue = self.new_issue(title);
-        step_engine::enter_column(&self.app, &issue.id, &self.column("In Progress"), None).unwrap();
+        let column = self.column("In Progress");
+        step_engine::enter_column(&self.app, &issue.id, &column, None).unwrap();
         let stored = self.issue(&issue.id);
         let rel = stored.dossier_path.clone().expect("dossier born");
         let task_id = stored.linked_task_id.clone().expect("task linked");
         let worktree = self.worktree_of(&task_id);
 
-        dossiers::append_timeline(
-            &worktree,
-            &rel,
-            "- 2026-08-09 10:00 · In Progress · launched · claude",
-            None,
-        )
-        .unwrap();
-        dossiers::append_timeline(
-            &worktree,
-            &rel,
-            "- 2026-08-09 10:41 · In Progress · settled",
-            None,
-        )
-        .unwrap();
+        // The launch line the TimelineAppender writes off `StepLaunch`
+        // (the subscriber loop is a boot wiring, so the handler is driven
+        // directly here — the same shape E19-01's suite uses).
+        TimelineAppender::new(self.app.clone()).handle(&InternalEvent::StepLaunch {
+            issue_id: issue.id.clone(),
+            project_id: self.project_id.clone(),
+            column_id: column.clone(),
+            task_id: task_id.clone(),
+            prompt: String::new(),
+            provider: "claude".into(),
+            model: None,
+            effort: None,
+            reattached: false,
+        });
+        (self.issue(&issue.id), worktree.join(&rel))
+    }
 
-        let path = worktree.join(&rel);
+    /// A card whose step really SETTLED: driven through
+    /// `settle_issues_for_task`, so the breadcrumb under test is the one
+    /// production writes.
+    ///
+    /// This is deliberately not a hand-injected `· settled` line. The
+    /// seeded `In Progress` is `on_settle: advance`, and that arm emits no
+    /// `StepSettled` — a fixture that writes the line itself proves the
+    /// appender is wired when it is not, which is exactly how "every step
+    /// renders as permanently running" shipped.
+    fn card_settled(&self, title: &str) -> (Issue, PathBuf) {
+        let (issue, path) = self.card_in_step(title);
+        let task_id = issue.linked_task_id.clone().unwrap();
+
         let mut text = std::fs::read_to_string(&path).unwrap();
         text.push_str(AGENT_SECTIONS);
         std::fs::write(&path, text).unwrap();
-        (self.issue(&issue.id), path)
-    }
 
-    /// What merging the feature branch and pulling does to the checkout:
-    /// the dossier appears at the same repo-relative path on main.
-    fn land(&self, issue: &Issue) {
-        let rel = issue.dossier_path.clone().unwrap();
-        let task_id = issue.linked_task_id.clone().unwrap();
-        let from = self.worktree_of(&task_id).join(&rel);
-        let to = self.project_root().join(&rel);
-        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
-        std::fs::copy(from, to).unwrap();
+        assert_eq!(
+            step_engine::settle_issues_for_task(&self.app, &task_id, Some("pty:test")),
+            1,
+            "the step settled"
+        );
+        (self.issue(&issue.id), path)
     }
 }
 
@@ -232,7 +244,7 @@ impl Fixture {
 #[test]
 fn the_read_returns_the_path_the_folded_timeline_and_the_agent_sections() {
     let fx = fixture();
-    let (issue, path) = fx.card_mid_step("Admin resend on an active invite crashes");
+    let (issue, path) = fx.card_settled("Admin resend on an active invite crashes");
 
     let dossier = read_dossier(&fx.app, &issue.id).expect("the card has a dossier");
     assert_eq!(dossier.path, issue.dossier_path.unwrap());
@@ -241,26 +253,43 @@ fn the_read_returns_the_path_the_folded_timeline_and_the_agent_sections() {
         path,
         "the live worktree copy is the one an agent is writing"
     );
-    assert!(!dossier.landed, "the branch has not merged");
 
     // §8f timeline: the backfilled creation line, the birth line, and the
-    // launch folded into its settle with a duration.
+    // launch folded into the settle the ENGINE wrote.
     let texts: Vec<&str> = dossier.timeline.iter().map(|e| e.text.as_str()).collect();
     assert!(
         texts.iter().any(|t| t.starts_with("created · ")),
         "{texts:?}"
     );
     assert!(
-        texts.contains(&"In Progress · claude · launched → settled · 41m"),
+        texts
+            .iter()
+            .any(|t| t.starts_with("In Progress · claude · launched → settled")),
         "the launch/settle pair folds into one line: {texts:?}"
     );
     assert!(
         !texts.contains(&"In Progress · settled"),
         "the settle is folded, not listed twice: {texts:?}"
     );
+    // THE regression: the seeded step is `on_settle: advance`, which emits
+    // no `StepSettled` — before this fix round nothing wrote a settle
+    // breadcrumb at all and every step rendered as permanently running.
     assert!(
         dossier.timeline.iter().all(|e| !e.running),
-        "nothing is running once the step settled"
+        "a settled step must not read as running: {texts:?}"
+    );
+    // And the breadcrumb is really ON DISK, written by the advance arm
+    // itself — not merely inferred by the reader from the column move that
+    // follows it (that inference is the repair path for older files).
+    let on_disk = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        on_disk.contains("In Progress · settled"),
+        "the advance arm writes the settle line:\n{on_disk}"
+    );
+    assert!(
+        on_disk.find("In Progress · launched").unwrap()
+            < on_disk.find("In Progress · settled").unwrap(),
+        "the settle lands after the launch it closes"
     );
 
     // §8f inset card: the AGENT's sections only — never the app's own
@@ -303,7 +332,7 @@ fn a_skipped_append_leaves_the_timeline_and_no_sections() {
 #[test]
 fn a_foreign_file_at_the_same_path_is_refused() {
     let fx = fixture();
-    let (issue, path) = fx.card_mid_step("Admin resend on an active invite crashes");
+    let (issue, path) = fx.card_settled("Admin resend on an active invite crashes");
     assert!(read_dossier(&fx.app, &issue.id).is_some());
 
     const HUMAN_DOC: &str = "# Invite vetting\n\nOur design notes. Not a dossier.\n";
@@ -339,7 +368,7 @@ fn a_card_with_no_dossier_reads_nothing() {
     assert!(read_dossier(&fx.app, &bare.id).is_none());
 
     // A path recorded, but the file left with a deleted branch.
-    let (issue, path) = fx.card_mid_step("Gone with the branch");
+    let (issue, path) = fx.card_in_step("Gone with the branch");
     std::fs::remove_file(&path).unwrap();
     assert!(read_dossier(&fx.app, &issue.id).is_none());
 
@@ -351,50 +380,57 @@ fn a_card_with_no_dossier_reads_nothing() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_feature_row_names_its_card_and_lands_when_the_dossier_reaches_the_checkout() {
+fn a_feature_row_names_its_card() {
     let fx = fixture();
-    let (issue, _) = fx.card_mid_step("Admin resend on an active invite crashes");
+    let (issue, _) = fx.card_settled("Admin resend on an active invite crashes");
     let item_id = core_index::item_id(&issue.id, "Plan — 2026-08-09", 0);
 
-    let row = feature_row(&fx.app, &item_id).expect("the row resolves to its card");
-    assert_eq!(row.item_id, item_id);
-    assert_eq!(row.issue_id, issue.id, "↵ opens the card detail");
-    assert_eq!(row.title, "Admin resend on an active invite crashes");
-    assert!(
-        !row.landed,
-        "the dossier is only in the worktree — nothing has merged"
-    );
-
-    // Merge is publication (ADR-0038 item 5): the dossier appears in the
-    // project checkout, and only then does §8h append ` · landed`.
-    fx.land(&issue);
-    assert!(feature_row(&fx.app, &item_id).unwrap().landed);
+    let rows = feature_rows(&fx.app, std::slice::from_ref(&item_id));
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].item_id, item_id);
+    assert_eq!(rows[0].issue_id, issue.id, "↵ opens the card detail");
+    assert_eq!(rows[0].title, "Admin resend on an active invite crashes");
 
     // A row whose card is gone resolves to nothing rather than to a hit
     // that opens a dead card detail.
     fx.app.issues.delete(&issue.id).unwrap();
-    assert!(feature_row(&fx.app, &item_id).is_none());
-    assert!(feature_row(&fx.app, "not-a-feature-row").is_none());
+    assert!(feature_rows(&fx.app, &[item_id]).is_empty());
+    assert!(feature_rows(&fx.app, &["not-a-feature-row".to_string()]).is_empty());
 }
 
-/// Ownership again, on the landed side: a stranger's file at the card's
-/// slug path in the MAIN checkout is not a landing.
+/// One dossier is many `feature` rows, and the palette asks about all of
+/// them on every keystroke — so the card is resolved once and fanned out,
+/// not looked up per section.
 #[test]
-fn a_foreign_file_in_the_checkout_is_not_a_landing() {
+fn many_sections_of_one_feature_resolve_to_one_card() {
     let fx = fixture();
-    let (issue, _) = fx.card_mid_step("Admin resend on an active invite crashes");
-    let item_id = core_index::item_id(&issue.id, "Plan — 2026-08-09", 0);
+    let (issue, _) = fx.card_settled("Admin resend on an active invite crashes");
+    let ids: Vec<String> = ["Plan — 2026-08-09", "Implement — 2026-08-09"]
+        .iter()
+        .map(|h| core_index::item_id(&issue.id, h, 0))
+        .collect();
 
-    let landed_path = fx.project_root().join(issue.dossier_path.clone().unwrap());
-    std::fs::create_dir_all(landed_path.parent().unwrap()).unwrap();
-    std::fs::write(&landed_path, "# Invite vetting\n\nSomebody's notes.\n").unwrap();
+    let rows = feature_rows(&fx.app, &ids);
+    assert_eq!(rows.len(), 2, "every asked-about id comes back");
+    assert!(rows.iter().all(|r| r.issue_id == issue.id));
+    assert_eq!(rows[0].item_id, ids[0]);
+    assert_eq!(rows[1].item_id, ids[1]);
+}
 
-    assert!(
-        !feature_row(&fx.app, &item_id).unwrap().landed,
-        "a document that merely shares the path never reads as merged"
-    );
-    // …and the card detail keeps reading the worktree copy, untouched.
+/// The card detail keeps reading the WORKTREE copy while one exists, even
+/// when a stranger's file sits at the same repo path in the checkout.
+#[test]
+fn a_foreign_file_in_the_checkout_does_not_shadow_the_worktree_copy() {
+    let fx = fixture();
+    let (issue, _) = fx.card_settled("Admin resend on an active invite crashes");
+
+    let checkout_path = fx.project_root().join(issue.dossier_path.clone().unwrap());
+    std::fs::create_dir_all(checkout_path.parent().unwrap()).unwrap();
+    std::fs::write(&checkout_path, "# Invite vetting\n\nSomebody's notes.\n").unwrap();
+
     let dossier = read_dossier(&fx.app, &issue.id).expect("the worktree copy is still ours");
-    assert!(!dossier.landed);
     assert_eq!(dossier.sections.len(), 2);
+    assert!(!dossier
+        .host_path
+        .starts_with(fx.project_root().to_string_lossy().as_ref()));
 }

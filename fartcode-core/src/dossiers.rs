@@ -792,6 +792,64 @@ fn timeline_anchor(lines: &[&str]) -> Option<usize> {
         .or_else(|| lines.iter().rposition(|l| l.trim_end() == TIMELINE_HEADING))
 }
 
+/// Where the Timeline block ENDS, scanned from its anchor: the next REAL
+/// `## ` heading (the first agent-written section) or EOF.
+///
+/// **Scanned FROM THE ANCHOR with fresh fence state**, which is the whole
+/// trust boundary: everything above the sentinel includes quoted card text,
+/// and a card body that opens a fence and never closes it (a pasted stack
+/// trace starting ```` ```text ```` is enough) would otherwise make the scan
+/// treat the entire rest of the document as code — no `## ` heading found,
+/// `end` falling back to EOF. The sentinel is machine-written territory; a
+/// fence opened in user text above it does not reach past it.
+///
+/// `### ` subheadings do not end the block, and neither does a `## ` line
+/// inside a fenced code block — the same scan the ⌘K indexer uses, so
+/// appends, search and the card detail agree on where the block stops.
+fn timeline_end(lines: &[&str], start: usize) -> usize {
+    section_heading_lines(&lines[start..])
+        .into_iter()
+        .map(|i| i + start)
+        .find(|i| *i > start)
+        .unwrap_or(lines.len())
+}
+
+/// The app's `## Timeline` block, resolved the SAME way the appender
+/// resolves its insert point ([`timeline_anchor`] — sentinel first, the
+/// last matching heading only as the pre-sentinel fallback).
+///
+/// Added for the card detail (E19-06, #75), and deliberately here rather
+/// than in the viewer: resolving the block by heading TEXT is a different
+/// answer from resolving it by anchor, and the two disagree exactly where
+/// it hurts. An agent that documents the convention with a bare
+/// `## Timeline` line in prose steals a text-matched block — so the card
+/// would render an empty timeline while every append kept landing in the
+/// real one. And when an agent RETITLES the heading, a case the sentinel
+/// exists to survive, a text match finds nothing at all. One anchor, three
+/// readers.
+///
+/// The returned [`Section::heading`] is the block's real heading text
+/// (whatever it has been retitled to), and the body excludes the sentinel
+/// line. `None` when the file has no Timeline section at all.
+pub fn timeline_block(content: &str) -> Option<Section> {
+    let lines: Vec<&str> = content.lines().collect();
+    let start = timeline_anchor(&lines)?;
+    let end = timeline_end(&lines, start);
+    // The anchor is usually the sentinel, which sits UNDER the heading —
+    // walk back to the heading the block actually carries.
+    let heading = lines[..=start]
+        .iter()
+        .rev()
+        .find_map(|l| l.strip_prefix("## "))
+        .unwrap_or(TIMELINE_HEADING.trim_start_matches("## "))
+        .trim()
+        .to_string();
+    Some(Section {
+        heading,
+        body: lines[start + 1..end].join("\n").trim().to_string(),
+    })
+}
+
 /// Pure text surgery behind [`append_timeline`] — the whole append-safety
 /// contract lives here, so it is unit-testable without a filesystem.
 fn insert_under_timeline(content: &str, line: &str) -> String {
@@ -815,26 +873,10 @@ fn insert_under_timeline(content: &str, line: &str) -> String {
         return out;
     };
 
-    // The Timeline block ends at the next REAL `## ` heading (the first
-    // agent-written section) or at EOF. `### ` subheadings do not end it,
-    // and neither does a `## ` line inside a fenced code block — the same
-    // scan the ⌘K indexer uses, so appends and search agree on where a
-    // section starts.
-    //
-    // Scanned FROM THE ANCHOR with fresh fence state, which is the whole
-    // trust boundary: everything above the sentinel includes quoted card
-    // text, and a card body that opens a fence and never closes it (a
-    // pasted stack trace starting ```text is enough) would otherwise make
-    // the scan treat the entire rest of the document as code — no `## `
-    // heading found, `end` falling back to EOF, and every breadcrumb
-    // landing at the bottom of the file instead of under Timeline. The
-    // sentinel is machine-written territory; a fence opened in user text
-    // above it does not reach past it.
-    let end = section_heading_lines(&lines[start..])
-        .into_iter()
-        .map(|i| i + start)
-        .find(|i| *i > start)
-        .unwrap_or(lines.len());
+    // The block's extent — shared with the card-detail reader
+    // ([`timeline_block`]), so the lines an append lands among are exactly
+    // the lines the card renders.
+    let end = timeline_end(&lines, start);
 
     // Back over the blank lines that separate the block from what follows,
     // so the new entry joins the list instead of floating after it.
@@ -1295,6 +1337,69 @@ mod tests {
             header.contains("# X ## Timeline - forged title"),
             "{header}"
         );
+    }
+
+    // -- the block the card detail reads (E19-06) --------------------------
+
+    /// The viewer used to text-match the last `## Timeline` section, which
+    /// disagrees with the appender's anchor in both directions: a bare
+    /// `## Timeline` line an agent writes in prose steals the block (card
+    /// renders empty while appends keep landing in the real one), and a
+    /// RETITLED heading — which the sentinel exists to survive — finds
+    /// nothing at all.
+    #[test]
+    fn the_block_resolves_on_the_sentinel_exactly_like_the_append_anchor() {
+        // A decoy heading BELOW the real block: the last-heading rule would
+        // pick it, the sentinel does not.
+        let file = format!(
+            "# F\n\n{TIMELINE_HEADING}\n{TIMELINE_SENTINEL}\n\n- a · real\n\n\
+             ## Plan — x\n\nThe convention:\n\n## Timeline\n\n- a · decoy\n"
+        );
+        let block = timeline_block(&file).unwrap();
+        assert_eq!(block.body, "- a · real", "{block:?}");
+        // …and an append lands in the same block the reader just returned.
+        let out = insert_under_timeline(&file, "- b · new");
+        assert!(out.find("- b · new").unwrap() < out.find("## Plan").unwrap());
+
+        // Retitled heading: the sentinel still anchors, and the block
+        // reports the heading it now carries.
+        let retitled = format!("# F\n\n## History\n{TIMELINE_SENTINEL}\n\n- a · real\n");
+        let block = timeline_block(&retitled).unwrap();
+        assert_eq!(block.heading, "History");
+        assert_eq!(block.body, "- a · real");
+    }
+
+    #[test]
+    fn the_block_stops_at_the_first_agent_section_and_skips_the_sentinel() {
+        let file = format!(
+            "# F\n\n{TIMELINE_HEADING}\n{TIMELINE_SENTINEL}\n\n\
+             - a\n- b\n\n## Plan — x\n\nreasoning\n"
+        );
+        let block = timeline_block(&file).unwrap();
+        assert_eq!(block.heading, "Timeline");
+        assert_eq!(block.body, "- a\n- b");
+        assert!(!block.body.contains(TIMELINE_SENTINEL));
+    }
+
+    /// Same trust boundary the append path has: a fence opened in quoted
+    /// card text above the sentinel must not swallow the block.
+    #[test]
+    fn a_fence_above_the_sentinel_does_not_swallow_the_block() {
+        let file = format!(
+            "# F\n\n## Context\n\n```text\npanic!\n\n{TIMELINE_HEADING}\n{TIMELINE_SENTINEL}\n\n\
+             - a\n\n## Plan — x\n\ncontent\n"
+        );
+        let block = timeline_block(&file).unwrap();
+        assert_eq!(block.body, "- a", "{block:?}");
+    }
+
+    #[test]
+    fn a_file_with_no_timeline_has_no_block() {
+        assert!(timeline_block("# F\n\n## Plan — x\n\nstuff\n").is_none());
+        assert!(timeline_block("").is_none());
+        // Pre-sentinel dossier: the heading is the fallback anchor.
+        let legacy = "## Timeline\n\n- a\n";
+        assert_eq!(timeline_block(legacy).unwrap().body, "- a");
     }
 
     #[test]

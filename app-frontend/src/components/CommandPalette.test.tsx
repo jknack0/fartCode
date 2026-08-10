@@ -3,9 +3,14 @@
 // #72 wrote one `feature` row per dossier section but the command filtered
 // them out of the palette; #75 deletes that filter, so the first thing this
 // suite proves is that a feature row APPEARS at all. Then the §8h shape:
-// `<Column> — <feature title>` on the left, mono `feature · #id[ · landed]`
-// on the right, and ↵ opening the CARD DETAIL — one destination whether the
-// feature is live or landed.
+// `<Column> — <feature title>` on the left, mono `feature · #id` on the
+// right, and ↵ opening the CARD DETAIL — one destination whether the
+// feature is live or landed, INCLUDING while (or if) the title lookup
+// never resolves.
+//
+// §8h's ` · landed` suffix is not here: it needs an ancestry answer the app
+// cannot give yet, and a wrong tag is worse than no tag (see FeatureRowDto
+// in fartcode-app/src/commands/dossiers.rs).
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -36,6 +41,9 @@ const FEATURE_HIT: SearchResultDto = {
   projectId: "p1",
   taskId: null,
   title: "Plan — 2026-08-07",
+  // The card ↵ opens rides WITH the hit (resolved backend-side from the
+  // item id), so routing never waits on the title lookup.
+  issueId: "i392",
 };
 
 function row(over: Partial<FeatureRowDto> = {}): FeatureRowDto {
@@ -44,7 +52,6 @@ function row(over: Partial<FeatureRowDto> = {}): FeatureRowDto {
     issueId: "i392",
     title: "#392 invite vetting",
     externalRef: null,
-    landed: false,
     ...over,
   };
 }
@@ -86,14 +93,7 @@ describe("feature hits", () => {
     expect(title.closest("li")?.className).toContain("palette-feature");
   });
 
-  it("appends ` · landed` once the dossier reached the checkout", async () => {
-    vi.mocked(dossierFeatureRows).mockResolvedValue([row({ landed: true })]);
-    await searchFor("vetting");
-    expect(await screen.findByText("feature · #392 · landed")).toBeTruthy();
-  });
-
   it("opens the card detail on ↵ — live or landed", async () => {
-    vi.mocked(dossierFeatureRows).mockResolvedValue([row({ landed: true })]);
     await searchFor("vetting");
     await screen.findByText("Plan — invite vetting");
 
@@ -109,17 +109,65 @@ describe("feature hits", () => {
     expect(useUi.getState().paletteOpen).toBe(false);
   });
 
-  it("falls back to the raw heading while the card is still resolving", async () => {
+  /// The routing race: keying the §8h branch on the TITLE lookup dropped
+  /// the row into the project/task runner, which matches neither — so ↵
+  /// closed the palette and opened nothing. The hit's own `issueId` makes
+  /// the row routable from the first frame.
+  it("still opens the card detail when the title lookup returns nothing", async () => {
     vi.mocked(dossierFeatureRows).mockResolvedValue([]);
     await searchFor("vetting");
+    // Falls back to the indexed heading — it is what the row matched on.
     await waitFor(() => expect(screen.getByText("Plan — 2026-08-07")).toBeTruthy());
-    // No card, no `feature ·` meta claiming one.
-    expect(screen.queryByText(/feature · #/)).toBeNull();
+
+    fireEvent.keyDown(screen.getByLabelText("Command palette"), { key: "ArrowDown" });
+    fireEvent.keyDown(screen.getByLabelText("Command palette"), { key: "Enter" });
+
+    await waitFor(() => expect(useUi.getState().boardDetailIssueId).toBe("i392"));
+    expect(useUi.getState().paletteOpen).toBe(false);
+  });
+
+  it("still opens the card detail when the title lookup rejects", async () => {
+    vi.mocked(dossierFeatureRows).mockRejectedValue(new Error("ipc down"));
+    await searchFor("vetting");
+    await waitFor(() => expect(screen.getByText("Plan — 2026-08-07")).toBeTruthy());
+
+    fireEvent.keyDown(screen.getByLabelText("Command palette"), { key: "ArrowDown" });
+    fireEvent.keyDown(screen.getByLabelText("Command palette"), { key: "Enter" });
+    await waitFor(() => expect(useUi.getState().boardDetailIssueId).toBe("i392"));
+  });
+
+  /// A row nothing knows how to open must leave the palette standing —
+  /// dismissing it makes ↵ look like it worked and eats the keystroke.
+  it("leaves the palette open when ↵ has nowhere to go", async () => {
+    vi.mocked(search).mockResolvedValue([
+      {
+        itemType: "prd",
+        itemId: "docs/prds/x.md",
+        projectId: "p1",
+        taskId: null,
+        title: "docs/prds/x.md",
+        issueId: null,
+      },
+    ]);
+    await searchFor("prds");
+    await screen.findByText("docs/prds/x.md");
+
+    fireEvent.keyDown(screen.getByLabelText("Command palette"), { key: "ArrowDown" });
+    fireEvent.keyDown(screen.getByLabelText("Command palette"), { key: "Enter" });
+    expect(useUi.getState().paletteOpen).toBe(true);
+    expect(useUi.getState().boardDetailIssueId).toBeNull();
   });
 
   it("leaves non-feature rows exactly as they were", async () => {
     vi.mocked(search).mockResolvedValue([
-      { itemType: "task", itemId: "t1", projectId: "p1", taskId: "t1", title: "navbar work" },
+      {
+        itemType: "task",
+        itemId: "t1",
+        projectId: "p1",
+        taskId: "t1",
+        title: "navbar work",
+        issueId: null,
+      },
     ]);
     await searchFor("navbar");
     const title = await screen.findByText("navbar work");
