@@ -5,13 +5,16 @@
 import { useEffect, useRef, useState } from "react";
 import { bindings } from "../lib/useCommands";
 import {
+  FeatureRowDto,
   SearchResultDto,
+  dossierFeatureRows,
   getResourceMonitorEnabled,
   restoreTask,
   search as apiSearch,
   setResourceMonitorEnabled,
 } from "../lib/tauri";
 import { CommandId } from "../lib/registry";
+import { issueRefParts } from "./board/runState";
 import { useSidebar } from "../store/sidebar";
 import { useUi } from "../store/ui";
 
@@ -42,7 +45,24 @@ interface PaletteEntry {
   /** Chord shown as a key cap; plain text (item type) renders unbordered. */
   hint: string;
   hintIsChord: boolean;
+  /** §8h's row style: 12.5 sans title, mono 10.5 `--meta` right. */
+  feature?: boolean;
   run: () => void;
+}
+
+/** `fartcode_core::dossier_index::ITEM_TYPE` — one row per dossier section
+ * (ADR-0038 item 4). #75 removed the backend filter that used to hold these
+ * back, so they arrive like any other hit. */
+const FEATURE_ITEM_TYPE = "feature";
+
+/** §8h renders a hit as `<Column> — <feature title>`. The COLUMN comes from
+ * the indexed section heading (`<Column> — <date>`) — the feature's own
+ * title replaces the date, since the date is already the timeline's job. An
+ * agent-written heading with no separator is used whole rather than
+ * guessed at. */
+function columnOfHeading(heading: string): string {
+  const at = heading.indexOf(" — ");
+  return at > 0 ? heading.slice(0, at) : heading;
 }
 
 /** Commands the palette never lists: itself, and modal-scope keys (Esc). */
@@ -60,6 +80,9 @@ export default function CommandPalette() {
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResultDto[]>([]);
+  /** Feature hits' cards, by item id (§8h) — the index carries the section
+   * heading, not the feature's title, its ref, or whether it landed. */
+  const [features, setFeatures] = useState<Record<string, FeatureRowDto>>({});
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -67,6 +90,7 @@ export default function CommandPalette() {
     if (open) {
       setQuery("");
       setResults([]);
+      setFeatures({});
       setSelected(0);
       setTimeout(() => inputRef.current?.focus(), 0);
     }
@@ -85,6 +109,29 @@ export default function CommandPalette() {
     }, 150);
     return () => clearTimeout(t);
   }, [query, open]);
+
+  // A feature hit needs its card before it can render §8h's row or open
+  // anything. Until it resolves the row still shows (as its heading) —
+  // a hit that flickers away would be worse than one that fills in.
+  useEffect(() => {
+    const ids = results
+      .filter((r) => r.itemType === FEATURE_ITEM_TYPE)
+      .map((r) => r.itemId);
+    if (ids.length === 0) {
+      setFeatures({});
+      return;
+    }
+    let cancelled = false;
+    dossierFeatureRows(ids)
+      .then((rows) => {
+        if (cancelled) return;
+        setFeatures(Object.fromEntries(rows.map((row) => [row.itemId, row])));
+      })
+      .catch(() => !cancelled && setFeatures({}));
+    return () => {
+      cancelled = true;
+    };
+  }, [results]);
 
   if (!open) return null;
 
@@ -141,6 +188,33 @@ export default function CommandPalette() {
   const entries: PaletteEntry[] = [
     ...commandEntries,
     ...results.map((r) => {
+      // §8h feature hit: `<Column> — <feature title>` with a mono
+      // `feature · #id[ · landed]` right meta, and ↵ opens the CARD
+      // DETAIL — one destination whether the feature is live or landed,
+      // since issue rows outlive their tasks.
+      const feature =
+        r.itemType === FEATURE_ITEM_TYPE ? features[r.itemId] : undefined;
+      if (feature) {
+        const { ref, title } = issueRefParts(feature.title, feature.externalRef);
+        return {
+          key: `res-${r.itemId}`,
+          title: `${columnOfHeading(r.title)} — ${title}`,
+          hint: `${FEATURE_ITEM_TYPE}${ref ? ` · ${ref}` : ""}${
+            feature.landed ? " · landed" : ""
+          }`,
+          hintIsChord: false,
+          feature: true,
+          run: () => {
+            setOpen(false);
+            // The detail lives in the project view's one right-panel slot
+            // (the same route `runOpenCardDetail` takes).
+            const ui = useUi.getState();
+            ui.setBoardDetailIssueId(feature.issueId);
+            ui.setChangesOpen(true);
+            if (r.projectId) selectProject(r.projectId);
+          },
+        };
+      }
       // 7a: archived tasks stay findable here — opening one restores it
       // ("restore via ⌘K"); the task:restored event refreshes the stores.
       const archived =
@@ -197,7 +271,9 @@ export default function CommandPalette() {
           {entries.map((entry, i) => (
             <li
               key={entry.key}
-              className={i === selected ? "selected" : ""}
+              className={`${entry.feature ? "palette-feature" : ""}${
+                i === selected ? " selected" : ""
+              }`.trim()}
               onMouseEnter={() => setSelected(i)}
               onClick={() => run(i)}
             >

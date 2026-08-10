@@ -7,6 +7,7 @@ pub mod conversations;
 pub mod db;
 pub mod dependencies;
 pub mod dossier_index;
+pub mod dossier_view;
 pub mod dossiers;
 pub mod error;
 pub mod events;

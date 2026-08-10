@@ -1267,6 +1267,64 @@ export function issueDispatch(issueId: string): Promise<DispatchOutcomeDto> {
   return invoke("issue_dispatch", { issueId });
 }
 
+// -- E19 feature dossiers (ADR-0038; handoff v3 §8f + §8h) ----------------------
+
+/** One `## Timeline` breadcrumb, already folded by the Rust parser: a step
+ * launch and its settle arrive as ONE `launched → settled · <dur>` line. */
+export interface DossierTimelineEntryDto {
+  /** The stamp as written in the file — rendered when `at` is null. */
+  stamp: string;
+  /** RFC3339 UTC, or null when the stamp is not one we wrote. Explicitly
+   * zoned: a bare "2026-08-09 12:34" parses as LOCAL time in the webview. */
+  at: string | null;
+  text: string;
+  /** A launch with no settle: append `running · <elapsed>` off `at`. */
+  running: boolean;
+}
+
+/** One agent-written `## <Column> — <date>` section. */
+export interface DossierSectionDto {
+  heading: string;
+  body: string;
+}
+
+export interface DossierDto {
+  /** Repo-relative path — what the file is called on the branch. */
+  path: string;
+  /** Absolute path of the copy that was read (worktree, or the project
+   * checkout once the feature landed). */
+  hostPath: string;
+  timeline: DossierTimelineEntryDto[];
+  /** Empty is ordinary: the agent skipped the append (§8f — render the
+   * timeline and no inset section, never a nag). */
+  sections: DossierSectionDto[];
+  landed: boolean;
+}
+
+/** The card's dossier, or null when it has none — declined consent, a
+ * pre-E19 card, or a file that left with an unmerged branch. Null means
+ * render NO dossier group at all, not an empty state. */
+export function dossierRead(issueId: string): Promise<DossierDto | null> {
+  return invoke("dossier_read", { issueId });
+}
+
+/** What a ⌘K `feature` hit needs beyond its indexed section heading (§8h). */
+export interface FeatureRowDto {
+  /** Echoes the `search_index` item id asked about. */
+  itemId: string;
+  /** The card ↵ opens. */
+  issueId: string;
+  /** The card's title — the "feature title" half of the row title. */
+  title: string;
+  externalRef: string | null;
+  /** The dossier is in the project checkout: the feature merged. */
+  landed: boolean;
+}
+
+export function dossierFeatureRows(itemIds: string[]): Promise<FeatureRowDto[]> {
+  return invoke("dossier_feature_rows", { itemIds });
+}
+
 // -- E18 configurable pipeline columns (ADR-0037) -------------------------------
 // Spike behind the seeded default: `lane` stays authoritative on IssueDto;
 // columns are data the board does not render from yet.

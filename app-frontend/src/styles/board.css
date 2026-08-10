@@ -1117,6 +1117,96 @@
   font-size: 12px;
 }
 
+/* Dossier group (handoff v3 §8f) — the timeline the app wrote over the
+   section the agent wrote. Group label left, path as the one link out
+   right; the whole group is one focus stop so j/k can walk sections
+   without fighting the board's own j/k. */
+.card-detail-dossier {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-left: -12px;
+  padding-left: 10px;
+  border-left: 2px solid transparent;
+}
+
+.card-detail-dossier:focus-visible {
+  outline: none;
+  background: var(--focus-bg);
+  border-left-color: var(--accent);
+}
+
+.card-detail-dossier-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.card-detail-dossier-head h3 {
+  margin: 14px 0 0;
+}
+
+.card-detail-dossier-path {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-detail-timeline {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-mid);
+}
+
+.card-detail-timeline-date {
+  margin-right: 8px;
+  color: var(--meta);
+}
+
+/* The one live thing in the group: the step that has not settled. */
+.card-detail-timeline-now {
+  color: var(--text-card);
+}
+
+/* Inset card (DESIGN.md inset-card): the agent's own words. */
+.card-detail-dossier-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-md);
+  background: var(--card-inset);
+}
+
+.card-detail-dossier-heading,
+.card-detail-dossier-foot {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--meta);
+}
+
+.card-detail-dossier-text {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .card-detail-ac,
 .card-detail-edges {
   margin: 0;

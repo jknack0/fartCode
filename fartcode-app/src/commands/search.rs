@@ -7,46 +7,36 @@ use tauri::State;
 
 use crate::app::App;
 
-/// Item types the palette does not surface YET.
+/// Every indexed row, no type filter.
 ///
-/// E19-03 (#72) writes one `feature` row per dossier section, but the row
-/// STYLE — `<Column> — <feature title>` with right-meta `feature · #id`,
-/// Enter opening the card detail — lands with #75. Until then the palette's
-/// generic renderer would show them with a bare `feature` hint and an Enter
-/// that does nothing, while consuming result slots from hits that do work.
-/// The rows keep being written and stay idempotent; they just do not
-/// surface.
-///
-/// **#75 deletes this constant** and the `query_excluding` call below.
-const PALETTE_HIDDEN_TYPES: &[&str] = &[fartcode_core::dossier_index::ITEM_TYPE];
-
+/// E19-03 (#72) held `feature` rows back behind a `PALETTE_HIDDEN_TYPES`
+/// constant because the row STYLE did not exist yet — the generic renderer
+/// would have shown a dossier section with a bare `feature` hint and an
+/// Enter that did nothing. E19-06 (#75) is that style (handoff v3 §8h:
+/// `<Column> — <feature title>`, right-meta `feature · #id`, Enter opens
+/// the card detail), so the constant and its `query_excluding` call are
+/// gone and dossier sections surface like anything else.
 #[tauri::command]
 pub fn search(
     app: State<'_, Arc<App>>,
     query: String,
     limit: Option<usize>,
 ) -> Result<Vec<fartcode_core::search::SearchResult>, String> {
-    fartcode_core::search::query_excluding(
-        &app.db,
-        &query,
-        limit.unwrap_or(10),
-        PALETTE_HIDDEN_TYPES,
-    )
-    .map_err(|e| e.to_string())
+    fartcode_core::search::query(&app.db, &query, limit.unwrap_or(10)).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::PALETTE_HIDDEN_TYPES;
     use fartcode_core::db::{Db, SqliteDb};
     use fartcode_core::search;
     use std::sync::Arc;
 
-    /// The command's own constant, exercised against the query it passes it
-    /// to — so #75 removing the filter is a visible, deliberate deletion
-    /// rather than a silent behaviour change.
+    /// The inverse of #72's `the_palette_query_holds_feature_rows_back`:
+    /// the filter is gone, so a dossier section reaches the palette. Kept
+    /// as a test rather than deleted with the constant — re-hiding feature
+    /// rows should have to break something visible.
     #[test]
-    fn the_palette_query_holds_feature_rows_back() {
+    fn the_palette_query_now_surfaces_feature_rows() {
         let db: Arc<dyn Db> = SqliteDb::init_in_memory().unwrap();
         search::upsert(
             &db,
@@ -69,11 +59,14 @@ mod tests {
         )
         .unwrap();
 
-        let hits = search::query_excluding(&db, "navbar", 10, PALETTE_HIDDEN_TYPES).unwrap();
-        assert_eq!(hits.len(), 1, "{hits:?}");
-        assert_eq!(hits[0].item_type, "task");
-        // The row IS written — it just does not surface until #75.
-        assert_eq!(search::query(&db, "navbar", 10).unwrap().len(), 2);
+        // The command's own query path, with no exclusions left to pass.
+        let hits = search::query(&db, "navbar", 10).unwrap();
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        assert!(
+            hits.iter()
+                .any(|h| h.item_type == fartcode_core::dossier_index::ITEM_TYPE),
+            "#75 turns feature hits on: {hits:?}"
+        );
     }
 }
 

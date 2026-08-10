@@ -5,11 +5,18 @@
 // and the ticket body edits commit-card style (E4-06 pattern): dirty
 // title/body behind an explicit Save, busy phase, inline errors, draft
 // retained on failure for retry.
+//
+// E19-06 (#75, handoff v3 §8f) adds the Dossier group under the header:
+// the app-written timeline over the agent-written section for the focused
+// step. All of it is parsed in Rust (`fartcode_core::dossier_view`) — a
+// dossier's structure is a trust boundary, and this file does not
+// re-derive it.
 
-import { useEffect, useRef, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-shell";
 import {
   acpStart,
+  dossierRead,
   issueDelete,
   issueDispatch,
   issueLink,
@@ -20,6 +27,8 @@ import {
   onFartcodeEvent,
   terminalOpenAgent,
   terminalWrite,
+  type DossierDto,
+  type DossierTimelineEntryDto,
   type IssueDto,
   type TaskDto,
 } from "../../lib/tauri";
@@ -35,9 +44,10 @@ import { useScripts } from "../../store/scripts";
 import { useSidebar } from "../../store/sidebar";
 import { useUi } from "../../store/ui";
 import { pmPromptForProject } from "../projectChat/pmPrompt";
-import { agentLive } from "./runState";
+import { agentLive, elapsedShort } from "./runState";
 
 const NO_COLUMNS: never[] = [];
+const NO_SECTIONS: never[] = [];
 
 export default function CardDetail({
   projectId,
@@ -57,6 +67,13 @@ export default function CardDetail({
   const [edgeTarget, setEdgeTarget] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [dispatching, setDispatching] = useState(false);
+  // Dossier (§8f). `null` = this card has none — no group renders at all.
+  const [dossier, setDossier] = useState<DossierDto | null>(null);
+  /** Which agent-written section the inset card shows; j/k walks it. */
+  const [sectionIdx, setSectionIdx] = useState(0);
+  /** Ticks the running step's elapsed. Derived from the launch stamp, never
+   * stored (DESIGN.md). */
+  const [, setTick] = useState(0);
   // Body: rendered markdown by default; Edit toggles the textarea.
   const [editing, setEditing] = useState(false);
   // Select-to-prompt (diff-review pattern): selection in the rendered body
@@ -78,8 +95,15 @@ export default function CardDetail({
 
   useEffect(() => {
     let cancelled = false;
-    const reload = () =>
-      issueList(projectId)
+    const reload = () => {
+      // The dossier reloads on exactly the events the card does — a step
+      // settling is what appends both a breadcrumb and (usually) a section,
+      // and it lands here as issue:updated / task:status_changed. A failed
+      // read is not an error surface: the card simply has no dossier.
+      void dossierRead(issueId)
+        .then((d) => !cancelled && setDossier(d))
+        .catch(() => !cancelled && setDossier(null));
+      return issueList(projectId)
         .then((list) => {
           if (cancelled) return;
           setSiblings(list);
@@ -93,6 +117,9 @@ export default function CardDetail({
           setBody(found.body ?? "");
         })
         .catch((e) => !cancelled && setError(String(e)));
+    };
+    setDossier(null);
+    setSectionIdx(0);
     void reload();
     const unlisten = onFartcodeEvent((ev) => {
       if (
@@ -117,6 +144,51 @@ export default function CardDetail({
       void unlisten.then((off) => off());
     };
   }, [projectId, issueId]);
+
+  const sections = dossier?.sections ?? NO_SECTIONS;
+  const focusedSection = sections[Math.min(sectionIdx, sections.length - 1)] ?? null;
+
+  // A new section (the step that just settled) takes the focus — walking
+  // back to older reasoning is what j/k is for.
+  useEffect(() => {
+    setSectionIdx(Math.max(0, sections.length - 1));
+  }, [sections.length]);
+
+  // Only a running step moves; the rest of the group is static text.
+  const stepRunning = dossier?.timeline.some((e) => e.running) ?? false;
+  useEffect(() => {
+    if (!stepRunning) return;
+    const t = setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, [stepRunning]);
+
+  /** j/k walk the dossier's sections (§8f's footer hint).
+   *
+   * Scoped to DOM focus inside the sheet and stopped from propagating,
+   * because the BOARD binds j/k globally to walk cards — one key, two
+   * handlers is one too many. Focus reaches the group by click or Tab,
+   * which is exactly what the footer advertises. */
+  const walkSections = (e: ReactKeyboardEvent<HTMLElement>) => {
+    if (sections.length < 2 || e.metaKey || e.ctrlKey || e.altKey) return;
+    const key = e.key.toLowerCase();
+    if (key !== "j" && key !== "k") return;
+    const t = e.target as HTMLElement | null;
+    if (
+      t &&
+      (t.tagName === "INPUT" ||
+        t.tagName === "TEXTAREA" ||
+        t.tagName === "SELECT" ||
+        t.isContentEditable)
+    ) {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    setSectionIdx((i) => {
+      const cur = Math.min(i, sections.length - 1);
+      return key === "j" ? Math.min(cur + 1, sections.length - 1) : Math.max(cur - 1, 0);
+    });
+  };
 
   /** Applies a mutation result; backend errors surface inline. */
   const apply = (p: Promise<IssueDto>) =>
@@ -284,7 +356,12 @@ export default function CardDetail({
     : "";
 
   return (
-    <aside className="card-detail" data-issue-id={issueId} ref={asideRef}>
+    <aside
+      className="card-detail"
+      data-issue-id={issueId}
+      ref={asideRef}
+      onKeyDown={walkSections}
+    >
       <header className="card-detail-header">
         <span className="card-detail-lane">
           <span
@@ -340,6 +417,61 @@ export default function CardDetail({
                 {issue.provider}
                 {issue.model ? <em>· {issue.model}</em> : null}
               </span>
+            )}
+
+            {/* Dossier (§8f). A card without one renders NOTHING here —
+                declined consent and pre-E19 cards are not empty states.
+                A dossier whose agent skipped the append renders its
+                timeline and no inset section, never a nag. */}
+            {dossier && (
+              <section
+                className="card-detail-dossier"
+                aria-label="Dossier"
+                tabIndex={0}
+              >
+                <div className="card-detail-dossier-head">
+                  <h3>Dossier</h3>
+                  <button
+                    className="card-detail-link card-detail-dossier-path"
+                    title={dossier.hostPath}
+                    onClick={() => void open(dossier.hostPath).catch(() => {})}
+                  >
+                    {dossier.path}
+                  </button>
+                </div>
+                {dossier.timeline.length > 0 && (
+                  <ol className="card-detail-timeline">
+                    {dossier.timeline.map((entry, i) => (
+                      <li key={`${entry.stamp}-${i}`}>
+                        <span className="card-detail-timeline-date">
+                          {timelineDate(entry)}
+                        </span>
+                        {entry.text}
+                        {entry.running && (
+                          <span className="card-detail-timeline-now">
+                            {` · running · ${elapsedShort(entry.at ?? "")}`}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+                {focusedSection && (
+                  <article className="card-detail-dossier-section">
+                    <div className="card-detail-dossier-heading">
+                      ## {focusedSection.heading}
+                    </div>
+                    <div className="card-detail-dossier-text">
+                      {focusedSection.body}
+                    </div>
+                    <div className="card-detail-dossier-foot">
+                      {`${sections.length} section${
+                        sections.length === 1 ? "" : "s"
+                      } · j k walk · ⌘K finds them`}
+                    </div>
+                  </article>
+                )}
+              </section>
             )}
 
             {editing ? (
@@ -650,6 +782,18 @@ export default function CardDetail({
 function ghLabel(url: string): string {
   const m = url.match(/github\.com\/([^/]+\/[^/]+)\/issues\/(\d+)/);
   return m ? `${m[1]}#${m[2]}` : url.replace(/^https?:\/\//, "");
+}
+
+/** Timeline date prefix (frame 8f: "aug 6"). The backend hands over an
+ * explicitly-zoned `at`; a stamp it could not parse renders as its own
+ * date part rather than as a wrong date. */
+function timelineDate(entry: DossierTimelineEntryDto): string {
+  if (!entry.at) return entry.stamp.split(" ")[0] ?? entry.stamp;
+  const d = new Date(entry.at);
+  if (Number.isNaN(d.getTime())) return entry.stamp;
+  return d
+    .toLocaleDateString(undefined, { month: "short", day: "numeric" })
+    .toLowerCase();
 }
 
 /** Backend timestamps are RFC3339; render "Aug 7, 11:04". */

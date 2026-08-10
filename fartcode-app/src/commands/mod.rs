@@ -5,6 +5,7 @@
 pub mod columns;
 pub mod conversations;
 pub mod dependencies;
+pub mod dossiers;
 pub mod files;
 pub mod git;
 pub mod github;
