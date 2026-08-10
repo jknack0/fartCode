@@ -30,6 +30,7 @@ import {
 } from "../../lib/columnConfig";
 import { useColumns } from "../../store/columns";
 import { useConversations } from "../../store/conversations";
+import { ensureDossierConsent } from "../../store/dossierConsent";
 import { useScripts } from "../../store/scripts";
 import { useSidebar } from "../../store/sidebar";
 import { useUi } from "../../store/ui";
@@ -220,12 +221,21 @@ export default function CardDetail({
     : undefined;
 
   /** Dispatch the card (E17-03) — spawn or reattach, then hand off to
-   * the task view. Errors surface inline. */
+   * the task view. Errors surface inline.
+   *
+   * First-dispatch consent (#74, §8e) is asked HERE, ahead of
+   * `issue_dispatch`, because this is the moment §8e actually names: the
+   * worktree provisions inside that call, and `create_for_task` only mints
+   * a dossier on the arm where the task is being created. Consent arriving
+   * afterwards would be too late for this card forever — the `Some(task)`
+   * arm can never mint it retroactively. */
   const dispatch = async () => {
     if (!issue || dispatching) return;
     setDispatching(true);
     setError(null);
     try {
+      // Declining still dispatches; only a withdrawn ask stops here.
+      if (!(await ensureDossierConsent(issue.projectId, issue))) return;
       const outcome = await issueDispatch(issueId);
       if (outcome.reattached) {
         useSidebar.getState().switchToTask(outcome.task);

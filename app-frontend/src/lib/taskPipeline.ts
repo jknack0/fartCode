@@ -27,6 +27,7 @@ import {
 } from "./tauri";
 import { advanceTarget, columnIdForIssue } from "./columnConfig";
 import { issueRefParts } from "../components/board/runState";
+import { ensureDossierConsent } from "../store/dossierConsent";
 import { useColumns } from "../store/columns";
 import { useSidebar } from "../store/sidebar";
 import { useSteps, type StepFlags } from "../store/steps";
@@ -160,11 +161,22 @@ export function pipelineActions(ctx: TaskCardContext): PipelineActions {
 // (ADR-0037 item 11: the board never kills).
 
 /** Enter a column. Returns the outcome so the caller can chain a parked
- * step into its confirm, exactly as the board's drop does. */
+ * step into its confirm, exactly as the board's drop does.
+ *
+ * Gated by first-dispatch consent (#74, §8e) for the same reason the
+ * board's drop is: this is the same `issue_enter_column` call, so entering
+ * an agent step from the task view provisions a worktree and writes to the
+ * repo exactly as a drag does. Without the gate, a user who drives the
+ * pipeline from here is never asked and the dossier feature stays inert
+ * forever — fail-closed, silent, and undiscoverable. A withdrawn ask
+ * (project switched) means nothing happened, which is `inert`. */
 export async function enterColumn(
   issue: IssueDto,
   column: BoardColumnDto,
 ): Promise<"launched" | "queued" | "reattached" | "inert"> {
+  if (column.kind === "agent_step" && !(await ensureDossierConsent(issue.projectId, issue))) {
+    return "inert";
+  }
   const outcome = await issueEnterColumn(issue.id, column.id);
   return outcome.step;
 }

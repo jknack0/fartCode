@@ -117,4 +117,32 @@ describe("full-replace safety", () => {
     expect(sent.featureDossiers).toBe(true); // NOT clobbered back to null
     expect(sent.featureLogSeededVersion).toBe(4);
   });
+
+  // Re-reading is necessary but not sufficient: two quick toggles would
+  // interleave, the second reading the row before the first had written
+  // it, and its full-replace write would undo the first. The pair has to
+  // be serialized, not merely fresh.
+  it("serializes rapid toggles instead of letting them clobber each other", async () => {
+    // A stand-in for the stored row, so the second commit's read can only
+    // see what the first commit actually wrote.
+    let stored: ProjectSettingsDto = { ...SETTINGS };
+    vi.mocked(getProjectSettings).mockImplementation(() => Promise.resolve({ ...stored }));
+    vi.mocked(updateProjectSettings).mockImplementation((_p, s) => {
+      stored = { ...(s as ProjectSettingsDto) };
+      return Promise.resolve({ ...stored });
+    });
+
+    render(<ProjectSettingsPane projectId="p1" />);
+    await waitFor(() => expect(screen.getByText("Feature dossiers")).toBeInTheDocument());
+
+    // Both clicks land inside one tick — no await between them.
+    clickRow("tmux terminals");
+    clickRow("Feature dossiers");
+
+    await waitFor(() => expect(updateProjectSettings).toHaveBeenCalledTimes(2));
+    // Neither edit was lost.
+    expect(stored.tmux).toBe(true);
+    expect(stored.featureDossiers).toBe(true);
+    expect(stored.featureLogSeededVersion).toBe(3);
+  });
 });

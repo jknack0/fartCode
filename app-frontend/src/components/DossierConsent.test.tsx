@@ -3,21 +3,21 @@
 // The load-bearing assertions, in the order they'd bite:
 //   1. BOTH answers persist an explicit boolean. A decline that left
 //      `featureDossiers` null would fail closed backend-side AND re-ask on
-//      the next dispatch — forever. That is the bug this ticket exists to
-//      not ship.
+//      the next dispatch — forever.
 //   2. Declining still dispatches. The card gates the repo write, never
-//      the agent.
-//   3. Consent comes BEFORE the queue confirm, and the entry does not
-//      happen until it is answered — the backend reads consent at launch
-//      time, so an answer arriving after `issue_enter_column` would miss
-//      its own dispatch.
-//   4. Shelves and human gates never ask; an answered project never asks
-//      again, either way.
+//      the agent. Only a WITHDRAWN ask (project switched) stops the entry.
+//   3. Consent comes before the queue confirm, and nothing enters until it
+//      is answered AND the answer has committed.
+//   4. The backdrop is inert. It is the board confirm's chrome, where
+//      clicking outside is harmless; here the same gesture would decline
+//      permanently and dispatch.
+//   5. An unreadable settings row is not "never asked" — it must not turn
+//      into a prompt on every entry.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { act, fireEvent, render, waitFor } from "@testing-library/react";
 
-vi.mock("../../lib/tauri", () => ({
+vi.mock("../lib/tauri", () => ({
   issueList: vi.fn(() => Promise.resolve([])),
   issueCreate: vi.fn(),
   issueMove: vi.fn(() => Promise.resolve()),
@@ -54,8 +54,15 @@ vi.mock("../../lib/tauri", () => ({
 
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: vi.fn() }));
 
-import BoardView from "./BoardView";
-import { dossierPathFor, dossierSlug } from "./DossierConsent";
+import BoardView from "./board/BoardView";
+import DossierConsentCard from "./DossierConsentCard";
+import {
+  dossierPathFor,
+  dossierSlug,
+  ensureDossierConsent,
+  useDossierConsent,
+} from "../store/dossierConsent";
+import { enterColumn } from "../lib/taskPipeline";
 import {
   columnList,
   getProjectSettings,
@@ -65,10 +72,10 @@ import {
   type BoardColumnDto,
   type IssueDto,
   type ProjectSettingsDto,
-} from "../../lib/tauri";
-import { useColumns } from "../../store/columns";
-import { useSteps } from "../../store/steps";
-import { useUi } from "../../store/ui";
+} from "../lib/tauri";
+import { useColumns } from "../store/columns";
+import { useSteps } from "../store/steps";
+import { useUi } from "../store/ui";
 
 function column(
   over: Partial<BoardColumnDto> & { id: string; name: string; position: number },
@@ -93,7 +100,7 @@ function column(
   };
 }
 
-function issue(columnId: string): IssueDto {
+function issue(columnId: string, over: Partial<IssueDto> = {}): IssueDto {
   return {
     id: "iss_a",
     projectId: "p1",
@@ -114,6 +121,7 @@ function issue(columnId: string): IssueDto {
     blockers: [],
     createdAt: null,
     updatedAt: null,
+    ...over,
   };
 }
 
@@ -133,17 +141,35 @@ const COLUMNS = [
   column({ id: "c-review", name: "In Review", position: 3, kind: "human_gate" }),
 ];
 
-/** Base settings row — anything the pane would round-trip, so a write that
- * dropped a key would be visible in the assertion. */
+/** Base settings row — carries the app-managed bookkeeping a full-replace
+ * write must not drop. */
 const SETTINGS: ProjectSettingsDto = {
   tmux: true,
   featureDossiers: null,
   featureLogSeededVersion: 3,
 };
 
+/** A promise the test releases by hand — the only way to observe the
+ * window while a read or a write is still in flight. */
+function deferred<T>() {
+  let release!: (v: T) => void;
+  const promise = new Promise<T>((r) => {
+    release = r;
+  });
+  return { promise, release };
+}
+
 function press(key: string, shiftKey = false): void {
   act(() => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key, shiftKey, bubbles: true }));
+  });
+}
+
+/** Lets queued microtasks (the gate's read/write chain) drain. */
+async function settle(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
   });
 }
 
@@ -152,6 +178,7 @@ const confirmCard = () => document.querySelector(".board-confirm:not(.board-cons
 
 beforeEach(() => {
   vi.clearAllMocks();
+  useDossierConsent.getState().reset();
   vi.mocked(columnList).mockResolvedValue(COLUMNS);
   vi.mocked(getProjectSettings).mockResolvedValue(SETTINGS);
   vi.mocked(updateProjectSettings).mockImplementation((_p, s) => Promise.resolve(s));
@@ -170,13 +197,17 @@ beforeEach(() => {
   Object.defineProperty(window, "innerWidth", { value: 1440, configurable: true });
 });
 
-/** Renders the board with the card parked in `startColumn`, focuses it,
- * and waits for the consent read to settle so the gate is not racing. */
-async function renderBoard(startColumn: string) {
-  vi.mocked(issueList).mockResolvedValue([issue(startColumn)]);
-  render(<BoardView projectId="p1" />);
+/** The board plus the app-level consent card, which is where it really
+ * renders (App.tsx) now that the task view needs it too. */
+async function renderBoard(startColumn: string, over: Partial<IssueDto> = {}) {
+  vi.mocked(issueList).mockResolvedValue([issue(startColumn, over)]);
+  render(
+    <>
+      <BoardView projectId="p1" />
+      <DossierConsentCard />
+    </>,
+  );
   await waitFor(() => expect(document.querySelectorAll(".board-card")).toHaveLength(1));
-  await waitFor(() => expect(getProjectSettings).toHaveBeenCalledWith("p1"));
   // Click rather than j/k: it puts BOTH cursors (card and column) on this
   // card wherever it sits, so the fixture can start it in any column.
   fireEvent.click(document.querySelector(".board-card")!);
@@ -219,8 +250,7 @@ describe("the card", () => {
     expect(foot.querySelector(".board-confirm-key")).toHaveTextContent("↵");
   });
 
-  // The overlay must BE the board confirm's shell, not a lookalike: same
-  // backdrop, same overlay card class, same footer/key elements.
+  // The overlay must BE the board confirm's shell, not a lookalike.
   it("wears the board confirm's chrome", async () => {
     await renderBoard("c-ready");
     moveRight();
@@ -229,6 +259,24 @@ describe("the card", () => {
     expect(card).toHaveClass("board-confirm");
     expect(card.closest(".board-confirm-backdrop")).not.toBeNull();
     expect(card.getAttribute("role")).toBe("alertdialog");
+  });
+
+  // ...and BECAUSE it wears that chrome, the gesture that is harmless
+  // there must be harmless here. On the board confirm, clicking the
+  // backdrop keeps the card where it is and spends nothing. Wiring it to
+  // decline would let a reflexive click-away opt the repo out of dossiers
+  // permanently AND launch an agent.
+  it("ignores a backdrop click — it neither answers nor dispatches", async () => {
+    await renderBoard("c-ready");
+    moveRight();
+    await waitFor(() => expect(consentCard()).not.toBeNull());
+
+    fireEvent.click(document.querySelector(".board-confirm-backdrop")!);
+    await settle();
+
+    expect(updateProjectSettings).not.toHaveBeenCalled();
+    expect(issueEnterColumn).not.toHaveBeenCalled();
+    expect(consentCard()).not.toBeNull(); // still asking
   });
 });
 
@@ -278,14 +326,30 @@ describe("answering", () => {
     expect(sent.featureLogSeededVersion).toBe(3);
     expect(sent.tmux).toBe(true);
   });
+
+  // The dispatch must wait for the write to COMMIT, not merely be issued:
+  // the backend reads consent at launch, so a launch that overtook the
+  // write would run without the consent the user just gave.
+  it("does not dispatch until the consent write has committed", async () => {
+    const write = deferred<ProjectSettingsDto>();
+    vi.mocked(updateProjectSettings).mockReturnValue(write.promise);
+    await renderBoard("c-ready");
+    moveRight();
+    await waitFor(() => expect(consentCard()).not.toBeNull());
+
+    press("Enter");
+    await waitFor(() => expect(updateProjectSettings).toHaveBeenCalled());
+    await settle();
+    expect(issueEnterColumn).not.toHaveBeenCalled();
+
+    await act(async () => write.release(SETTINGS));
+    await waitFor(() => expect(issueEnterColumn).toHaveBeenCalled());
+  });
 });
 
 describe("sequencing", () => {
   // A park the board did NOT raise — a settle that chained into a
-  // queue-mode step, or one rehydrated after a webview reload. It is still
-  // an agent_step entry, so consent still comes first; there is just
-  // nothing to dispatch afterwards, because the entry already happened
-  // backend-side.
+  // queue-mode step, or one rehydrated after a webview reload.
   it("comes before a park the board only reconciled", async () => {
     useSteps.setState({ byIssue: { iss_a: { queuedColumnId: "c-plan" } } });
     await renderBoard("c-plan");
@@ -306,13 +370,35 @@ describe("sequencing", () => {
     await renderBoard("c-ready");
     moveRight();
     await waitFor(() => expect(consentCard()).not.toBeNull());
-    // Consent first: the dispatch confirm is not on screen yet.
     expect(confirmCard()).toBeNull();
 
     press("Enter");
     await waitFor(() => expect(confirmCard()).not.toBeNull());
     expect(consentCard()).toBeNull();
     expect(confirmCard()!.textContent).toContain("Dispatch?");
+  });
+
+  // The blocked confirm is raised BEFORE the entry, so its ↵ runs the same
+  // gated entry a drag does — consent must still come first.
+  it("follows the blocked confirm rather than replacing it", async () => {
+    await renderBoard("c-ready", {
+      blocked: true,
+      blockers: [
+        { id: "iss_b", title: "#9 groundwork", lane: "backlog", columnId: "c-backlog", countsAsDone: false },
+      ],
+    });
+    moveRight();
+    // Blocked first: the card is blocked and Plan is a step.
+    await waitFor(() => expect(confirmCard()).not.toBeNull());
+    expect(confirmCard()!.textContent).toContain("Send to Plan anyway?");
+    expect(consentCard()).toBeNull();
+
+    press("Enter"); // confirm the blocked dispatch → now the gate runs
+    await waitFor(() => expect(consentCard()).not.toBeNull());
+    expect(issueEnterColumn).not.toHaveBeenCalled();
+
+    press("Enter"); // consent
+    await waitFor(() => expect(issueEnterColumn).toHaveBeenCalledWith("iss_a", "c-plan", 0));
   });
 });
 
@@ -347,6 +433,156 @@ describe("when it must NOT fire", () => {
     await waitFor(() => expect(issueEnterColumn).toHaveBeenCalledWith("iss_a", "c-plan", 0));
     expect(consentCard()).toBeNull();
     expect(updateProjectSettings).not.toHaveBeenCalled();
+  });
+
+  // An unreadable row and "never asked" look alike and behave oppositely.
+  // Turning a broken read into a prompt would re-ask on EVERY entry, and
+  // the answer could not be stored either — an undismissable loop. Safe to
+  // skip: the backend reads the same broken row and writes nothing.
+  it("dispatches without asking when the settings row cannot be read", async () => {
+    vi.mocked(getProjectSettings).mockRejectedValue(new Error("ipc down"));
+    await renderBoard("c-ready");
+    moveRight();
+    await waitFor(() => expect(issueEnterColumn).toHaveBeenCalledWith("iss_a", "c-plan", 0));
+    expect(consentCard()).toBeNull();
+    expect(updateProjectSettings).not.toHaveBeenCalled();
+
+    // And it does not start asking on the next entry either.
+    moveRight();
+    await settle();
+    expect(consentCard()).toBeNull();
+  });
+});
+
+describe("while the consent read is still in flight", () => {
+  it("holds the entry, then asks once the read lands", async () => {
+    const read = deferred<ProjectSettingsDto>();
+    vi.mocked(getProjectSettings).mockReturnValue(read.promise);
+    await renderBoard("c-ready");
+
+    moveRight();
+    await settle();
+    // Nothing decided yet: no card, and above all no dispatch.
+    expect(consentCard()).toBeNull();
+    expect(issueEnterColumn).not.toHaveBeenCalled();
+
+    await act(async () => read.release(SETTINGS));
+    await waitFor(() => expect(consentCard()).not.toBeNull());
+  });
+
+  // Two entries fired inside the synchronous window before either has
+  // awaited anything must join ONE ask. A guard local to any single caller
+  // could not do this — the two entries can come from different surfaces.
+  it("raises exactly one card for two rapid entries", async () => {
+    const read = deferred<ProjectSettingsDto>();
+    vi.mocked(getProjectSettings).mockReturnValue(read.promise);
+    await renderBoard("c-ready");
+
+    moveRight();
+    moveRight();
+    await act(async () => read.release(SETTINGS));
+    await waitFor(() => expect(consentCard()).not.toBeNull());
+
+    expect(document.querySelectorAll(".board-consent")).toHaveLength(1);
+    expect(getProjectSettings).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Consent belongs to the project that was ASKED. BoardView is not
+// remounted on a project switch, so an ask left on screen used to write
+// its answer to whatever project was mounted by the time ↵ landed.
+describe("project switch", () => {
+  it("withdraws the ask without writing or dispatching", async () => {
+    await renderBoard("c-ready");
+    moveRight();
+    await waitFor(() => expect(consentCard()).not.toBeNull());
+
+    // What App.tsx's effect does when the selection changes.
+    act(() => useDossierConsent.getState().cancelForeignAsk("p2"));
+    await settle();
+
+    expect(consentCard()).toBeNull();
+    expect(updateProjectSettings).not.toHaveBeenCalled();
+    expect(issueEnterColumn).not.toHaveBeenCalled();
+  });
+
+  it("keeps an ask about the project still on screen", async () => {
+    await renderBoard("c-ready");
+    moveRight();
+    await waitFor(() => expect(consentCard()).not.toBeNull());
+
+    act(() => useDossierConsent.getState().cancelForeignAsk("p1"));
+    await settle();
+    expect(consentCard()).not.toBeNull();
+  });
+
+  // The queue confirm has the same cross-project shape as the card, and
+  // BoardView is not remounted by a switch: a confirm raised for project A
+  // would otherwise sit over project B's board with a live ↵.
+  it("drops a queue confirm raised for the project we left", async () => {
+    vi.mocked(getProjectSettings).mockResolvedValue({ ...SETTINGS, featureDossiers: true });
+    vi.mocked(issueList).mockResolvedValue([issue("c-ready")]);
+    const view = render(
+      <>
+        <BoardView projectId="p1" />
+        <DossierConsentCard />
+      </>,
+    );
+    await waitFor(() => expect(document.querySelectorAll(".board-card")).toHaveLength(1));
+    fireEvent.click(document.querySelector(".board-card")!);
+    moveRight();
+    await waitFor(() => expect(confirmCard()).not.toBeNull());
+
+    view.rerender(
+      <>
+        <BoardView projectId="p2" />
+        <DossierConsentCard />
+      </>,
+    );
+    await waitFor(() => expect(confirmCard()).toBeNull());
+  });
+
+  it("writes to the asked project, not the mounted one", async () => {
+    render(<DossierConsentCard />);
+    const gate = ensureDossierConsent("p-asked", issue("c-plan"));
+    await waitFor(() => expect(consentCard()).not.toBeNull());
+    press("Enter");
+    await waitFor(() => expect(updateProjectSettings).toHaveBeenCalled());
+    expect(vi.mocked(updateProjectSettings).mock.calls[0][0]).toBe("p-asked");
+    expect(getProjectSettings).toHaveBeenCalledWith("p-asked");
+    await expect(gate).resolves.toBe(true);
+  });
+});
+
+// The task view makes the same `issue_enter_column` call a board drag
+// makes, so it must ask the same question.
+describe("the task view's enterColumn", () => {
+  it("asks before entering an agent step", async () => {
+    render(<DossierConsentCard />);
+    const step = COLUMNS.find((c) => c.kind === "agent_step")!;
+    const run = enterColumn(issue("c-ready"), step);
+    await waitFor(() => expect(consentCard()).not.toBeNull());
+    expect(issueEnterColumn).not.toHaveBeenCalled();
+
+    press("Enter");
+    await expect(run).resolves.toBe("queued");
+    expect(issueEnterColumn).toHaveBeenCalledWith("iss_a", "c-plan");
+  });
+
+  it("does not ask for a shelf", async () => {
+    render(<DossierConsentCard />);
+    await expect(enterColumn(issue("c-backlog"), COLUMNS[1])).resolves.toBe("queued");
+    expect(consentCard()).toBeNull();
+  });
+
+  it("reports inert when the ask is withdrawn", async () => {
+    render(<DossierConsentCard />);
+    const step = COLUMNS.find((c) => c.kind === "agent_step")!;
+    const run = enterColumn(issue("c-ready"), step);
+    await waitFor(() => expect(consentCard()).not.toBeNull());
+    act(() => useDossierConsent.getState().cancelForeignAsk("p2"));
+    await expect(run).resolves.toBe("inert");
+    expect(issueEnterColumn).not.toHaveBeenCalled();
   });
 });
 

@@ -700,9 +700,18 @@
   padding-bottom: 10px;
 }
 
+/* One stack, 8px rhythm: the provenance line is the file list's last
+   line, not a second block sitting under it. */
+.board-consent-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 16px 14px;
+}
+
 .board-consent-files {
   margin: 0;
-  padding: 0 16px;
+  padding: 0;
   list-style: none;
   font-family: var(--font-mono);
   font-size: 11.5px;
@@ -711,12 +720,12 @@
 }
 
 .board-consent-note {
-  padding: 8px 16px 12px;
   font-family: var(--font-mono);
   font-size: 10.5px;
   line-height: 1.4;
   color: var(--meta);
 }
+
 
 /* -- card detail (right-sheet inspector) ---------------------------------- */
 
