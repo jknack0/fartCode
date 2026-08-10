@@ -167,9 +167,14 @@ export default function CardDetail({
    * Scoped to DOM focus inside the sheet and stopped from propagating,
    * because the BOARD binds j/k globally to walk cards — one key, two
    * handlers is one too many. Focus reaches the group by click or Tab,
-   * which is exactly what the footer advertises. */
+   * which is exactly what the footer advertises.
+   *
+   * **Ownership is decided before the section count.** Bailing early on a
+   * one-section dossier let the key the sheet advertised fall through and
+   * walk the board behind it — the sheet has the key while it is showing a
+   * dossier, whether or not there is anywhere to walk. */
   const walkSections = (e: ReactKeyboardEvent<HTMLElement>) => {
-    if (sections.length < 2 || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!dossier || e.metaKey || e.ctrlKey || e.altKey) return;
     const key = e.key.toLowerCase();
     if (key !== "j" && key !== "k") return;
     const t = e.target as HTMLElement | null;
@@ -184,6 +189,7 @@ export default function CardDetail({
     }
     e.preventDefault();
     e.stopPropagation();
+    if (sections.length < 2) return;
     setSectionIdx((i) => {
       const cur = Math.min(i, sections.length - 1);
       return key === "j" ? Math.min(cur + 1, sections.length - 1) : Math.max(cur - 1, 0);
@@ -449,7 +455,12 @@ export default function CardDetail({
                         {entry.text}
                         {entry.running && (
                           <span className="card-detail-timeline-now">
-                            {` · running · ${elapsedShort(entry.at ?? "")}`}
+                            {/* No zoned stamp, no elapsed: `running` alone
+                                beats a duration computed from a date the
+                                backend could not parse. */}
+                            {entry.at
+                              ? ` · running · ${elapsedShort(entry.at)}`
+                              : " · running"}
                           </span>
                         )}
                       </li>

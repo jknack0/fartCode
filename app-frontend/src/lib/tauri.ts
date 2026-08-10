@@ -250,6 +250,11 @@ export interface SearchResultDto {
   projectId: string | null;
   taskId: string | null;
   title: string;
+  /** The card a `feature` hit opens (handoff v3 §8h), resolved backend-side
+   * from the item id. Null on every other item type. It arrives WITH the
+   * hit so ↵ never has to wait on a second round trip — a feature row is
+   * routable the moment it renders. */
+  issueId: string | null;
 }
 
 export interface ResourceSampleDto {
@@ -1298,7 +1303,6 @@ export interface DossierDto {
   /** Empty is ordinary: the agent skipped the append (§8f — render the
    * timeline and no inset section, never a nag). */
   sections: DossierSectionDto[];
-  landed: boolean;
 }
 
 /** The card's dossier, or null when it has none — declined consent, a
@@ -1308,17 +1312,19 @@ export function dossierRead(issueId: string): Promise<DossierDto | null> {
   return invoke("dossier_read", { issueId });
 }
 
-/** What a ⌘K `feature` hit needs beyond its indexed section heading (§8h). */
+/** What a ⌘K `feature` hit needs beyond its indexed section heading and the
+ * `issueId` the search hit already carries (§8h): the feature's own title
+ * and the tracker ref the `#id` derives from.
+ *
+ * No `landed`: the tag needs an ancestry answer the app cannot give yet —
+ * see `FeatureRowDto` in fartcode-app/src/commands/dossiers.rs. */
 export interface FeatureRowDto {
   /** Echoes the `search_index` item id asked about. */
   itemId: string;
-  /** The card ↵ opens. */
   issueId: string;
   /** The card's title — the "feature title" half of the row title. */
   title: string;
   externalRef: string | null;
-  /** The dossier is in the project checkout: the feature merged. */
-  landed: boolean;
 }
 
 export function dossierFeatureRows(itemIds: string[]): Promise<FeatureRowDto[]> {

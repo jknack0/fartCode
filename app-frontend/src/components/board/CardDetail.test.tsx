@@ -62,7 +62,6 @@ function dossier(over: Partial<DossierDto> = {}): DossierDto {
   return {
     path: "docs/features/invite-vetting.md",
     hostPath: "/tmp/wt/docs/features/invite-vetting.md",
-    landed: false,
     timeline: [
       {
         stamp: "2026-08-06 09:00",
@@ -194,8 +193,37 @@ describe("dossier group", () => {
     await renderDetail();
     await screen.findByLabelText("Dossier");
 
-    fireEvent.keyDown(screen.getByLabelText("Issue title"), { key: "k" });
+    const typed = fireEvent.keyDown(screen.getByLabelText("Issue title"), { key: "k" });
     expect(screen.getByText("## Implement — 2026-08-09")).toBeTruthy();
+    expect(typed).toBe(true); // not swallowed — typing is not a walk
+  });
+
+  /// The sheet owns j/k whenever it is showing a dossier. Bailing on a
+  /// one-section dossier let the key fall through to the board's global
+  /// handler and walk the cards behind the sheet.
+  it("swallows j/k even when there is only one section to show", async () => {
+    vi.mocked(dossierRead).mockResolvedValue(
+      dossier({ sections: [{ heading: "Plan — 2026-08-07", body: "One only." }] }),
+    );
+    await renderDetail();
+    const group = await screen.findByLabelText("Dossier");
+
+    const bubbled = fireEvent.keyDown(group, { key: "j" });
+    expect(bubbled).toBe(false); // preventDefault'd: the board never sees it
+    expect(screen.getByText("## Plan — 2026-08-07")).toBeTruthy();
+  });
+
+  it("renders `running` with no duration when the stamp had no zone", async () => {
+    vi.mocked(dossierRead).mockResolvedValue(
+      dossier({
+        timeline: [
+          { stamp: "yesterday", at: null, text: "Implement · claude", running: true },
+        ],
+      }),
+    );
+    await renderDetail();
+    const now = await screen.findByText(/running/);
+    expect(now.textContent).toBe(" · running");
   });
 
   it("says `1 section` for a single one", async () => {

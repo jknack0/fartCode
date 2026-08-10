@@ -890,6 +890,20 @@ pub fn settle_issues_for_task(app: &App, task_id: &str, session: Option<&str>) -
                     .advance_to
                     .clone()
                     .or_else(|| next_column_id(app, &column));
+                if target.is_some() {
+                    // E19-06 (#75): the dossier's settle breadcrumb, for the
+                    // one settle path that emits no `StepSettled` — the
+                    // appender subscribes to that event, so without this the
+                    // seeded board (both agent steps are `advance`) never
+                    // recorded a settle and the card detail rendered every
+                    // step as permanently running. Same placement and same
+                    // reasoning as the `reindex_issue` call above; the event
+                    // itself is deliberately NOT emitted here, because
+                    // `step:settled` is also what paints the step-done dot
+                    // and drives the park/confirm refresh — a breadcrumb
+                    // must not move those.
+                    crate::dossiers::append_settled(app, &issue, &column.id);
+                }
                 match target {
                     None => {
                         // Last column and no explicit target: nowhere to

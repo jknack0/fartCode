@@ -26,6 +26,7 @@
 //! (AGENTS.md § "Tauri commands and the main thread"; the DB guard is taken
 //! and dropped inside the closure).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tauri::State;
@@ -55,41 +56,37 @@ pub struct DossierDto {
     /// "the agent skipped the append" case: §8f renders the timeline and
     /// no inset card — never a nag.
     pub sections: Vec<DossierSection>,
-    /// Whether the dossier is in the project checkout (see
-    /// [`FeatureRowDto::landed`]).
-    pub landed: bool,
 }
 
 /// One ⌘K `feature` row's card (§8h).
 ///
-/// The row's TITLE comes from the indexed section heading, which the
-/// palette already holds — this fills in only what the index cannot carry:
-/// the feature's own title, its display ref, and whether it landed.
+/// The row's TITLE half comes from the indexed section heading and its
+/// ROUTE from `search`'s own `issueId`; this fills in only what neither
+/// carries — the feature's own title and its display ref.
+///
+/// **No `landed` field, deliberately.** §8h appends ` · landed` "once
+/// merged", and the app cannot answer that yet: the only cheap signal is
+/// whether the dossier sits in the project checkout, which is a
+/// WORKING-TREE fact, not an ancestry one — it is equally true of a branch
+/// someone has checked out, or a file that was never merged at all. A
+/// correct answer is a committed-content query against the project's base
+/// ref (`git cat-file -e <base>:<path>`), and the app has no base-ref
+/// resolver; adding one, plus a subprocess per hit per keystroke, is its
+/// own ticket. Rendering nothing beats rendering a guess.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeatureRowDto {
     /// Echoes the `search_index.item_id` asked about, so the caller can
     /// match rows back without re-parsing anything.
     pub item_id: String,
-    /// The card ↵ opens — `dossier_index::issue_id_of`, not a second parse.
+    /// The card the row belongs to — `dossier_index::issue_id_of`, not a
+    /// second parse. (`search` resolves the same id for routing; this
+    /// echoes it so a caller holding only the row can still tell.)
     pub issue_id: String,
     /// The card's title (the "feature title" half of §8h's row title).
     pub title: String,
     /// The card's tracker URL, for the `#id` the board already derives.
     pub external_ref: Option<String>,
-    /// **`landed` = this card's dossier is in the PROJECT CHECKOUT**, not
-    /// only in a worktree.
-    ///
-    /// ADR-0038 item 5 makes that the definition of landed: dossier commits
-    /// ride the feature branch, so the file appears in the main checkout
-    /// exactly when the feature merges (and `project_git_pull` is where the
-    /// index learns it). The alternative signal — a merged PR — exists in
-    /// `pull_requests`, but it is keyed by WORKSPACE, and a landed
-    /// feature's worktree is torn down; the tag would go dark precisely
-    /// when it is supposed to appear. Ownership is proven by
-    /// [`dossiers::inspect`], so a stranger's file at the slug path never
-    /// reads as a landing.
-    pub landed: bool,
 }
 
 /// The card's dossier, or `None` when it has none.
@@ -123,43 +120,48 @@ pub fn read_dossier(app: &App, issue_id: &str) -> Option<DossierDto> {
         host_path: path.to_string_lossy().into_owned(),
         timeline: dossier_view::timeline(&content),
         sections: dossier_view::agent_sections(&content),
-        landed: crate::dossier_index::landed_copy(app, &issue, rel).is_some(),
     })
 }
 
 /// Resolves ⌘K `feature` hits to their cards. Ids that are not feature rows
-/// — or whose card is gone — are simply absent from the result; the palette
-/// falls back to the plain row rather than showing a hit that opens nothing.
+/// — or whose card is gone — are simply absent from the result.
+///
+/// **Grouped by card, not by row.** One dossier produces one `feature` row
+/// per section, so a query matching three sections of one feature used to
+/// mean three identical card lookups — per keystroke. The cards are
+/// resolved once and fanned back out over the ids that asked for them.
 #[tauri::command]
 pub async fn dossier_feature_rows(
     app: State<'_, Arc<App>>,
     item_ids: Vec<String>,
 ) -> Result<Vec<FeatureRowDto>, String> {
     let app = app.inner().clone();
-    off_main_thread(move || {
-        Ok(item_ids
-            .iter()
-            .filter_map(|item_id| feature_row(&app, item_id))
-            .collect())
-    })
-    .await
+    off_main_thread(move || Ok(feature_rows(&app, &item_ids))).await
 }
 
-/// One row of [`dossier_feature_rows`] — public for the same reason
-/// [`read_dossier`] is.
-pub fn feature_row(app: &App, item_id: &str) -> Option<FeatureRowDto> {
-    let issue_id = dossier_index::issue_id_of(item_id)?;
-    let issue = app.issues.get(issue_id).ok().flatten()?;
-    let landed = dossier_rel(&issue)
-        .and_then(|rel| crate::dossier_index::landed_copy(app, &issue, rel))
-        .is_some();
-    Some(FeatureRowDto {
-        item_id: item_id.to_string(),
-        issue_id: issue.id.clone(),
-        title: issue.title.clone(),
-        external_ref: issue.external_ref.clone(),
-        landed,
-    })
+/// [`dossier_feature_rows`]'s whole body. Public for the same reason
+/// [`read_dossier`] is: the integration suite drives it against a real App.
+pub fn feature_rows(app: &App, item_ids: &[String]) -> Vec<FeatureRowDto> {
+    let mut cards: HashMap<&str, Option<Issue>> = HashMap::new();
+    let mut out = Vec::with_capacity(item_ids.len());
+    for item_id in item_ids {
+        let Some(issue_id) = dossier_index::issue_id_of(item_id) else {
+            continue;
+        };
+        let card = cards
+            .entry(issue_id)
+            .or_insert_with(|| app.issues.get(issue_id).ok().flatten());
+        let Some(issue) = card else {
+            continue;
+        };
+        out.push(FeatureRowDto {
+            item_id: item_id.clone(),
+            issue_id: issue.id.clone(),
+            title: issue.title.clone(),
+            external_ref: issue.external_ref.clone(),
+        });
+    }
+    out
 }
 
 /// The card's recorded dossier path, blank-normalized.
