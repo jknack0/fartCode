@@ -106,10 +106,7 @@ impl Scheduler {
 
         for (id, trigger_json, conv_json, task_json) in rows {
             let trigger: Value = serde_json::from_str(&trigger_json)?;
-            let expr = trigger
-                .get("expr")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let expr = trigger.get("expr").and_then(|v| v.as_str()).unwrap_or("");
             if expr.is_empty() {
                 continue;
             }
@@ -184,10 +181,7 @@ impl Scheduler {
             )?;
 
             let trigger: Value = serde_json::from_str(trigger_json)?;
-            let expr = trigger
-                .get("expr")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let expr = trigger.get("expr").and_then(|v| v.as_str()).unwrap_or("");
             if expr.is_empty() {
                 continue;
             }

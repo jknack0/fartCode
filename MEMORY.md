@@ -1,4 +1,35 @@
 # MEMORY.md — fartCode
+## #86 E12-02 SFTP layer LANDED (2026-08-10)
+
+`fartcode-ssh/src/sftp.rs` — `RemoteSftp` over russh-sftp 2.4 (workspace dep bumped
+from the stale 0.50 line; 2.4 is the current release of the same crate).
+Ops: list (dirs-first sort, hidden opt-in), read (200KB default cap, 100MB hard
+ceiling, truncated flag), write (auto-mkdir parents), stat (None on ENOENT),
+realpath, exists, mkdir, remove (iterative stack, no shell `rm -rf`).
+
+Bites:
+- SFTP errors are **typed** — match `client::error::Error::Status(s).status_code`
+  against `StatusCode::{NoSuchFile,Failure}`. Never string-match error Display;
+  an `IO("no such file")` would false-positive as ENOENT.
+- `mkdir` on an existing dir returns generic `Failure` (4), not AlreadyExists —
+  confirm with a stat before treating it as success, else real errors vanish.
+- Path containment is **lexical** (normalize + `starts_with(root)`); a remote
+  symlink pointing outside root is not caught. Harden in E12-03 if it matters.
+
+## #86 E12-02 SFTP layer CREATED (2026-08-10)
+
+Next ticket: SFTP filesystem layer in fartcode-ssh using russh-sftp 0.50.
+Browse, read, write, stat, realpath, mkdir, remove — path-constrained to
+workspace root. 14 acceptance criteria. size:M, phase:3.
+
+## #85 SSH client layer LANDED + CLOSED (2026-08-09) — ADR-0041
+
+fartcode-ssh crate with russh 0.50. Auth: password/key file/agent. PTY channels
+(open, resize, shell). Exec (non-interactive + collect). Direct TCP/IP forward.
+Handler accepts all server keys (ponytail: known_hosts in E12-03). 4 tests,
+fmt + clippy clean. Foundation for E12-02..12-10.
+
+
 
 Project-level working memory. Newest entries first. If a fact here contradicts
 AGENTS.md or ARCHITECTURE.md, the docs win — update this file (and the ticket if

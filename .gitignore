@@ -45,3 +45,6 @@ fartcode-app/gen/
 
 # pi harness session artifacts
 .pi-subagents/
+
+.pi/
+fartCode.zip

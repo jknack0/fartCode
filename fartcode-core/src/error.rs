@@ -192,6 +192,22 @@ pub enum Error {
     #[error("invalid line comment: {0}")]
     InvalidLineComment(String),
 
+    // -- SSH (Phase 3, E12-01) --
+    #[error("SSH connection failed: {0}")]
+    SshConnection(String),
+
+    #[error("SSH authentication failed: {0}")]
+    SshAuth(String),
+
+    #[error("SSH channel error: {0}")]
+    SshChannel(String),
+
+    #[error("SSH key error: {0}")]
+    SshKey(String),
+
+    #[error("SFTP error: {0}")]
+    SshSftp(String),
+
     // -- Catch-all --
     #[error("{0}")]
     Internal(String),
