@@ -45,6 +45,9 @@ export type FartcodeEvent =
   | { type: "project:deleted"; id: string }
   | { type: "task:created"; id: string; projectId: string; name: string }
   | { type: "task:deleted"; taskId: string }
+  // E12-10 / ADR-0044: a BYOI terminate failed — the machine may still be
+  // running (billed). Rendered by <Warnings/>; teardown already continued.
+  | { type: "task:terminate_warning"; taskId: string; message: string }
   | { type: "task:status_changed"; taskId: string; status: string }
   | { type: "task:archived"; taskId: string }
   | { type: "task:restored"; taskId: string }

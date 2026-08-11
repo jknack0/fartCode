@@ -243,6 +243,13 @@ pub fn event_to_value(event: &InternalEvent) -> Option<serde_json::Value> {
             "connectionId": connection_id,
             "degraded": degraded,
         })),
+        // E12-10 / ADR-0044: a possibly-leaked (billed) machine must reach
+        // the user, not just the log.
+        InternalEvent::ByoiTerminateWarning { task_id, message } => Some(json!({
+            "type": "task:terminate_warning",
+            "taskId": task_id,
+            "message": message,
+        })),
         InternalEvent::ProjectAdded { id, name, path } => Some(json!({
             "type": "project:added", "id": id, "name": name, "path": path,
         })),

@@ -98,17 +98,27 @@ pub fn terminate(app: &App, task_id: &str) {
         return; // never provisioned
     };
 
-    match script_context(app, task_id) {
-        Ok((provider, runner)) => {
-            tauri::async_runtime::block_on(byoi::terminate(
-                runner.as_ref(),
-                &provider,
-                workspace.remote_workspace_id.as_deref(),
-            ));
-        }
+    let warning = match script_context(app, task_id) {
+        Ok((provider, runner)) => tauri::async_runtime::block_on(byoi::terminate(
+            runner.as_ref(),
+            &provider,
+            workspace.remote_workspace_id.as_deref(),
+        )),
         Err(error) => {
-            tracing::warn!(task_id, error = %error, "no terminate context — machine may leak")
+            tracing::warn!(task_id, error = %error, "no terminate context — machine may leak");
+            Some(format!(
+                "no terminate context: {error} — the provisioned machine may leak"
+            ))
         }
+    };
+    // ADR-0044's deferred call: the warning reaches the USER, because the
+    // machine that may have leaked is billed to them.
+    if let Some(message) = warning {
+        use fartcode_core::events::{EventBus, InternalEvent};
+        app.event_bus.send(InternalEvent::ByoiTerminateWarning {
+            task_id: task_id.to_string(),
+            message,
+        });
     }
     // The session goes regardless: whatever happened to the machine, this
     // process has no further business holding a connection to it.

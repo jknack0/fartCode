@@ -7,6 +7,7 @@ import ChangesSidebar from "./components/ChangesSidebar";
 import CommandPalette from "./components/CommandPalette";
 import DossierConsentCard from "./components/DossierConsentCard";
 import Modals from "./components/Modals";
+import Warnings from "./components/Warnings";
 import Onboarding from "./components/Onboarding";
 import ProjectView from "./components/ProjectView";
 import ResourceMonitor from "./components/ResourceMonitor";
@@ -81,6 +82,7 @@ function App() {
           unmounted (#74 §8e). */}
       <DossierConsentCard />
       <Modals />
+      <Warnings />
       <ResourceMonitor />
       <section className="main">
         {error && <p className="error">{error}</p>}

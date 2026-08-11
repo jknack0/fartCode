@@ -200,22 +200,24 @@ pub async fn provision(
 
 /// Runs the project's terminate script (AC4).
 ///
-/// Never fails. Teardown runs while a task is being deleted, and a machine
+/// Never fails — teardown runs while a task is being deleted, and a machine
 /// that is already gone, a script that exits nonzero, or a host that has
 /// stopped answering must not strand the task in a half-deleted state. Each
-/// of those warns; the caller continues.
+/// of those warns and the caller continues; the returned message (None on
+/// success) is the warning for the USER — a possibly-leaked machine is
+/// billed money, not a log line (ADR-0044).
 pub async fn terminate(
     runner: &dyn ScriptRunner,
     provider: &WorkspaceProvider,
     remote_workspace_id: Option<&str>,
-) {
+) -> Option<String> {
     let Some(command) = provider
         .terminate_command
         .as_deref()
         .map(str::trim)
         .filter(|c| !c.is_empty())
     else {
-        return;
+        return None;
     };
     let env: Vec<(String, String)> = remote_workspace_id
         .map(str::trim)
@@ -224,16 +226,28 @@ pub async fn terminate(
         .unwrap_or_default();
 
     match runner.run_script(command, &env, SCRIPT_TIMEOUT).await {
-        Ok(output) if output.ok() => {}
-        Ok(output) => tracing::warn!(
-            exit_code = output.exit_code,
-            stderr = %snippet(output.stderr.trim()),
-            "terminate script failed — continuing teardown"
-        ),
-        Err(error) => tracing::warn!(
-            error = %error,
-            "terminate script could not run — continuing teardown"
-        ),
+        Ok(output) if output.ok() => None,
+        Ok(output) => {
+            let stderr = snippet(output.stderr.trim());
+            tracing::warn!(
+                exit_code = output.exit_code,
+                stderr = %stderr,
+                "terminate script failed — continuing teardown"
+            );
+            Some(format!(
+                "terminate script exited {}: {stderr} — the provisioned machine may still be running",
+                output.exit_code
+            ))
+        }
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "terminate script could not run — continuing teardown"
+            );
+            Some(format!(
+                "terminate script could not run: {error} — the provisioned machine may still be running"
+            ))
+        }
     }
 }
 
@@ -600,18 +614,26 @@ mod tests {
     }
 
     /// AC4: teardown continues through a failing script AND an unreachable
-    /// host — neither returns, because neither can.
+    /// host — neither ERRORS, but both now hand back a warning for the UI
+    /// (ADR-0044's "surfacing it is E12-10's call").
     #[tokio::test]
-    async fn terminate_swallows_failures() {
+    async fn terminate_swallows_failures_but_reports_them() {
         let failed = FakeRunner::with(RemoteOutput {
             exit_code: 1,
             stdout: String::new(),
             stderr: "already gone".into(),
         });
-        terminate(&failed, &provider(None, Some("./t.sh")), Some("vm-1")).await;
+        let warning = terminate(&failed, &provider(None, Some("./t.sh")), Some("vm-1"))
+            .await
+            .expect("a failing script must produce a warning");
+        assert!(warning.contains("exited 1"), "{warning}");
+        assert!(warning.contains("already gone"), "{warning}");
 
         let unreachable = FakeRunner::failing();
-        terminate(&unreachable, &provider(None, Some("./t.sh")), Some("vm-1")).await;
+        let warning = terminate(&unreachable, &provider(None, Some("./t.sh")), Some("vm-1"))
+            .await
+            .expect("an unreachable host must produce a warning");
+        assert!(warning.contains("could not run"), "{warning}");
         // Both ran; neither panicked or returned an error to the caller.
         assert_eq!(failed.calls.lock().unwrap().len(), 1);
         assert_eq!(unreachable.calls.lock().unwrap().len(), 1);

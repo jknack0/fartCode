@@ -1,4 +1,28 @@
 # MEMORY.md — fartCode
+## #100 Terminate warnings LANDED (2026-08-11)
+
+ADR-0044's deferred call, called. `byoi::terminate` still never fails, but
+now returns `Option<String>` — the warning for the USER when the script
+exits nonzero or cannot run. `byoi_tasks::terminate` forwards it (plus its
+own "no terminate context" case) as new `InternalEvent::ByoiTerminateWarning`
+→ bridged as `task:terminate_warning` → `<Warnings/>`, a fixed bottom-right
+dismissible strip mounted in App root. Dismiss is the only action: the task
+is already deleted, the machine is the user's infrastructure to check.
+
+Bites:
+- **"Never fails" and "reports failure" are compatible** — the signature
+  moved from `()` to `Option<String>` without violating the ADR: teardown
+  still continues unconditionally, the Option is advice, not control flow.
+- The warning must outlive its task: by teardown time the task row is going,
+  so nothing task-scoped can host the message — hence an app-level strip,
+  not a task-view banner.
+- `EventBus` is a trait — `use fartcode_core::events::EventBus` is required
+  at the send site even though the field type is `Arc<BroadcastEventBus>`.
+- Component subscribes itself (SshConnections pattern) — no store slice; a
+  dismissed warning is GONE, which is correct for advice with no action.
+
+Next per the agreed order: E12-09 SSH port-forward tunnels (shared E6-04).
+
 ## #99 Host key verification LANDED (2026-08-11)
 
 `fartcode-ssh/src/known_hosts.rs` closes the E12-01 ponytail

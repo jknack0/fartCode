@@ -53,6 +53,13 @@ pub enum InternalEvent {
     TaskDeleted {
         id: String,
     },
+    /// A BYOI terminate script failed or could not run — the provisioned
+    /// machine MAY STILL BE RUNNING (and billed). Teardown continued;
+    /// this is the user-facing signal ADR-0044 deferred to the UI.
+    ByoiTerminateWarning {
+        task_id: String,
+        message: String,
+    },
 
     // Line comments (E4-10, ARCHITECTURE.md §14)
     CommentCreated {

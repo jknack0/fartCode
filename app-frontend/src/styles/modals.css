@@ -299,3 +299,44 @@
   padding: 3px 8px;
   color: var(--meta);
 }
+
+/* -- app-level warning strip (E12-10 / ADR-0044) --------------------------- */
+
+.fc-warnings {
+  position: fixed;
+  bottom: 12px;
+  right: 12px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 420px;
+}
+.fc-warning {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--fc-bad-text);
+  border-radius: 6px;
+  background: var(--bg, #111);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--fc-bad-text);
+}
+.fc-warning-text {
+  text-wrap: pretty;
+}
+.fc-warning button {
+  border: 0;
+  background: none;
+  color: var(--meta);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fc-warning button:hover {
+  color: var(--text-card);
+}
