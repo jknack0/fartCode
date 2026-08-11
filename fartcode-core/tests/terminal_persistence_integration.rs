@@ -353,6 +353,7 @@ fn boot_rehydrator_walks_projects_tasks_conversations() {
         false,
         Arc::new(NoopRemoteRehydrate),
         None,
+        None,
     );
 
     let summary = rehydrator.rehydrate_all().unwrap();

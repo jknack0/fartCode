@@ -226,6 +226,8 @@ pub struct RemoteTarget {
     pub connection_id: String,
     /// Absolute path of the workspace on the remote host.
     pub path: String,
+    /// `workspaces.id` — exported to the agent as `REMOTE_WORKSPACE_ID`.
+    pub workspace_id: String,
 }
 
 /// Resolves a task's remote workspace, if any.
@@ -239,19 +241,20 @@ pub fn remote_target_for_task(db: &dyn Db, task_id: &str) -> Result<Option<Remot
         .conn()
         .lock()
         .map_err(|_| Error::Internal("db connection mutex poisoned".into()))?;
-    let row: Option<(Option<String>, Option<String>)> = conn
+    let row: Option<(Option<String>, Option<String>, String)> = conn
         .query_row(
-            "SELECT w.ssh_connection_id, w.path
+            "SELECT w.ssh_connection_id, w.path, w.id
                FROM tasks t JOIN workspaces w ON w.id = t.workspace_id
               WHERE t.id = ?1 AND w.location = 'remote'",
             [task_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?;
     match row {
-        Some((Some(connection_id), Some(path))) => Ok(Some(RemoteTarget {
+        Some((Some(connection_id), Some(path), workspace_id)) => Ok(Some(RemoteTarget {
             connection_id,
             path,
+            workspace_id,
         })),
         // A remote workspace with no connection is unusable, not a local
         // fallback — falling back would silently run the agent on this

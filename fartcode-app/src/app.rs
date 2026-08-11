@@ -50,6 +50,9 @@ pub struct App {
     pub ssh_connections: Arc<SshConnectionStore>,
     /// E12-04 SSH-backed projects (create/clone + remote worktrees).
     pub remote_projects: Arc<RemoteProjectStore>,
+    /// E12-05 remote PTY routing (one SSH manager per connection), shared by
+    /// boot rehydration and the terminal manager.
+    pub remote_pty: Arc<crate::remote_pty::RemotePtyRegistry>,
     /// E4-01 workspace file+git watcher (registered via `watchers.rs`).
     pub fs_watch: Arc<FsWatchService>,
     /// E4-10 diff line comments (§14).
@@ -92,6 +95,14 @@ impl App {
         let provider_accounts = Arc::new(ProviderAccountStore::new(db.clone()));
         let ssh_connections = Arc::new(SshConnectionStore::new(db.clone()));
         let remote_projects = Arc::new(RemoteProjectStore::new(db.clone(), event_bus.clone()));
+        // E12-05: remote-workspace tasks spawn their PTYs on the SSH host.
+        // russh is async and the PTY trait is blocking, so the registry needs
+        // a runtime handle; Tauri's async runtime is the app's only one.
+        let remote_pty = Arc::new(crate::remote_pty::RemotePtyRegistry::new(
+            db.clone(),
+            ssh_connections.clone(),
+            tauri::async_runtime::handle().inner().clone(),
+        ));
 
         // E2-09: one registry shared by boot rehydration (launches register)
         // and task deletion (cancel + reap).
@@ -118,6 +129,7 @@ impl App {
             false, // auto-approve defaults off on boot
             Arc::new(NoopRemoteRehydrate),
             Some(sessions.clone()),
+            Some(remote_pty.clone()),
         );
 
         // E2-09 task deletion/teardown.
@@ -188,6 +200,7 @@ impl App {
             provider_accounts,
             ssh_connections,
             remote_projects,
+            remote_pty,
             fs_watch,
             line_comments,
             pr_sync,

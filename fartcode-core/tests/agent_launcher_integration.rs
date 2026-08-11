@@ -341,3 +341,142 @@ fn missing_binary_errors_typed() {
     assert!(matches!(err, Error::AgentNotFound(_)), "{err:?}");
     drop(guard);
 }
+
+// ── E12-05: remote launches ────────────────────────────────────
+
+/// (command, cwd, env) recorded per spawn.
+type SpawnRecord = (String, PathBuf, Vec<(String, String)>);
+
+/// Records what the launcher asked for instead of spawning anything: the
+/// remote transport is `fartcode-ssh`'s job, the ROUTING decision is this
+/// crate's, and only the latter is testable without a host.
+#[derive(Default)]
+struct RecordingPty {
+    spawns: Mutex<Vec<SpawnRecord>>,
+}
+
+struct InstantExit;
+impl fartcode_core::terminals::pty::PtyHandle for InstantExit {
+    fn write(&mut self, _data: &str) -> Result<(), Error> {
+        Ok(())
+    }
+    fn try_read(&mut self, _buf: &mut Vec<u8>) -> Result<bool, Error> {
+        Ok(false)
+    }
+    fn wait_exit(
+        &mut self,
+        _timeout: std::time::Duration,
+    ) -> Result<fartcode_core::terminals::pty::PtyExit, Error> {
+        Ok(fartcode_core::terminals::pty::PtyExit {
+            exit_code: Some(0),
+            signal: None,
+        })
+    }
+    fn resize(&mut self, _cols: u16, _rows: u16) -> Result<(), Error> {
+        Ok(())
+    }
+    fn try_wait_exit(&mut self) -> Result<Option<fartcode_core::terminals::pty::PtyExit>, Error> {
+        Ok(Some(fartcode_core::terminals::pty::PtyExit {
+            exit_code: Some(0),
+            signal: None,
+        }))
+    }
+    fn flush(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+    fn kill(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+impl fartcode_core::terminals::pty::PtyManager for RecordingPty {
+    fn spawn(
+        &self,
+        cmd: &str,
+        _args: &[String],
+        cwd: &Path,
+        env: &[(String, String)],
+        _size: fartcode_core::terminals::pty::PtySize,
+        _policy: fartcode_core::terminals::pty::EnvPolicy,
+        _remove: &[String],
+    ) -> Result<Box<dyn fartcode_core::terminals::pty::PtyHandle>, Error> {
+        self.spawns
+            .lock()
+            .unwrap()
+            .push((cmd.to_string(), cwd.to_path_buf(), env.to_vec()));
+        Ok(Box::new(InstantExit))
+    }
+}
+
+struct FakeRoute {
+    pty: Arc<RecordingPty>,
+    workspace_id: String,
+}
+
+impl fartcode_core::terminals::pty::RemotePtyLookup for FakeRoute {
+    fn resolve(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<fartcode_core::terminals::pty::RemotePtyRoute>, Error> {
+        // Only the remote task routes remotely — everything else stays local.
+        Ok((task_id == "task-1").then(|| {
+            (
+                self.pty.clone() as Arc<dyn fartcode_core::terminals::pty::PtyManager>,
+                self.workspace_id.clone(),
+            )
+        }))
+    }
+}
+
+#[test]
+fn remote_tasks_launch_on_the_remote_pty_with_a_workspace_id_and_no_local_agent_socket() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let bin_dir = tempfile::tempdir().unwrap();
+    write_fake_goose(bin_dir.path(), "0");
+    let path = std::env::var("PATH").unwrap_or_default();
+    let _guard = EnvGuard::set(
+        "PATH",
+        &format!("{}:{}", bin_dir.path().to_string_lossy(), path),
+    );
+    // A local agent socket that must NOT travel to the remote host.
+    let _sock = EnvGuard::set("SSH_AUTH_SOCK", "/tmp/local-agent.sock");
+
+    let db = SqliteDb::init_in_memory().unwrap();
+    let bus = Arc::new(BroadcastEventBus::new(64));
+    let recording = Arc::new(RecordingPty::default());
+    let launcher = AgentLauncher::new(
+        Arc::new(PortablePtyManager),
+        Arc::new(HostDependencyStore::new(
+            db.clone(),
+            Arc::new(fartcode_core::dependencies::ProcessInstallRunner),
+        )),
+        bus.clone(),
+    )
+    .with_remote_pty(Arc::new(FakeRoute {
+        pty: recording.clone(),
+        workspace_id: "ws-remote-1".into(),
+    }));
+
+    let worktree = PathBuf::from("/srv/repos/app/.fartCode/worktrees/seg/feature-x");
+    let ctx = AgentLaunchContext::with_task_env(
+        "goose",
+        "conv-remote",
+        "task-1",
+        "Remote Task",
+        worktree.clone(),
+        Path::new("/srv/repos/app"),
+    );
+    launcher.run(&ctx).unwrap();
+
+    let spawns = recording.spawns.lock().unwrap();
+    assert_eq!(spawns.len(), 1, "the remote pty must be the one used");
+    let (_, cwd, env) = &spawns[0];
+    // AC6: the cwd is the task's REMOTE worktree — a path that does not
+    // exist on this machine, which is why a local spawn had to be ruled out.
+    assert_eq!(cwd, &worktree);
+    let get = |key: &str| env.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+    // AC7: the workspace id travels, the local agent socket does not.
+    assert_eq!(get("REMOTE_WORKSPACE_ID").as_deref(), Some("ws-remote-1"));
+    assert_eq!(get("SSH_AUTH_SOCK"), None);
+    assert_eq!(get("FARTCODE_TASK_ID").as_deref(), Some("task-1"));
+}

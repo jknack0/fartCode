@@ -10,13 +10,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use fartcode_core::db::Db;
-use fartcode_core::projects::remote::remote_target_for_task;
+use fartcode_core::projects::remote::{remote_target_for_task, RemoteTarget};
 use fartcode_core::ssh_connections::SshConnectionStore;
 use fartcode_core::terminals::pty::PtyManager;
 use fartcode_core::Error;
 use fartcode_ssh::host::connect_profile;
 use fartcode_ssh::pty::SshPtyManager;
 use parking_lot::Mutex;
+
+/// A resolved remote route: which host manager to spawn on, and where.
+pub type RemoteRoute = (Arc<dyn PtyManager>, RemoteTarget);
 
 /// Lazily-connected remote PTY managers, keyed by connection id.
 pub struct RemotePtyRegistry {
@@ -40,15 +43,17 @@ impl RemotePtyRegistry {
         }
     }
 
-    /// The PTY manager for `task_id`, or `None` when the task is local.
+    /// The PTY manager and remote workspace for `task_id`, or `None` when the
+    /// task is local.
     ///
     /// `Err` means "this task IS remote and the host is unreachable" — never
     /// a silent fall back to the local machine.
-    pub fn manager_for_task(&self, task_id: &str) -> Result<Option<Arc<dyn PtyManager>>, Error> {
+    pub fn route_for_task(&self, task_id: &str) -> Result<Option<RemoteRoute>, Error> {
         let Some(target) = remote_target_for_task(self.db.as_ref(), task_id)? else {
             return Ok(None);
         };
-        Ok(Some(self.manager_for_connection(&target.connection_id)?))
+        let manager = self.manager_for_connection(&target.connection_id)?;
+        Ok(Some((manager, target)))
     }
 
     fn manager_for_connection(&self, connection_id: &str) -> Result<Arc<dyn PtyManager>, Error> {
@@ -81,5 +86,16 @@ impl RemotePtyRegistry {
     /// The next open reconnects.
     pub fn forget(&self, connection_id: &str) {
         self.managers.lock().remove(connection_id);
+    }
+}
+
+impl fartcode_core::terminals::pty::RemotePtyLookup for RemotePtyRegistry {
+    fn resolve(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<fartcode_core::terminals::pty::RemotePtyRoute>, Error> {
+        Ok(self
+            .route_for_task(task_id)?
+            .map(|(manager, target)| (manager, target.workspace_id)))
     }
 }

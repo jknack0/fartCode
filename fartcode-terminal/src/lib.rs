@@ -269,6 +269,23 @@ mod tests {
         }
     }
 
+    /// Reads a file the PTY child writes, tolerating scheduler lag: under a
+    /// loaded full-workspace run the child can still be flushing when
+    /// `wait_exit` returns its timeout, and an immediate read then fails on
+    /// timing rather than on behavior.
+    fn read_probe(path: &std::path::Path) -> String {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Ok(contents) = std::fs::read_to_string(path) {
+                return contents;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("probe file never appeared: {}", path.display());
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
     /// E2-06 security regression: `AllowlistedOnly` must strip the parent env
     /// (the allowlist is cosmetic otherwise); `Inherit` keeps it (lifecycle
     /// parity).
@@ -296,7 +313,7 @@ mod tests {
         let _ = h.wait_exit(Duration::from_secs(10));
         let _ = h.flush();
         assert_eq!(
-            std::fs::read_to_string(tmp.path().join("probe.txt")).unwrap(),
+            read_probe(&tmp.path().join("probe.txt")),
             "secret-value",
             "Inherit must pass the parent env through"
         );
@@ -319,7 +336,7 @@ mod tests {
         let _ = h2.wait_exit(Duration::from_secs(10));
         let _ = h2.flush();
         assert_eq!(
-            std::fs::read_to_string(tmp.path().join("probe2.txt")).unwrap(),
+            read_probe(&tmp.path().join("probe2.txt")),
             "",
             "AllowlistedOnly must strip the parent env"
         );

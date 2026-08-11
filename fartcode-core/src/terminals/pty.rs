@@ -61,6 +61,22 @@ pub trait PtyHandle: Send {
     fn kill(&mut self) -> Result<(), Error>;
 }
 
+/// A remote launch route: the host's PTY manager plus the `workspaces.id`
+/// the task runs in (exported to the agent as `REMOTE_WORKSPACE_ID`).
+pub type RemotePtyRoute = (std::sync::Arc<dyn PtyManager>, String);
+
+/// Resolves the remote PTY manager for a task (E12-05).
+///
+/// Lives here so `fartcode-core` services (terminals, the agent launcher) can
+/// route to an SSH host without depending on `fartcode-ssh`; the
+/// implementation is `fartcode_app::remote_pty::RemotePtyRegistry`.
+pub trait RemotePtyLookup: Send + Sync {
+    /// `Some((manager, workspace_id))` when the task's workspace is remote,
+    /// `None` when it is local. An `Err` means the task IS remote and the
+    /// host could not be reached — callers must not fall back to local.
+    fn resolve(&self, task_id: &str) -> Result<Option<RemotePtyRoute>, Error>;
+}
+
 /// How the child's env is built (E2-06 security: the agent allowlist is
 /// only meaningful if the child does NOT inherit the parent env).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

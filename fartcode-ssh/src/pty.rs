@@ -40,12 +40,22 @@ pub fn remote_launch_line(
     env: &[(String, String)],
     policy: EnvPolicy,
     remove: &[String],
+    preserve: &[&str],
 ) -> String {
     let mut parts: Vec<String> = vec!["exec".into(), "env".into()];
     if policy == EnvPolicy::AllowlistedOnly {
         parts.push("-i".into());
         if !env.iter().any(|(k, _)| k == "TERM") {
             parts.push(single_quote("TERM=xterm-256color"));
+        }
+        // `env -i` would drop variables the REMOTE shell owns — the
+        // forwarded agent socket is the one that matters (its path is
+        // chosen by the remote sshd, so we cannot pass it as a literal).
+        // `VAR="$VAR"` is deliberately expanded by the remote shell; the
+        // name is a fixed ASCII identifier, never user input.
+        for name in preserve {
+            debug_assert!(name.chars().all(|c| c.is_ascii_uppercase() || c == '_'));
+            parts.push(format!("{name}=\"${name}\""));
         }
     }
     for var in remove {
@@ -200,7 +210,20 @@ impl PtyManager for SshPtyManager {
         env_policy: EnvPolicy,
         remove: &[String],
     ) -> Result<Box<dyn PtyHandle>, Error> {
-        let command = remote_launch_line(cmd, args, cwd, env, env_policy, remove);
+        // A local `SSH_AUTH_SOCK` is meaningless on the remote host; the
+        // forwarded one (when the profile enabled ForwardAgent) is preserved
+        // from the remote shell instead.
+        let env: Vec<(String, String)> = env
+            .iter()
+            .filter(|(k, _)| k != "SSH_AUTH_SOCK")
+            .cloned()
+            .collect();
+        let preserve: &[&str] = if self.client.params().forward_agent {
+            &["SSH_AUTH_SOCK"]
+        } else {
+            &[]
+        };
+        let command = remote_launch_line(cmd, args, cwd, &env, env_policy, remove, preserve);
         let client = self.client.clone();
         let cols = u32::from(size.cols.max(2));
         let rows = u32::from(size.rows.max(1));
@@ -308,6 +331,7 @@ mod tests {
             &pairs(&[("REMOTE_WORKSPACE_ID", "w1")]),
             EnvPolicy::AllowlistedOnly,
             &["ANTHROPIC_API_KEY".to_string()],
+            &[],
         );
         assert_eq!(
             line,
@@ -325,6 +349,7 @@ mod tests {
             &pairs(&[("FOO", "bar")]),
             EnvPolicy::Inherit,
             &[],
+            &[],
         );
         assert_eq!(line, "cd '/srv/repo' && exec env 'FOO=bar' 'bash'");
     }
@@ -338,6 +363,7 @@ mod tests {
             &pairs(&[("X", "'; rm -rf / #")]),
             EnvPolicy::AllowlistedOnly,
             &[],
+            &[],
         );
         // The only unquoted shell syntax in the line is the `cd ... &&` and
         // the `env` flags this function itself emits.
@@ -348,5 +374,35 @@ mod tests {
         // Each hostile payload survives as one quoted element.
         assert!(line.contains(&single_quote("X='; rm -rf / #")));
         assert!(line.contains(&single_quote("--flag=a b")));
+    }
+
+    #[test]
+    fn a_forwarded_agent_socket_comes_from_the_remote_shell() {
+        // With ForwardAgent the remote sshd picks the socket path, so the
+        // launch line must READ it there — a literal from this machine would
+        // point at a socket that does not exist on the host.
+        let line = remote_launch_line(
+            "claude",
+            &[],
+            Path::new("/srv/repo"),
+            &pairs(&[]),
+            EnvPolicy::AllowlistedOnly,
+            &[],
+            &["SSH_AUTH_SOCK"],
+        );
+        assert!(line.contains("SSH_AUTH_SOCK=\"$SSH_AUTH_SOCK\""));
+
+        // Without forwarding the variable is simply absent — `env -i` means
+        // the agent sees no socket at all rather than a stale one.
+        let plain = remote_launch_line(
+            "claude",
+            &[],
+            Path::new("/srv/repo"),
+            &pairs(&[]),
+            EnvPolicy::AllowlistedOnly,
+            &[],
+            &[],
+        );
+        assert!(!plain.contains("SSH_AUTH_SOCK"));
     }
 }

@@ -24,7 +24,7 @@ use crate::events::{BroadcastEventBus, EventBus, InternalEvent};
 use crate::projects::ProjectStore;
 use crate::tasks::TaskStore;
 use crate::terminals::lifecycle::task_env;
-use crate::terminals::pty::{EnvPolicy, PtyHandle, PtyManager, PtySize};
+use crate::terminals::pty::{EnvPolicy, PtyHandle, PtyManager, PtySize, RemotePtyLookup};
 use crate::Error;
 use rusqlite::OptionalExtension;
 
@@ -127,6 +127,8 @@ pub struct AgentLauncher {
     /// When set, launches with a `pty_session_id` register themselves so
     /// task deletion can cancel + reap them (E2-09).
     sessions: Option<Arc<super::sessions::SessionRegistry>>,
+    /// E12-05: routes launches for remote-workspace tasks to an SSH PTY.
+    remote: Option<Arc<dyn RemotePtyLookup>>,
 }
 
 impl AgentLauncher {
@@ -141,7 +143,15 @@ impl AgentLauncher {
             events,
             conversations: None,
             sessions: None,
+            remote: None,
         }
+    }
+
+    /// Opts into remote launches (E12-05): a task whose workspace lives on an
+    /// SSH host gets its agent spawned there instead of on this machine.
+    pub fn with_remote_pty(mut self, remote: Arc<dyn RemotePtyLookup>) -> Self {
+        self.remote = Some(remote);
+        self
     }
 
     /// Opts into session-id persistence (E2-07).
@@ -279,6 +289,33 @@ impl AgentLauncher {
                 .map(|(p, i, n, t)| (p.as_str(), i.as_str(), n.as_str(), t.as_str())),
         );
 
+        // E12-05: the task's workspace decides where the agent runs. The
+        // task id travels in the E1-06 env contract, so no new field is
+        // needed on every construction site of the context.
+        let task_id = ctx
+            .task_env
+            .iter()
+            .find(|(k, _)| k == "FARTCODE_TASK_ID")
+            .map(|(_, v)| v.clone());
+        let remote = match (&self.remote, &task_id) {
+            (Some(lookup), Some(task_id)) => lookup.resolve(task_id)?,
+            _ => None,
+        };
+        if let Some((_, workspace_id)) = &remote {
+            env.insert("REMOTE_WORKSPACE_ID".into(), workspace_id.clone());
+            // `build_agent_env` injects THIS machine's agent socket. On a
+            // remote host that path does not exist, and shipping it would
+            // point the agent at nothing (or, worse, at a colliding path).
+            // Agent forwarding is the profile's decision (ForwardAgent), and
+            // the remote sshd sets the forwarded socket itself — see
+            // `fartcode_ssh::pty` for the preserve list.
+            env.remove("SSH_AUTH_SOCK");
+        }
+        let pty: &dyn PtyManager = match &remote {
+            Some((manager, _)) => manager.as_ref(),
+            None => self.pty.as_ref(),
+        };
+
         let mut spawns = 0usize;
         let mut outcome = AgentLaunchOutcome {
             spawns: 0,
@@ -332,7 +369,7 @@ impl AgentLauncher {
             let this_spilled = this_spill;
             let _spill_guard = SpillGuard(&this_spilled);
 
-            let mut handle = self.pty.spawn(
+            let mut handle = pty.spawn(
                 &command.command,
                 &command.args,
                 &ctx.worktree,
@@ -634,11 +671,17 @@ impl Rehydrator {
         default_auto_approve: bool,
         remote: Arc<dyn RemoteRehydrate>,
         sessions: Option<Arc<super::sessions::SessionRegistry>>,
+        // E12-05: routes launches for remote-workspace tasks to an SSH PTY.
+        // `None` keeps every launch local (Phase 0/2 behavior).
+        remote_pty: Option<Arc<dyn RemotePtyLookup>>,
     ) -> Self {
         let mut launcher =
             AgentLauncher::new(pty, deps, events).with_conversation_store(conversations.clone());
         if let Some(reg) = sessions {
             launcher = launcher.with_session_registry(reg);
+        }
+        if let Some(lookup) = remote_pty {
+            launcher = launcher.with_remote_pty(lookup);
         }
         Self {
             launcher: Arc::new(launcher),

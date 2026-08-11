@@ -1081,6 +1081,7 @@ fn main() {
         false,
         Arc::new(NoopRemoteRehydrate),
         None,
+        None,
     );
     // Empty DB -> nothing to resume, no errors.
     let empty_summary = rehydrator.rehydrate_all().unwrap();

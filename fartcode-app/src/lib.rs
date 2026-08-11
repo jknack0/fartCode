@@ -104,17 +104,11 @@ pub fn run() {
             });
             // E2-12: interactive task terminals (needs the window handle for
             // event emission; created here rather than in App::init).
-            // E12-05: remote-workspace tasks spawn their PTYs on the SSH
-            // host. The registry needs a tokio handle to drive russh from
-            // the terminal manager's blocking threads; Tauri's async runtime
-            // is that handle.
-            let remote_pty = Arc::new(crate::remote_pty::RemotePtyRegistry::new(
-                app_state.db.clone(),
-                app_state.ssh_connections.clone(),
-                tauri::async_runtime::handle().inner().clone(),
-            ));
+            // E12-05: the same registry boot rehydration uses, so a task's
+            // terminal and its agent share one SSH connection per host.
             let terminal_manager = Arc::new(
-                terminals::TerminalManager::new(app.handle().clone()).with_remote(remote_pty),
+                terminals::TerminalManager::new(app.handle().clone())
+                    .with_remote(app_state.remote_pty.clone()),
             );
             app.manage(terminal_manager);
             // E2-11-4/5: ACP runtime — owns the SessionManager, spawns the

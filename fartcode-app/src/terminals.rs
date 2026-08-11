@@ -253,10 +253,11 @@ impl<R: tauri::Runtime> TerminalManager<R> {
         // E12-05: the workspace row decides the transport. An error here is
         // "remote task, unreachable host" — surfaced, never downgraded to a
         // local spawn against a path that does not exist on this machine.
-        let remote_pty = match &self.remote {
-            Some(registry) => registry.manager_for_task(task_id)?,
+        let remote_route = match &self.remote {
+            Some(registry) => registry.route_for_task(task_id)?,
             None => None,
         };
+        let remote_pty = remote_route.as_ref().map(|(manager, _)| manager.clone());
         // tmux durability resolves a binary on THIS machine (ADR-0025), so it
         // cannot describe a remote session — remote tmux is E12-05's tmux
         // criterion, still open.
@@ -304,6 +305,18 @@ impl<R: tauri::Runtime> TerminalManager<R> {
         let pty: &dyn PtyManager = match remote_pty.as_deref() {
             Some(manager) => manager,
             None => &self.pty,
+        };
+        // E12-05 AC7: the agent/script learns which remote workspace it is
+        // in. Local terminals never see the variable.
+        let spawn_env: Vec<(String, String)> = match &remote_route {
+            Some((_, target)) => spawn_env
+                .into_iter()
+                .chain([(
+                    "REMOTE_WORKSPACE_ID".to_string(),
+                    target.workspace_id.clone(),
+                )])
+                .collect(),
+            None => spawn_env,
         };
         let spawn_result = pty.spawn(
             &spawn_cmd,
