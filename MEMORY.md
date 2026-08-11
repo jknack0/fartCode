@@ -1,4 +1,31 @@
 # MEMORY.md — fartCode
+## #98 New-repo flow LANDED (2026-08-11)
+
+E12-04's third leg. Core: `RemoteProjectStore::create_remote_new` —
+slugify via `safe_path_segment(name, "repo")`, refuse an occupied target,
+`git init --initial-branch main`, then delegate to `create_remote` (whose
+`rev-parse --show-toplevel` check passes on an empty repo, and whose base-ref
+resolution already falls back to the bare branch when there is no remote).
+Command: `new_remote_project(connection_id, name)` — destination is
+`remote_projects_dir` per profile, like clone. UI: the dialog's `clone`
+boolean became `kind: pick | clone | new`; `new repo` pill is REMOTE-ONLY
+and switching to the local tab mid-new falls back to pick (no dead submit).
+
+Bites:
+- **Anchor-append editing bit me twice today**: inserting a new test "before"
+  an anchor by `old → old + new` where `new` re-quotes the anchor duplicated
+  the fn header → unclosed-delimiter at a line far from the mistake. Insert
+  AFTER a block, or replace the full block.
+- FakeHost needed a `git init --initial-branch` match arm — its `_ => ok`
+  default makes an unmodeled git command an invisible no-op, so the follow-up
+  `create_remote` fails "not a git repository", which is at least loud.
+- `safe_path_segment` keeps spaces ("my app" stays "my app") — it strips
+  path-hostile chars, it does not kebab-case.
+- Local "New" is deliberately absent: PRD E1-03 is add/clone/connect; a
+  local init flow is a different ticket if it is ever wanted.
+- Something in the shell pipeline summarizes cargo output ("PASS: 0 passed")
+  — write to a file and `pi.read` the log for the real result.
+
 ## #97 Clone flows UI LANDED (2026-08-11)
 
 E12-04 shipped Pick/Clone/New commands; #95 wired Pick. Now Clone:

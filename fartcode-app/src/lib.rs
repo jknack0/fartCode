@@ -148,6 +148,7 @@ pub fn run() {
             commands::remote_projects::remote_browse,
             commands::remote_projects::create_remote_project,
             commands::remote_projects::clone_remote_project,
+            commands::remote_projects::new_remote_project,
             commands::remote_projects::ssh_connect,
             commands::remote_projects::ssh_disconnect,
             commands::remote_projects::ssh_connection_state,

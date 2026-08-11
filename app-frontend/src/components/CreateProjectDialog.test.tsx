@@ -14,6 +14,7 @@ vi.mock("../lib/tauri", () => ({
   createRemoteProject: vi.fn(),
   cloneProject: vi.fn(),
   cloneRemoteProject: vi.fn(),
+  newRemoteProject: vi.fn(),
   onFartcodeEvent: vi.fn(() => Promise.resolve(() => {})),
 }));
 
@@ -136,5 +137,42 @@ describe("CreateProjectDialog clone url", () => {
         "https://github.com/acme/api",
       ),
     );
+  });
+});
+
+describe("CreateProjectDialog new repo", () => {
+  it("is remote-only and inits on the host", async () => {
+    const newRemoteProject = vi.fn().mockResolvedValue(undefined);
+    useSidebar.setState({ newRemoteProject });
+    const onClose = vi.fn();
+    render(<CreateProjectDialog onClose={onClose} />);
+
+    // Local tab: the pill does not exist.
+    expect(screen.queryByText("new repo")).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: "remote · ssh" }));
+    await waitFor(() => expect(vi.mocked(sshConnectionList)).toHaveBeenCalled());
+    fireEvent.click(screen.getByText("new repo"));
+    fireEvent.change(screen.getByLabelText("New repository name"), {
+      target: { value: "my app" },
+    });
+    fireEvent.click(screen.getByText("create on host"));
+    await waitFor(() =>
+      expect(newRemoteProject).toHaveBeenCalledWith("c1", "my app"),
+    );
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("falls back to pick when switching to the local tab mid-new", async () => {
+    render(<CreateProjectDialog onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("tab", { name: "remote · ssh" }));
+    await waitFor(() => expect(vi.mocked(sshConnectionList)).toHaveBeenCalled());
+    fireEvent.click(screen.getByText("new repo"));
+    expect(screen.getByLabelText("New repository name")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("tab", { name: "local" }));
+    // Not a dead "new" form pointing at no host — the local path input.
+    expect(screen.queryByLabelText("New repository name")).toBeNull();
+    expect(screen.getByLabelText("Path to a local git repository")).toBeTruthy();
   });
 });

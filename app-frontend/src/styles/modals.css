@@ -266,6 +266,11 @@
 .fc-src-toggle .fc-clone-pill {
   margin-left: auto;
 }
+.fc-src-toggle .fc-clone-pill.on,
+.fc-src-toggle .fc-new-pill.on {
+  color: var(--text-card);
+  border-color: rgba(255, 255, 255, 0.22);
+}
 
 .fc-remote-list {
   list-style: none;

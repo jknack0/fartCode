@@ -155,6 +155,12 @@ impl RemoteHost for FakeHost {
                 s.remotes.insert(target.to_string(), "origin".into());
                 out(0, "")
             }
+            ["git", "init", "--initial-branch", branch, target] => {
+                s.dirs.insert(target.to_string());
+                s.repos.insert(target.to_string());
+                s.branches.insert(target.to_string(), branch.to_string());
+                out(0, "")
+            }
             ["git", "-C", _repo, "worktree", "add", "-B", branch, path] => {
                 s.dirs.insert(path.to_string());
                 s.branches.insert(path.to_string(), branch.to_string());
@@ -312,6 +318,42 @@ async fn a_missing_path_and_a_non_repo_are_both_rejected_before_insert() {
         "{not_repo}"
     );
     assert_eq!(fx.project_count(), 0, "no row may survive a failed create");
+}
+
+#[tokio::test]
+async fn new_inits_an_empty_repo_and_adds_it() {
+    let fx = Fixture::new();
+    let host = FakeHost::default();
+
+    let project = fx
+        .store
+        .create_remote_new(&host, CONN, "my app", "/home/dev/fartCode")
+        .await
+        .unwrap();
+
+    // Slugified into one segment under the projects dir.
+    assert_eq!(project.path.to_string_lossy(), "/home/dev/fartCode/my app");
+    // No remote yet: the base ref is the bare initial branch.
+    assert_eq!(project.base_ref(), "main");
+    assert!(host
+        .commands()
+        .iter()
+        .any(|c| c.first().map(String::as_str) == Some("git") && c.get(1).map(String::as_str) == Some("init")));
+
+    // An occupied target is refused, and the empty name never reaches disk.
+    let occupied = fx
+        .store
+        .create_remote_new(&host, "conn-b", "my app", "/home/dev/fartCode")
+        .await
+        .unwrap_err();
+    assert!(occupied.to_string().contains("already exists"), "{occupied}");
+    let empty = fx
+        .store
+        .create_remote_new(&host, CONN, "   ", "/home/dev/fartCode")
+        .await
+        .unwrap_err();
+    assert!(empty.to_string().contains("name is empty"), "{empty}");
+    assert_eq!(fx.project_count(), 1);
 }
 
 #[tokio::test]

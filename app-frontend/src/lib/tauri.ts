@@ -1848,3 +1848,11 @@ export function cloneRemoteProject(
 ): Promise<ProjectDto> {
   return invoke("clone_remote_project", { connectionId, url });
 }
+
+/** Inits a fresh repo named `name` on the remote host, then adds it (E12-04). */
+export function newRemoteProject(
+  connectionId: string,
+  name: string,
+): Promise<ProjectDto> {
+  return invoke("new_remote_project", { connectionId, name });
+}

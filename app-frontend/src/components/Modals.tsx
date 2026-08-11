@@ -50,6 +50,7 @@ export function CreateProjectDialog({ onClose }: { onClose: () => void }) {
   const createRemoteProject = useSidebar((s) => s.createRemoteProject);
   const cloneProjectAction = useSidebar((s) => s.cloneProject);
   const cloneRemoteProjectAction = useSidebar((s) => s.cloneRemoteProject);
+  const newRemoteProjectAction = useSidebar((s) => s.newRemoteProject);
 
   // Remote picker (E12-04): connections from the profile store; the browser
   // walks the host over the POOLED session (`remote_browse`, E12-06).
@@ -59,10 +60,17 @@ export function CreateProjectDialog({ onClose }: { onClose: () => void }) {
   const [entries, setEntries] = useState<RemoteEntryDto[]>([]);
   const [browsing, setBrowsing] = useState(false);
 
-  // Clone-by-URL (FLOWS.md F2 local / E12-04 remote): same tabs, the input
-  // becomes a git URL and the browser is irrelevant.
-  const [clone, setClone] = useState(false);
+  // Pick is the default; clone (both tabs) swaps the input for a git URL,
+  // new (remote only) for a repository name — the browser is irrelevant to
+  // either.
+  const [kind, setKind] = useState<"pick" | "clone" | "new">("pick");
   const [url, setUrl] = useState("");
+  const [repoName, setRepoName] = useState("");
+
+  // `new` has no local meaning — falling back beats a dead submit button.
+  useEffect(() => {
+    if (mode === "local" && kind === "new") setKind("pick");
+  }, [mode, kind]);
 
   // Lazy: the connection list loads the first time the remote tab opens.
   useEffect(() => {
@@ -106,15 +114,24 @@ export function CreateProjectDialog({ onClose }: { onClose: () => void }) {
   }, [mode, connectionId]);
 
   const parent = cwd.replace(/\/[^/]*$/, "") || "/";
-  const target = clone ? url.trim() : mode === "local" ? path.trim() : cwd.trim();
+  const target =
+    kind === "clone"
+      ? url.trim()
+      : kind === "new"
+        ? repoName.trim()
+        : mode === "local"
+          ? path.trim()
+          : cwd.trim();
 
   const submit = async () => {
     if (!target || busy || (mode === "remote" && !connectionId)) return;
     setBusy(true);
     try {
-      if (clone) {
+      if (kind === "clone") {
         if (mode === "local") await cloneProjectAction(target);
         else await cloneRemoteProjectAction(connectionId, target);
+      } else if (kind === "new") {
+        await newRemoteProjectAction(connectionId, target);
       } else if (mode === "local") await createProject(target);
       else await createRemoteProject(connectionId, target);
       onClose();
@@ -153,12 +170,22 @@ export function CreateProjectDialog({ onClose }: { onClose: () => void }) {
           </button>
           <button
             type="button"
-            className={`fc-clone-pill${clone ? " on" : ""}`}
-            aria-pressed={clone}
-            onClick={() => setClone((v) => !v)}
+            className={`fc-clone-pill${kind === "clone" ? " on" : ""}`}
+            aria-pressed={kind === "clone"}
+            onClick={() => setKind((k) => (k === "clone" ? "pick" : "clone"))}
           >
             clone url
           </button>
+          {mode === "remote" && (
+            <button
+              type="button"
+              className={`fc-new-pill${kind === "new" ? " on" : ""}`}
+              aria-pressed={kind === "new"}
+              onClick={() => setKind((k) => (k === "new" ? "pick" : "new"))}
+            >
+              new repo
+            </button>
+          )}
         </div>
         {mode === "remote" && (
           <div className="fc-opt-rows">
@@ -188,7 +215,22 @@ export function CreateProjectDialog({ onClose }: { onClose: () => void }) {
             </div>
           </div>
         )}
-        {clone ? (
+        {kind === "new" ? (
+          <div className="fc-input-row">
+            <span className="fc-input-glyph" aria-hidden>
+              ›
+            </span>
+            <input
+              className="fc-input mono"
+              autoFocus
+              value={repoName}
+              onChange={(e) => setRepoName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void submit()}
+              placeholder="repository name — git init on the host"
+              aria-label="New repository name"
+            />
+          </div>
+        ) : kind === "clone" ? (
           <div className="fc-input-row">
             <span className="fc-input-glyph" aria-hidden>
               ›
@@ -302,13 +344,15 @@ export function CreateProjectDialog({ onClose }: { onClose: () => void }) {
               ) : (
                 <>
                   <span className="fc-key">↵</span>{" "}
-                  {clone
+                  {kind === "clone"
                     ? mode === "local"
                       ? "clone project"
                       : "clone on host"
-                    : mode === "local"
-                      ? "add project"
-                      : "add remote project"}
+                    : kind === "new"
+                      ? "create on host"
+                      : mode === "local"
+                        ? "add project"
+                        : "add remote project"}
                 </>
               )}
             </button>

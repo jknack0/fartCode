@@ -101,6 +101,26 @@ pub async fn clone_remote_project(
         .map_err(|e| e.to_string())
 }
 
+/// Creates a fresh repository on the remote host, then adds it as a project
+/// (the "New" of Pick/Clone/New, E12-04).
+#[tauri::command]
+pub async fn new_remote_project(
+    app: State<'_, Arc<App>>,
+    connection_id: String,
+    name: String,
+) -> Result<ProjectDto, String> {
+    let app = app.inner().clone();
+    let (connection, host) = connect(&app, &connection_id).await?;
+    let dir = remote_projects_dir(&host, &connection)
+        .await
+        .map_err(|e| e.to_string())?;
+    app.remote_projects
+        .create_remote_new(&host, &connection_id, &name, &dir)
+        .await
+        .map(|p| ProjectDto::from(&p))
+        .map_err(|e| e.to_string())
+}
+
 /// Clones `url` into the configured local projects directory (FLOWS.md F2).
 ///
 /// `ProjectStore::create_clone` has existed since E1-03 with no command

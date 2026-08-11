@@ -11,6 +11,7 @@ import {
   createRemoteProject as apiCreateRemoteProject,
   cloneProject as apiCloneProject,
   cloneRemoteProject as apiCloneRemoteProject,
+  newRemoteProject as apiNewRemoteProject,
   deleteProject as apiDeleteProject,
   deleteTask as apiDeleteTask,
   listProjects,
@@ -43,6 +44,8 @@ interface SidebarState {
   cloneProject: (url: string) => Promise<void>;
   /** E12-04 Clone: clone a URL on the SSH host, then add it. */
   cloneRemoteProject: (connectionId: string, url: string) => Promise<void>;
+  /** E12-04 New: init a fresh repo on the SSH host, then add it. */
+  newRemoteProject: (connectionId: string, name: string) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   deleteTask: (projectId: string, taskId: string) => Promise<void>;
   togglePin: (id: string) => Promise<void>;
@@ -183,6 +186,15 @@ export const useSidebar = create<SidebarState>((set, get) => ({
 
   cloneRemoteProject: async (connectionId, url) => {
     const created = await apiCloneRemoteProject(connectionId, url);
+    set((s) => ({
+      projects: [...s.projects, created],
+      selectedProjectId: created.id,
+      selectedTaskId: null,
+    }));
+  },
+
+  newRemoteProject: async (connectionId, name) => {
+    const created = await apiNewRemoteProject(connectionId, name);
     set((s) => ({
       projects: [...s.projects, created],
       selectedProjectId: created.id,

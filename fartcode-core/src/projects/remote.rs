@@ -364,6 +364,44 @@ impl RemoteProjectStore {
         self.create_remote(host, ssh_connection_id, &target).await
     }
 
+    /// Creates a fresh repository named `name` in `projects_dir` on the
+    /// remote, then adds it — the "New" of Pick/Clone/New (E12-04).
+    pub async fn create_remote_new(
+        &self,
+        host: &dyn RemoteHost,
+        ssh_connection_id: &str,
+        name: &str,
+        projects_dir: &str,
+    ) -> Result<Project, Error> {
+        if name.trim().is_empty() {
+            return Err(Error::Internal("repository name is empty".into()));
+        }
+        // Same slugifier the rest of the app uses: one path segment, no
+        // traversal, `repo` when nothing safe survives.
+        let segment = safe_path_segment(name, "repo");
+        let target = remote_join(projects_dir, &segment);
+
+        if let Some(existing) = self.get_by_remote_path(ssh_connection_id, &target)? {
+            return Ok(existing);
+        }
+        if host.stat(&target).await?.is_some() {
+            return Err(Error::Internal(format!(
+                "target already exists: {target}"
+            )));
+        }
+        host.mkdir_all(&target).await?;
+        // `--initial-branch` over a post-init rename; the branch matters
+        // because it becomes the project's base ref (no remote to prefix).
+        run_checked(
+            host,
+            &["git", "init", "--initial-branch", "main", &target],
+            None,
+        )
+        .await?;
+
+        self.create_remote(host, ssh_connection_id, &target).await
+    }
+
     /// Creates (or reuses) the remote worktree for `branch` under the
     /// project's pool. Idempotent: an existing checkout of the branch is
     /// returned as-is.
