@@ -162,6 +162,9 @@ pub struct TerminalSpec<'a> {
 /// `tauri::test::mock_app` (the emit calls are no-ops there).
 pub struct TerminalManager<R: tauri::Runtime = tauri::Wry> {
     pty: PortablePtyManager,
+    /// E12-05: resolves a task's remote PTY manager when its workspace lives
+    /// on an SSH host. `None` in tests and until `with_remote` wires it.
+    remote: Option<Arc<crate::remote_pty::RemotePtyRegistry>>,
     app: tauri::AppHandle<R>,
     terminals: Arc<Mutex<HashMap<String, Arc<Entry>>>>,
     /// Tmux slots allocated per task BY THIS PROCESS (ADR-0025). A restart
@@ -198,10 +201,18 @@ impl<R: tauri::Runtime> TerminalManager<R> {
     pub fn new(app: tauri::AppHandle<R>) -> Self {
         Self {
             pty: PortablePtyManager,
+            remote: None,
             app,
             terminals: Arc::new(Mutex::new(HashMap::new())),
             task_slots: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Enables remote routing (E12-05). Without it every terminal is local,
+    /// which is exactly the Phase-0/2 behavior.
+    pub fn with_remote(mut self, remote: Arc<crate::remote_pty::RemotePtyRegistry>) -> Self {
+        self.remote = Some(remote);
+        self
     }
 
     /// Spawns `spec.program` (with `spec.args`) in `spec.cwd` and starts
@@ -239,9 +250,22 @@ impl<R: tauri::Runtime> TerminalManager<R> {
                 return Ok(existing);
             }
         }
-        let tmux_binary = tmux
+        // E12-05: the workspace row decides the transport. An error here is
+        // "remote task, unreachable host" — surfaced, never downgraded to a
+        // local spawn against a path that does not exist on this machine.
+        let remote_pty = match &self.remote {
+            Some(registry) => registry.manager_for_task(task_id)?,
+            None => None,
+        };
+        // tmux durability resolves a binary on THIS machine (ADR-0025), so it
+        // cannot describe a remote session — remote tmux is E12-05's tmux
+        // criterion, still open.
+        let tmux_binary = (tmux && remote_pty.is_none())
             .then(fartcode_core::pty::tmux::resolve_tmux_binary)
             .flatten();
+        if tmux && remote_pty.is_some() {
+            tracing::debug!(task_id, "remote terminal — tmux durability not yet wired");
+        }
         let mut tmux_session_id: Option<String> = None;
         let (spawn_cmd, spawn_args, spawn_env): (String, Vec<String>, Vec<(String, String)>) =
             match tmux_binary {
@@ -277,7 +301,11 @@ impl<R: tauri::Runtime> TerminalManager<R> {
                     (program.to_string(), args.to_vec(), env.to_vec())
                 }
             };
-        let spawn_result = self.pty.spawn(
+        let pty: &dyn PtyManager = match remote_pty.as_deref() {
+            Some(manager) => manager,
+            None => &self.pty,
+        };
+        let spawn_result = pty.spawn(
             &spawn_cmd,
             &spawn_args,
             cwd,

@@ -12,8 +12,8 @@ use fartcode_core::db::{Db, SqliteDb};
 use fartcode_core::events::{BroadcastEventBus, EventBus, InternalEvent};
 use fartcode_core::projects::provider::repository_workspace_key;
 use fartcode_core::projects::remote::{
-    is_contained, remote_worktree_path, remote_worktree_root, RemoteEntry, RemoteFileKind,
-    RemoteHost, RemoteOutput, RemoteProjectStore,
+    is_contained, remote_target_for_task, remote_worktree_path, remote_worktree_root, RemoteEntry,
+    RemoteFileKind, RemoteHost, RemoteOutput, RemoteProjectStore,
 };
 use fartcode_core::projects::WorkspaceProviderKind;
 use fartcode_core::ssh_connections::{NewSshConnection, SshConnectionStore};
@@ -459,5 +459,75 @@ async fn a_connection_with_remote_projects_cannot_be_deleted() {
     assert!(
         matches!(err, fartcode_core::Error::SshConnectionInUse { .. }),
         "{err}"
+    );
+}
+
+#[tokio::test]
+async fn task_transport_is_decided_by_the_workspace_row() {
+    let fx = Fixture::new();
+    let host = FakeHost::with_repo("/srv/repos/app", Some("origin"), "main");
+    let project = fx
+        .store
+        .create_remote(&host, CONN, "/srv/repos/app")
+        .await
+        .unwrap();
+
+    {
+        let conn = fx.db.conn().lock().unwrap();
+        conn.execute(
+            "INSERT INTO tasks (id, project_id, name, status, workspace_id)
+             VALUES ('t-remote', ?1, 'remote task', 'todo', 'ws-remote')",
+            [&project.id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO workspaces (id, key, type, kind, location, path, ssh_connection_id)
+             VALUES ('ws-remote', 'k1', 'project-ssh', 'worktree', 'remote',
+                     '/srv/repos/app/.fartCode/worktrees/seg/feature-x', ?1)",
+            [CONN],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tasks (id, project_id, name, status, workspace_id)
+             VALUES ('t-local', ?1, 'local task', 'todo', 'ws-local')",
+            [&project.id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO workspaces (id, key, type, kind, location, path)
+             VALUES ('ws-local', 'k2', 'local', 'worktree', 'local', '/tmp/wt')",
+            [],
+        )
+        .unwrap();
+        // Remote row with no connection: unusable, and must NOT read as local.
+        conn.execute(
+            "INSERT INTO tasks (id, project_id, name, status, workspace_id)
+             VALUES ('t-broken', ?1, 'broken task', 'todo', 'ws-broken')",
+            [&project.id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO workspaces (id, key, type, kind, location, path)
+             VALUES ('ws-broken', 'k3', 'project-ssh', 'worktree', 'remote', '/srv/x')",
+            [],
+        )
+        .unwrap();
+    }
+
+    let remote = remote_target_for_task(fx.db.as_ref(), "t-remote")
+        .unwrap()
+        .expect("remote workspace must route remote");
+    assert_eq!(remote.connection_id, CONN);
+    assert!(remote.path.ends_with("/feature-x"));
+
+    assert!(remote_target_for_task(fx.db.as_ref(), "t-local")
+        .unwrap()
+        .is_none());
+    assert!(remote_target_for_task(fx.db.as_ref(), "missing-task")
+        .unwrap()
+        .is_none());
+    assert!(
+        remote_target_for_task(fx.db.as_ref(), "t-broken").is_err(),
+        "a remote workspace without a connection must fail, not fall back to local"
     );
 }

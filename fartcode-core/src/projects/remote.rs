@@ -220,7 +220,50 @@ pub fn remote_worktree_path(project: &Project, branch: &str) -> Result<String, E
     ensure_contained(&root, &remote_join(&root, &segment))
 }
 
-// ── Store ────────────────────────────────────────────────────
+/// Where a task's workspace lives, when it lives on an SSH host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteTarget {
+    pub connection_id: String,
+    /// Absolute path of the workspace on the remote host.
+    pub path: String,
+}
+
+/// Resolves a task's remote workspace, if any.
+///
+/// The **workspace row** decides the transport (E12-04 writes
+/// `location='remote'` + `ssh_connection_id`), not a flag at the call site:
+/// one task, one workspace, one answer for terminals, agents, and lifecycle
+/// scripts alike.
+pub fn remote_target_for_task(db: &dyn Db, task_id: &str) -> Result<Option<RemoteTarget>, Error> {
+    let conn = db
+        .conn()
+        .lock()
+        .map_err(|_| Error::Internal("db connection mutex poisoned".into()))?;
+    let row: Option<(Option<String>, Option<String>)> = conn
+        .query_row(
+            "SELECT w.ssh_connection_id, w.path
+               FROM tasks t JOIN workspaces w ON w.id = t.workspace_id
+              WHERE t.id = ?1 AND w.location = 'remote'",
+            [task_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    match row {
+        Some((Some(connection_id), Some(path))) => Ok(Some(RemoteTarget {
+            connection_id,
+            path,
+        })),
+        // A remote workspace with no connection is unusable, not a local
+        // fallback — falling back would silently run the agent on this
+        // machine against a path that does not exist here.
+        Some(_) => Err(Error::Internal(format!(
+            "task {task_id} has a remote workspace with no connection or path"
+        ))),
+        None => Ok(None),
+    }
+}
+
+// ── Store ───────────────────────────────────────
 
 /// Creates and tears down SSH-backed projects. Mirrors `DbProjectStore`'s
 /// create tail (row + workspace + `project:added`), minus the local-only open
