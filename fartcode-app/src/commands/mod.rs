@@ -18,6 +18,7 @@ pub mod provider_accounts;
 pub mod remote_projects;
 pub mod search;
 pub mod settings;
+pub mod ssh_connections;
 pub mod steps;
 pub mod tasks;
 pub mod telemetry;

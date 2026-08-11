@@ -1071,3 +1071,69 @@
 .fc-onboard button:hover:not(:disabled):not(.primary):not(.danger) {
   background: none;
 }
+
+/* -- SSH connections (E12-06 lifecycle) ---------------------------------- */
+
+/* State rides next to the name as a mono pill. Only two states earn colour:
+ * connected (brand green, the same tag green used elsewhere) and unreachable
+ * (--fc-bad, reserved for "a run ended badly"). Everything transient stays
+ * --meta so a reconnect countdown does not blink for attention. */
+.fc-conn-state {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--meta);
+  margin-left: 8px;
+}
+
+.fc-conn-state.connected {
+  color: #45d68a;
+}
+
+.fc-conn-state.error {
+  color: var(--fc-bad-text);
+}
+
+.fc-conn-target {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--meta);
+  margin-right: 10px;
+}
+
+/* MaxSessions is advice, not a failure: the session is alive and reconnecting
+ * fixes nothing, so this reads as an inset note rather than an error line. */
+.fc-conn-warn {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 14px;
+  padding: 10px 12px;
+  background: var(--card-inset);
+  border-left: 2px solid var(--border-1);
+  border-radius: 2px;
+}
+
+.fc-conn-warn-head {
+  font-size: 12px;
+  color: var(--text-card);
+}
+
+.fc-conn-warn-body {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--foreground-passive);
+}
+
+.fc-conn-warn code,
+.fc-conn-warn-code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--foreground-muted);
+}
+
+.fc-conn-warn-code {
+  padding: 4px 8px;
+  background: var(--background-1);
+  border-radius: 2px;
+  align-self: flex-start;
+}

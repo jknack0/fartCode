@@ -15,6 +15,7 @@ import { ColumnsPane } from "./ColumnsEditor";
 import { MemoryPane } from "./MemoryPane";
 import { ProjectSettingsPane } from "./ProjectSettings";
 import ProviderAccounts from "./ProviderAccounts";
+import SshConnections from "./SshConnections";
 
 const SCOPE_LABELS: Record<string, string> = {
   global: "Everywhere",
@@ -196,11 +197,13 @@ export default function SettingsModal({
   const title =
     section === "app"
       ? "App"
-      : section === "keys"
-        ? "Keys"
-        : childLabel
-          ? `${childLabel} · ${activeProject?.name ?? ""}`
-          : activeProject?.name ?? "";
+      : section === "connections"
+        ? "Connections"
+        : section === "keys"
+          ? "Keys"
+          : childLabel
+            ? `${childLabel} · ${activeProject?.name ?? ""}`
+            : activeProject?.name ?? "";
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -217,6 +220,12 @@ export default function SettingsModal({
             onClick={() => setSection("keys")}
           >
             Keys
+          </button>
+          <button
+            className={`fc-set-nav-row${section === "connections" ? " active" : ""}`}
+            onClick={() => setSection("connections")}
+          >
+            Connections
           </button>
           {projects.map((p) => {
             // Children render only under the expanded (active) project — the
@@ -266,6 +275,12 @@ export default function SettingsModal({
           {section === "keys" && (
             <div className="fc-set-pane-body">
               <KeysPane />
+            </div>
+          )}
+          {section === "connections" && (
+            <div className="fc-set-pane-body">
+              <SshConnections />
+              <div className="fc-set-spacer" />
             </div>
           )}
           {activeProject &&

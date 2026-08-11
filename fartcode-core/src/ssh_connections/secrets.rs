@@ -35,6 +35,16 @@ pub fn load_secret(connection_id: &str) -> Result<String, Error> {
     })
 }
 
+/// Whether a secret exists for this connection.
+///
+/// The UI needs to tell “no password saved” from “one is stored, leave the
+/// field blank to keep it”. Returns a boolean and never the secret; a keyring
+/// that cannot be read at all reads as “none”, the same way a missing entry
+/// does — both mean “the user will have to type it”.
+pub fn has_secret(connection_id: &str) -> bool {
+    load_secret(connection_id).is_ok()
+}
+
 /// Deletes the secret. Missing entries are OK (delete is idempotent).
 pub fn delete_secret(connection_id: &str) -> Result<(), Error> {
     match entry(connection_id)?.delete_credential() {

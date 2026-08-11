@@ -29,6 +29,18 @@ export interface TaskDto {
 }
 
 export type FartcodeEvent =
+  // E12-06 connection lifecycle. `attempt`/`delayMs` ride only the
+  // reconnecting frames, so a row can say "retrying in 5s (3/5)" without
+  // keeping its own copy of the backoff ladder.
+  | {
+      type: "ssh:state_changed";
+      connectionId: string;
+      state: "connecting" | "connected" | "reconnecting" | "disconnected" | "error";
+      attempt: number | null;
+      delayMs: number | null;
+      error: string | null;
+    }
+  | { type: "ssh:health_changed"; connectionId: string; degraded: boolean }
   | { type: "project:added"; id: string; name: string; path: string }
   | { type: "project:deleted"; id: string }
   | { type: "task:created"; id: string; projectId: string; name: string }
@@ -1715,4 +1727,86 @@ export function telemetryMemoryValue(
   windowDays?: number,
 ): Promise<MemoryValueDto> {
   return invoke("telemetry_memory_value", { projectId, windowDays });
+}
+
+// -- SSH connections (E12-03/06/10) ------------------------------------------
+
+/** A saved SSH profile. Never carries secret material. */
+export interface SshConnectionDto {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  authType: "agent" | "password" | "key-file";
+  privateKeyPath: string | null;
+  useAgent: boolean;
+  alias: string | null;
+  proxyJump: string | null;
+  forwardAgent: boolean;
+  projectsDirectory: string | null;
+  /** A keyring secret exists — leave the password field blank to keep it. */
+  hasSecret: boolean;
+}
+
+export interface SshConnectionInput {
+  id?: string | null;
+  name: string;
+  host: string;
+  port?: number | null;
+  username: string;
+  authType: string;
+  privateKeyPath?: string | null;
+  useAgent?: boolean | null;
+  alias?: string | null;
+  proxyJump?: string | null;
+  forwardAgent?: boolean | null;
+  projectsDirectory?: string | null;
+  /** Blank keeps the stored secret. */
+  secret?: string | null;
+}
+
+/** Lifecycle state of a connection (E12-06). */
+export type SshConnectionState =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "disconnected"
+  | "error";
+
+export interface SshConnectionStatusDto {
+  connectionId: string;
+  state: SshConnectionState;
+  connected: boolean;
+  /** The host is refusing new channels — MaxSessions (E12-06 AC7). */
+  degraded: boolean;
+}
+
+export function sshConnectionList(): Promise<SshConnectionDto[]> {
+  return invoke("ssh_connection_list");
+}
+
+export function sshConnectionSave(input: SshConnectionInput): Promise<SshConnectionDto> {
+  return invoke("ssh_connection_save", { input });
+}
+
+export function sshConnectionDelete(connectionId: string): Promise<void> {
+  return invoke("ssh_connection_delete", { connectionId });
+}
+
+export function sshConnectionStates(): Promise<SshConnectionStatusDto[]> {
+  return invoke("ssh_connection_states");
+}
+
+export function sshConnect(connectionId: string): Promise<boolean> {
+  return invoke("ssh_connect", { connectionId });
+}
+
+export function sshDisconnect(connectionId: string): Promise<boolean> {
+  return invoke("ssh_disconnect", { connectionId });
+}
+
+/** Whether this build can provision BYOI remote tasks (E12-10 gate). */
+export function remoteTasksEnabled(): Promise<boolean> {
+  return invoke("remote_tasks_enabled");
 }

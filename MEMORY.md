@@ -1,4 +1,32 @@
 # MEMORY.md — fartCode
+## #94 SSH connections UI + command layer LANDED (2026-08-11)
+
+E12-03's store finally has a door: `fartcode-app/src/commands/ssh_connections.rs`
+(`ssh_connection_list` / `_save` / `_delete`, no secrets in the DTO) and
+`app-frontend/src/components/SshConnections.tsx`, mounted as a **Connections**
+section in `SettingsModal`. Live state from `ssh:state_changed`
+(`reconnecting · 5s (3/5)` — the backend's ladder numbers, not a UI timer),
+MaxSessions advice from `ssh:health_changed`.
+
+Bites:
+- **Saving an edited profile calls `remote_pty.forget(id)`** — the pooled
+  session describes the OLD host/auth. `forget`, not `disconnect`: no
+  manual-disconnect intent, so the next open dials with the new fields.
+- Delete refuses while `reference_count > 0`; a dangling `ssh_connection_id`
+  is a project that can never open.
+- `has_secret` in `ssh_connections::secrets` is a boolean probe — the form
+  shows “stored — blank keeps it” instead of an empty box that looks unsaved.
+- Panel styling reuses the provider-account vocabulary (`fc-acct-*`); only the
+  state pill and the MaxSessions note are new CSS. Colour is rationed per
+  DESIGN.md: green = connected, `--fc-bad-text` = unreachable, everything
+  transient stays `--meta`.
+- MaxSessions is deliberately NOT an error line: the session is alive, so
+  “reconnect” would be wrong advice — the note tells the user to raise
+  `MaxSessions` on the host.
+
+Still missing UI: workspace-provider (BYOI) settings form, remote project
+picker (`remote_browse` has no caller).
+
 ## #93 E13 closeout — tmux slot release + Windows guard LANDED (2026-08-11)
 
 Two E13 acceptance items that survived into the SSH era. `release_slot` in
