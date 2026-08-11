@@ -1,4 +1,43 @@
 # MEMORY.md — fartCode
+## #88 E12-04 remote projects LANDED (2026-08-11) — ADR-0042
+
+Projects can live on an SSH host. `fartcode-core/src/projects/remote.rs` —
+`RemoteHost` trait (realpath/list_dir/stat/mkdir_all/remove_dir_all/run) +
+`RemoteProjectStore` (create_remote, create_remote_clone, ensure/remove remote
+worktree). `fartcode-ssh/src/host.rs` implements it over `SshClient` +
+`RemoteSftp`. Commands: `remote_browse`, `create_remote_project`,
+`clone_remote_project`, and `clone_project` — the local clone flow that had a
+store method since E1-03 and no command (e2e FIRST-16 "unreachable-entirely").
+
+Bites:
+- **`projects.path` was globally UNIQUE** — the same path on two hosts could
+  not both be projects. Migration 0012 keys on
+  `(path, COALESCE(ssh_connection_id, ''))`; the COALESCE is load-bearing,
+  since NULLs are distinct in a SQLite unique index and a bare two-column
+  index would silently allow duplicate LOCAL projects.
+- **Remote projects must not run the local open flow.** `.git/info/exclude` +
+  worktree re-detection touch this machine's filesystem. Remote create reuses
+  only `insert_project_row` + `ensure_repository_workspace` + `project:added`.
+- `SshClient::run_command` returns **stdout only** — a failing `git rev-parse`
+  reads as an empty success. `host.rs::exec_collect` walks `channel.wait()`
+  for `ExitStatus`/`ExitSignal` and treats "closed with no status" as failure.
+- Remote worktrees live INSIDE the project (`<p>/.fartCode/worktrees/<seg>`),
+  segment hashed from the workspace key (`ssh:<conn>:<path>`), not the name.
+- `RemoteSftp::remove` errors on a missing path; the trait contract is
+  idempotent, so `remove_dir_all` stats first.
+- SFTP session is bound to `/`; containment is enforced per op against the
+  project root (`ensure_contained`), still lexical (E12-02 caveat stands).
+- Tests use an in-memory `FakeHost` — no live SSH in the suite.
+
+## #88 E12-04 remote project CREATED (2026-08-11)
+
+Next ticket: remote projects — Pick/Clone/New over SSH + worktrees on the
+remote at `<project>/.fartCode/worktrees`. DB shape already exists
+(`projects.ssh_connection_id`, `repository_workspace_key` → `ssh:<conn>:<path>`);
+nothing writes it — `finish_create` is always `None`. Also registers the missing
+local `create_clone` tauri command (backend exists, unreachable from the UI).
+18 acceptance criteria. size:L, phase:3.
+
 ## #87 E12-03 connection profiles + ssh -G LANDED (2026-08-11)
 
 `fartcode-ssh/src/config.rs` — `ssh -G <alias>` is the source of truth; we parse

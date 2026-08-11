@@ -9,6 +9,7 @@ rust-version.workspace = true
 fartcode-core = { path = "../fartcode-core" }
 ssh-key = { workspace = true }
 russh = { workspace = true }
+async-trait = { workspace = true }
 russh-sftp = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

@@ -67,6 +67,10 @@ pub struct SshConnectionMeta {
     pub proxy_command: Option<String>,
     #[serde(default)]
     pub forward_agent: bool,
+    /// Where remote clones land on this host (E12-04). `None` uses the
+    /// crate default (`~/fartCode`); a leading `~` expands on the remote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projects_directory: Option<String>,
 }
 
 impl Versioned for SshConnectionMeta {

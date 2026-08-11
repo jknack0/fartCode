@@ -12,12 +12,14 @@ use fartcode_core::dependencies::{HostDependencyStore, ProcessInstallRunner};
 use fartcode_core::events::EventBus;
 use fartcode_core::events::{BroadcastEventBus, InternalEvent};
 use fartcode_core::fs_watch::FsWatchService;
+use fartcode_core::projects::remote::RemoteProjectStore;
 use fartcode_core::projects::worktrees::WorktreeManager;
 use fartcode_core::projects::DbProjectStore;
 use fartcode_core::provider_accounts::ProviderAccountStore;
 use fartcode_core::pty::launcher::{NoopRemoteRehydrate, Rehydrator};
 use fartcode_core::pty::sessions::SessionRegistry;
 use fartcode_core::settings::DbSettingsStore;
+use fartcode_core::ssh_connections::SshConnectionStore;
 use fartcode_core::tasks::deletion::TaskDeletionService;
 use fartcode_core::tasks::operations::TaskCreationService;
 use fartcode_core::tasks::DbTaskStore;
@@ -44,6 +46,10 @@ pub struct App {
     pub task_creation: TaskCreationService,
     /// E3-07 provider credentials (keyring-backed).
     pub provider_accounts: Arc<ProviderAccountStore>,
+    /// E12-03 SSH connection profiles (secrets in the keyring).
+    pub ssh_connections: Arc<SshConnectionStore>,
+    /// E12-04 SSH-backed projects (create/clone + remote worktrees).
+    pub remote_projects: Arc<RemoteProjectStore>,
     /// E4-01 workspace file+git watcher (registered via `watchers.rs`).
     pub fs_watch: Arc<FsWatchService>,
     /// E4-10 diff line comments (§14).
@@ -84,6 +90,8 @@ impl App {
         let tasks = Arc::new(DbTaskStore::new(db.clone(), event_bus.clone()));
         let conversations = Arc::new(DbConversationStore::new(db.clone(), event_bus.clone()));
         let provider_accounts = Arc::new(ProviderAccountStore::new(db.clone()));
+        let ssh_connections = Arc::new(SshConnectionStore::new(db.clone()));
+        let remote_projects = Arc::new(RemoteProjectStore::new(db.clone(), event_bus.clone()));
 
         // E2-09: one registry shared by boot rehydration (launches register)
         // and task deletion (cancel + reap).
@@ -178,6 +186,8 @@ impl App {
             deletion,
             task_creation,
             provider_accounts,
+            ssh_connections,
+            remote_projects,
             fs_watch,
             line_comments,
             pr_sync,

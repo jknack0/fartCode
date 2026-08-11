@@ -15,6 +15,7 @@ pub mod lifecycle;
 pub mod line_comments;
 pub mod projects;
 pub mod provider_accounts;
+pub mod remote_projects;
 pub mod search;
 pub mod settings;
 pub mod steps;

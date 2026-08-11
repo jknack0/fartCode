@@ -85,6 +85,13 @@
             "when": 1800000000011,
             "tag": "0011_step_ledger",
             "breakpoints": true
+        },
+        {
+            "idx": 12,
+            "version": "6",
+            "when": 1800000000012,
+            "tag": "0012_project_path_per_connection",
+            "breakpoints": true
         }
     ]
 }

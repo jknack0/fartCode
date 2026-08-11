@@ -85,11 +85,21 @@ pub fn ensure_repository_workspace(
         Some(id) => id,
         None => {
             let id = uuid::Uuid::new_v4().to_string();
-            tx.execute(
-                "INSERT INTO workspaces (id, key, type, kind, location, path)
-                 VALUES (?1, ?2, 'local', 'project-root', 'local', ?3)",
-                rusqlite::params![id, key, project.path.to_string_lossy()],
-            )?;
+            // A remote project's repository workspace lives on the host: the
+            // row records that (and the connection), or a later rehydrate has
+            // no way back to the machine the files are on (E12-06).
+            match project.ssh_connection_id.as_deref() {
+                Some(conn_id) => tx.execute(
+                    "INSERT INTO workspaces (id, key, type, kind, location, path, ssh_connection_id)
+                     VALUES (?1, ?2, 'project-ssh', 'project-root', 'remote', ?3, ?4)",
+                    rusqlite::params![id, key, project.path.to_string_lossy(), conn_id],
+                )?,
+                None => tx.execute(
+                    "INSERT INTO workspaces (id, key, type, kind, location, path)
+                     VALUES (?1, ?2, 'local', 'project-root', 'local', ?3)",
+                    rusqlite::params![id, key, project.path.to_string_lossy()],
+                )?,
+            };
             id
         }
     };

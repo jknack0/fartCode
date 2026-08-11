@@ -4,6 +4,7 @@
 pub mod adoption;
 pub mod model;
 pub mod provider;
+pub mod remote;
 pub mod worktrees;
 
 use std::path::{Path, PathBuf};
@@ -130,36 +131,13 @@ impl DbProjectStore {
         base_ref: Option<String>,
         ssh_connection_id: Option<String>,
     ) -> Result<Project, Error> {
-        let id = uuid::Uuid::new_v4().to_string();
-        let name = repo_root
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| id.clone());
-        self.with_conn(|conn| {
-            // One transaction for the row + its board: a mid-seed failure
-            // must never leave a project without its default columns.
-            let tx = conn.unchecked_transaction()?;
-            tx.execute(
-                "INSERT INTO projects
-                     (id, name, path, workspace_provider, base_ref, ssh_connection_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![
-                    id,
-                    name,
-                    repo_root.to_string_lossy(),
-                    provider_kind.as_str(),
-                    base_ref,
-                    ssh_connection_id
-                ],
-            )?;
-            // E18-01 (ADR-0037): every new project starts with the seeded
-            // default board (migration 0006 covers pre-existing projects).
-            crate::issues::columns::seed_default_columns(&tx, &id)?;
-            tx.commit()?;
-            Ok(())
-        })?;
-        self.get(&id)?
-            .ok_or_else(|| Error::Internal("inserted project vanished".into()))
+        insert_project_row(
+            self.db.as_ref(),
+            repo_root,
+            provider_kind,
+            base_ref,
+            ssh_connection_id,
+        )
     }
 
     /// Resolves the base ref: `computeBaseRef` + refinement via remote HEAD /
@@ -500,6 +478,57 @@ pub fn repo_name_from_url(url: &str) -> String {
         .unwrap_or("project");
     let name = last.strip_suffix(".git").unwrap_or(last);
     provider::safe_path_segment(name, "project")
+}
+
+/// Inserts a `projects` row (+ its seeded board) and returns the stored row.
+/// Shared by the local create flows and [`remote::RemoteProjectStore`] — one
+/// INSERT site, one board seed, whether the repo is local or on an SSH host.
+pub(crate) fn insert_project_row(
+    db: &dyn Db,
+    repo_root: &Path,
+    provider_kind: WorkspaceProviderKind,
+    base_ref: Option<String>,
+    ssh_connection_id: Option<String>,
+) -> Result<Project, Error> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let name = repo_root
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| id.clone());
+    let conn = db
+        .conn()
+        .lock()
+        .map_err(|_| Error::Internal("db connection mutex poisoned".into()))?;
+    // One transaction for the row + its board: a mid-seed failure must never
+    // leave a project without its default columns.
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "INSERT INTO projects
+             (id, name, path, workspace_provider, base_ref, ssh_connection_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![
+            id,
+            name,
+            repo_root.to_string_lossy(),
+            provider_kind.as_str(),
+            base_ref,
+            ssh_connection_id
+        ],
+    )?;
+    // E18-01 (ADR-0037): every new project starts with the seeded default
+    // board (migration 0006 covers pre-existing projects).
+    crate::issues::columns::seed_default_columns(&tx, &id)?;
+    tx.commit()?;
+    conn.query_row(
+        &format!(
+            "SELECT {} FROM projects WHERE id = ?1",
+            model::PROJECT_COLUMNS
+        ),
+        [&id],
+        model::project_from_row,
+    )
+    .optional()?
+    .ok_or_else(|| Error::Internal("inserted project vanished".into()))
 }
 
 /// Reference `remoteNameFromQualifiedRef`: the head of a `remote/branch` ref

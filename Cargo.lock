@@ -1387,6 +1387,7 @@ dependencies = [
  "fartcode-core",
  "fartcode-git",
  "fartcode-providers",
+ "fartcode-ssh",
  "fartcode-telemetry",
  "fartcode-terminal",
  "parking_lot",
@@ -1411,6 +1412,7 @@ dependencies = [
 name = "fartcode-core"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "base64 0.22.1",
  "fartcode-git",
  "fartcode-providers",
@@ -1493,6 +1495,7 @@ version = "0.1.0"
 name = "fartcode-ssh"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "fartcode-core",
  "internal-russh-forked-ssh-key",
  "russh",

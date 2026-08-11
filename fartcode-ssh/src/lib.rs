@@ -15,6 +15,8 @@ use tokio::io::AsyncReadExt;
 use tracing::{debug, info};
 
 pub mod config;
+pub mod host;
+pub mod pty;
 pub mod sftp;
 
 // ── Auth method ──────────────────────────────────────────────
@@ -344,6 +346,37 @@ impl SshClient {
             .request_shell(true)
             .await
             .map_err(|e| Error::SshChannel(format!("request shell: {e}")))?;
+
+        Ok(channel)
+    }
+
+    /// Open a PTY and run a single command in it (agents, lifecycle scripts).
+    ///
+    /// `pty`/`pty_with_size` request a login shell; an agent launch needs the
+    /// command to BE the session, so its exit is the session's exit.
+    pub async fn pty_exec(
+        &self,
+        command: &str,
+        col_width: u32,
+        row_height: u32,
+    ) -> Result<Channel<russh::client::Msg>, Error> {
+        let channel = self
+            .handle
+            .channel_open_session()
+            .await
+            .map_err(|e| Error::SshChannel(format!("open session: {e}")))?;
+
+        self.maybe_forward_agent(&channel).await?;
+
+        channel
+            .request_pty(true, "xterm-256color", col_width, row_height, 0, 0, &[])
+            .await
+            .map_err(|e| Error::SshChannel(format!("request pty: {e}")))?;
+
+        channel
+            .exec(true, command.as_bytes())
+            .await
+            .map_err(|e| Error::SshChannel(format!("pty exec: {e}")))?;
 
         Ok(channel)
     }
