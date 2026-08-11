@@ -1,4 +1,33 @@
 # MEMORY.md — fartCode
+## #91 E12-07 BYOI provision/terminate LANDED (2026-08-11) — ADR-0044
+
+`fartcode-core/src/tasks/byoi.rs`: the BYOI contract — `ProvisionOutput`
+(JSON descriptor: `id`, `host` required; `port`/`username`/`worktreePath`/
+`password`/`forwardAgent` optional), `parse_provision_output`, `provision`,
+`terminate`, `script_command_line`, `LocalScriptRunner`. `ScriptRunner` is the
+one-method trait; `fartcode-ssh/src/byoi.rs` adds `SshScriptRunner` +
+`connect_params` (user@host split, port 22, username fallback chain,
+forward-agent guard). 23 tests, no live SSH.
+
+Bites:
+- **Terminate returns `()` on purpose.** It runs inside teardown; an
+  already-gone machine, a nonzero exit, and an unreachable host all warn and
+  continue. Do not "fix" it into a `Result` — a failing teardown strands the
+  task half-deleted.
+- **`ProvisionOutput` hand-writes `Debug`** to redact `password` (same rule as
+  `AuthMethod`). Adding a field means updating that impl.
+- Descriptor parsing is lenient about unknown fields, strict about `host`;
+  error text quotes the script's own output capped at 200 chars.
+- `SshScriptRunner` builds `KEY='v' cmd` through `script_command_line` (values
+  quoted, keys validated) — a remote shell has no `Command::envs`.
+- `connect_params` REFUSES `forwardAgent` without `SSH_AUTH_SOCK`, and refuses
+  a descriptor with neither password nor agent, instead of dialing and failing
+  on auth.
+- 10-minute budget for both scripts; local child dies via `kill_on_drop` when
+  the timeout future is dropped.
+- **Nothing calls any of it yet** — provision-flow wiring, the feature gate
+  and pool registration are E12-10.
+
 ## #90 E12-06 connection lifecycle LANDED (2026-08-11) — ADR-0043
 
 `RemotePtyRegistry` (fartcode-app/src/remote_pty.rs) is now the only owner of

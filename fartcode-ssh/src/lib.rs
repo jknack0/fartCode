@@ -14,6 +14,7 @@ use russh::{Channel, Error as SshError};
 use tokio::io::AsyncReadExt;
 use tracing::{debug, info};
 
+pub mod byoi;
 pub mod config;
 pub mod host;
 pub mod pty;

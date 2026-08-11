@@ -1,6 +1,7 @@
 //! Tasks domain: durable task rows with lifecycle operations and events
 //! (ARCHITECTURE.md §2, ticket E2-01).
 
+pub mod byoi;
 pub mod deletion;
 pub mod lifecycle;
 pub mod model;
