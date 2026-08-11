@@ -15,6 +15,7 @@ use tokio::io::AsyncReadExt;
 use tracing::{debug, info};
 
 pub mod byoi;
+pub mod known_hosts;
 pub mod config;
 pub mod host;
 pub mod pty;
@@ -75,19 +76,27 @@ pub struct ConnectionParams {
 // ── Russh handler ────────────────────────────────────────────
 
 /// Handler for russh client events.
-/// Accepts all server keys (dev mode; known_hosts in E12-03).
-#[derive(Default)]
-pub struct SshHandler;
+///
+/// Server keys are checked against `~/.ssh/known_hosts` (accept-new): a
+/// known key connects, an unknown host is recorded on first contact, and a
+/// CHANGED or revoked key refuses the connection — see [`known_hosts`].
+pub struct SshHandler {
+    /// Hostname the caller dialed (pattern-matched against known_hosts).
+    pub host: String,
+    pub port: u16,
+}
 
 impl russh::client::Handler for SshHandler {
     type Error = SshError;
 
-    // ponytail: accept all keys, known_hosts in E12-03
     async fn check_server_key(
         &mut self,
-        _server_public_key: &ssh_key::PublicKey,
+        server_public_key: &ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
-        Ok(true)
+        // Refusal is `Ok(false)` — russh surfaces its own "unknown key"
+        // error (the enum is closed to us); the actionable detail (which
+        // file, which fingerprint) is on the error log.
+        Ok(known_hosts::check(&self.host, self.port, server_public_key))
     }
 }
 
@@ -138,7 +147,10 @@ impl SshClient {
         info!(host = %params.host, port = params.port, user = %params.username, "connecting SSH");
 
         let config = Arc::new(Config::default());
-        let handler = SshHandler;
+        let handler = SshHandler {
+            host: params.host.clone(),
+            port: params.port,
+        };
 
         let handle = russh::client::connect(config, (params.host.clone(), params.port), handler)
             .await
@@ -170,7 +182,13 @@ impl SshClient {
     where
         S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     {
-        let handle = russh::client::connect_stream(Arc::new(Config::default()), stream, SshHandler)
+        // The stream may tunnel through a jump host, but the handshake is
+        // end-to-end with the TARGET — its key is what gets verified.
+        let handler = SshHandler {
+            host: params.host.clone(),
+            port: params.port,
+        };
+        let handle = russh::client::connect_stream(Arc::new(Config::default()), stream, handler)
             .await
             .map_err(|e| Error::SshConnection(format!("connection failed: {e}")))?;
         Self::finish_auth(handle, params).await
@@ -593,8 +611,12 @@ mod tests {
     }
 
     #[test]
-    fn default_handler() {
-        let _handler = SshHandler;
+    fn handler_carries_the_dialed_endpoint() {
+        let handler = SshHandler {
+            host: "h".into(),
+            port: 22,
+        };
+        assert_eq!((handler.host.as_str(), handler.port), ("h", 22));
     }
 
     #[tokio::test]

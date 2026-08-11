@@ -1,4 +1,33 @@
 # MEMORY.md — fartCode
+## #99 Host key verification LANDED (2026-08-11)
+
+`fartcode-ssh/src/known_hosts.rs` closes the E12-01 ponytail
+(`check_server_key` accepted every key — MITM-able since the SSH era began).
+Policy is OpenSSH `accept-new`: known key connects; unknown host is recorded
+in `~/.ssh/known_hosts` and connects (TOFU); a CHANGED or `@revoked` key
+REFUSES. Matching covers the file's whole vocabulary: comma-separated globs
+(`*`/`?`), `!` negations, `[host]:port` brackets, `|1|` HMAC-SHA1 hashed
+hostnames. `SshHandler` is no longer a unit struct — it carries the dialed
+`host`/`port`, including through `connect_over` (jump hops verify the
+TARGET's key end-to-end, which is the point of ProxyJump).
+
+Bites:
+- **`russh::Error` is a closed enum** — refusal is `Ok(false)` from
+  `check_server_key`, so the user-visible error is russh's generic one and
+  the actionable detail (file, fingerprint, "remove the stale entry") lives
+  on the `tracing::error!`. Surfacing that in the UI is future work.
+- ssh-key here is the RUSSH FORK (`internal-russh-forked-ssh-key`); it does
+  NOT re-export `base64ct` — dev-dep it directly for the hashed-entry test.
+- `@cert-authority` entries are SKIPPED, failing toward "unknown" (record)
+  rather than trusting an unverified CA. `@revoked` for a different key is
+  neither a match nor a mismatch.
+- Port 22 must match both `host` and `[host]:22` spellings; other ports only
+  the bracket form.
+- Tests generate ed25519 keys with a hand-rolled LCG `CryptoRngCore` — no
+  rand dev-dep, deterministic keys per seed.
+- No `$HOME` → verify is impossible; warn loudly and proceed (the old
+  behavior, said out loud) rather than bricking containerized runs.
+
 ## #98 New-repo flow LANDED (2026-08-11)
 
 E12-04's third leg. Core: `RemoteProjectStore::create_remote_new` —

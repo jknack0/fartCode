@@ -1496,10 +1496,14 @@ name = "fartcode-ssh"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64ct",
  "fartcode-core",
+ "hmac",
  "internal-russh-forked-ssh-key",
  "russh",
  "russh-sftp",
+ "sha1",
+ "tempfile",
  "tokio",
  "tracing",
 ]

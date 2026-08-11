@@ -68,7 +68,10 @@ reqwest = { version = "0.12", features = ["json"] }
 sysinfo = "0.30"
 
 # ── Crypto / encoding ──────────────────────────────────────
+tempfile = "3"
 sha2 = "0.10"
+sha1 = "0.10"
+hmac = "0.12"
 base64 = "0.22"
 
 # ── Errors ─────────────────────────────────────────────────

@@ -13,3 +13,9 @@ async-trait = { workspace = true }
 russh-sftp = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+sha1 = { workspace = true }
+hmac = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+base64ct = { version = "1", features = ["alloc"] }
