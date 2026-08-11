@@ -17,6 +17,7 @@ vi.mock("../lib/tauri", () => ({
   updateProjectSettings: vi.fn(),
   projectSettingsProvenance: vi.fn(() => Promise.resolve({})),
   projectSettingsShare: vi.fn(() => Promise.resolve()),
+  remoteTasksEnabled: vi.fn(() => Promise.resolve(false)),
   setDefaultAgent: vi.fn(() => Promise.resolve()),
   onFartcodeEvent: vi.fn(() => Promise.resolve(() => {})),
   hostDependencyList: vi.fn(() => Promise.resolve([])),
@@ -28,6 +29,7 @@ vi.mock("../lib/tauri", () => ({
 import { ProjectSettingsPane } from "./ProjectSettings";
 import {
   getProjectSettings,
+  remoteTasksEnabled,
   updateProjectSettings,
   type ProjectSettingsDto,
 } from "../lib/tauri";
@@ -144,5 +146,22 @@ describe("full-replace safety", () => {
     expect(stored.tmux).toBe(true);
     expect(stored.featureDossiers).toBe(true);
     expect(stored.featureLogSeededVersion).toBe(3);
+  });
+});
+
+describe("workspace provider gate (E12-10)", () => {
+  // `remote-tasks` is a compile-time cargo feature; a build without it can
+  // configure scripts it will never run. The row must not exist there.
+  it("hides the provision/terminate row in a gated build", async () => {
+    await renderPane();
+    expect(screen.queryByText("Provision · terminate commands")).toBeNull();
+  });
+
+  it("shows the row when the build can provision", async () => {
+    vi.mocked(remoteTasksEnabled).mockResolvedValue(true);
+    await renderPane();
+    await waitFor(() =>
+      expect(screen.getByText("Provision · terminate commands")).toBeInTheDocument(),
+    );
   });
 });

@@ -15,6 +15,7 @@ import {
   onFartcodeEvent,
   projectSettingsProvenance,
   projectSettingsShare,
+  remoteTasksEnabled,
   setDefaultAgent,
   updateProjectSettings,
 } from "../lib/tauri";
@@ -205,6 +206,15 @@ export function ProjectSettingsPane({ projectId }: { projectId: string }) {
     setS(settings);
     setProv(provenance);
   }, [projectId]);
+
+  // E12-10 gate: the provision/terminate row only renders in builds compiled
+  // with `remote-tasks` — configuring scripts a build cannot run is a trap.
+  const [byoiEnabled, setByoiEnabled] = useState(false);
+  useEffect(() => {
+    remoteTasksEnabled()
+      .then(setByoiEnabled)
+      .catch(() => setByoiEnabled(false));
+  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -464,6 +474,7 @@ export function ProjectSettingsPane({ projectId }: { projectId: string }) {
             onSave={(v) => void commit({ taskStartupCommand: v.trim() || null })}
           />
         </Row>
+        {byoiEnabled && (
         <Row
           label="Provision · terminate commands"
           value={
@@ -523,6 +534,7 @@ export function ProjectSettingsPane({ projectId }: { projectId: string }) {
             </div>
           </div>
         </Row>
+        )}
       </div>
 
       <div className="fc-set-group">

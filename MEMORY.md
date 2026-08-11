@@ -1,4 +1,25 @@
 # MEMORY.md — fartCode
+## #96 BYOI settings gate LANDED (2026-08-11)
+
+The workspace-provider settings turned out to already EXIST — the
+"Provision · terminate commands" row in `ProjectSettings.tsx` (pair editor,
+saves on blur, `type: "script"` enforced server-side). What was missing was
+the E12-10 gate: `remote_tasks_enabled` had no caller, so a build compiled
+without `remote-tasks` still offered a form for scripts it can never run.
+The row now renders only when `remoteTasksEnabled()` resolves true; the
+probe fails closed (catch → hidden).
+
+Bites:
+- **Read the pane before writing the ticket** — #94's "missing UI" note was
+  half stale; the form shipped with the pane, only the gate was absent.
+- Gate is per-BUILD, not per-project: one `useEffect` probe on mount, no
+  event to subscribe to (a cargo feature cannot change at runtime).
+- Teardown stays ungated on the backend (ADR-0045): hiding the FORM is safe
+  because terminate ignores the gate — a disabled build still cleans up.
+- Test factory mocks default via `vi.fn(() => Promise.resolve(false))`;
+  `clearAllMocks` keeps factory impls, so the hidden case needs no beforeEach
+  line and the shown case overrides per-test.
+
 ## #95 Remote project picker LANDED (2026-08-11)
 
 `remote_browse` finally has a caller: the Add-project dialog
