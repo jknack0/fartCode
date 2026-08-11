@@ -98,11 +98,12 @@ impl App {
         // E12-05: remote-workspace tasks spawn their PTYs on the SSH host.
         // russh is async and the PTY trait is blocking, so the registry needs
         // a runtime handle; Tauri's async runtime is the app's only one.
-        let remote_pty = Arc::new(crate::remote_pty::RemotePtyRegistry::new(
+        let remote_pty = crate::remote_pty::RemotePtyRegistry::new(
             db.clone(),
             ssh_connections.clone(),
+            event_bus.clone(),
             tauri::async_runtime::handle().inner().clone(),
-        ));
+        );
 
         // E2-09: one registry shared by boot rehydration (launches register)
         // and task deletion (cancel + reap).
@@ -217,6 +218,31 @@ impl App {
 pub fn event_to_value(event: &InternalEvent) -> Option<serde_json::Value> {
     use serde_json::json;
     match event {
+        // E12-06: connection lifecycle. `attempt`/`delayMs` ride only the
+        // reconnecting frames, so the UI can render "retrying in 5s (3/5)"
+        // without keeping its own ladder.
+        InternalEvent::SshConnectionStateChanged {
+            connection_id,
+            state,
+            attempt,
+            delay_ms,
+            error,
+        } => Some(json!({
+            "type": "ssh:state_changed",
+            "connectionId": connection_id,
+            "state": state,
+            "attempt": attempt,
+            "delayMs": delay_ms,
+            "error": error,
+        })),
+        InternalEvent::SshConnectionHealthChanged {
+            connection_id,
+            degraded,
+        } => Some(json!({
+            "type": "ssh:health_changed",
+            "connectionId": connection_id,
+            "degraded": degraded,
+        })),
         InternalEvent::ProjectAdded { id, name, path } => Some(json!({
             "type": "project:added", "id": id, "name": name, "path": path,
         })),

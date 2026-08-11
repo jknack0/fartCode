@@ -214,6 +214,25 @@ pub enum InternalEvent {
         pty_id: String,
     },
 
+    // SSH connection lifecycle (E12-06)
+    /// A connection moved between lifecycle states. `attempt`/`delay_ms` are
+    /// set only while `reconnecting` (which attempt, and how long the wait
+    /// before it was); `error` only on `error`.
+    SshConnectionStateChanged {
+        connection_id: String,
+        state: String,
+        attempt: Option<u32>,
+        delay_ms: Option<u64>,
+        error: Option<String>,
+    },
+    /// Channel-open failures on a LIVE connection (MaxSessions) — a health
+    /// signal, not a state change: the session is up, it just cannot open
+    /// more channels.
+    SshConnectionHealthChanged {
+        connection_id: String,
+        degraded: bool,
+    },
+
     // Terminals
     TerminalCreated {
         id: String,

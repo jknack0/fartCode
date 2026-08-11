@@ -90,6 +90,20 @@ impl russh::client::Handler for SshHandler {
     }
 }
 
+/// True when an error is the server refusing a NEW channel on a live
+/// connection — almost always `MaxSessions` exhaustion (OpenSSH default 10),
+/// occasionally an admin-prohibited channel type.
+///
+/// The distinction matters: the connection is healthy, so reconnecting fixes
+/// nothing. The user has to raise `MaxSessions` on the host (E12-06 AC7).
+pub fn is_channel_open_failure(error: &Error) -> bool {
+    let message = error.to_string().to_lowercase();
+    message.contains("channel open failure")
+        || message.contains("no more sessions")
+        || message.contains("administratively prohibited")
+        || message.contains("open failed")
+}
+
 // ── Client ───────────────────────────────────────────────────
 
 /// Active SSH connection.
@@ -394,6 +408,13 @@ impl SshClient {
             .await
             .map_err(|e| Error::SshChannel(format!("resize pty: {e}")))?;
         Ok(())
+    }
+
+    /// Whether the underlying session is gone (peer closed it, transport
+    /// died, auth expired). Non-blocking and cheap: the E12-06 lifecycle
+    /// watchdog polls it instead of holding a channel open to find out.
+    pub fn is_closed(&self) -> bool {
+        self.handle.is_closed()
     }
 
     /// Execute a remote command (non-interactive).

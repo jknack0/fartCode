@@ -54,6 +54,30 @@ impl SshAuthType {
     }
 }
 
+/// Where a connection is in its lifecycle (E12-06 AC1). Reported per
+/// connection to the UI; `Error` means the backoff ladder ran out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionState {
+    Connecting,
+    Connected,
+    Reconnecting,
+    Disconnected,
+    Error,
+}
+
+impl ConnectionState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Connecting => "connecting",
+            Self::Connected => "connected",
+            Self::Reconnecting => "reconnecting",
+            Self::Disconnected => "disconnected",
+            Self::Error => "error",
+        }
+    }
+}
+
 /// Versioned `metadata` payload: everything resolved from `ssh -G` or set by
 /// the user that has no dedicated column.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]

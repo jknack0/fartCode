@@ -1,4 +1,33 @@
 # MEMORY.md — fartCode
+## #90 E12-06 connection lifecycle LANDED (2026-08-11) — ADR-0043
+
+`RemotePtyRegistry` (fartcode-app/src/remote_pty.rs) is now the only owner of
+remote sessions: one pooled `SshClient` per connection, shared by the PTY
+manager, `RemoteTmux`, and the remote-project commands. States
+(`connecting|connected|reconnecting|disconnected|error`), a 1/2/5/10/20 s
+reconnect ladder, manual-disconnect intent, and a MaxSessions health signal.
+Events: `ssh:state_changed` (carries `attempt`/`delayMs` while reconnecting)
+and `ssh:health_changed`. Commands: `ssh_connection_state` (now a status
+object, was a bool) + new `ssh_connection_states`.
+
+Bites:
+- **russh `Handle` has `is_closed()` but no close future** — liveness is a 2 s
+  poll per session, not a subscription. It is NOT a keepalive.
+- **A cached entry can be a corpse.** Every read goes through `cached()`,
+  which drops a closed client rather than handing it out; before this, a
+  terminal open against a dead host failed at channel time.
+- **Watchdogs need a `Weak<Self>`** — the registry is built with
+  `Arc::new_cyclic` so a spawned watchdog cannot keep sessions alive past app
+  teardown, and generation stamps make a stale watchdog exit instead of racing
+  the dial that replaced it.
+- **Reconnect ≠ terminal reattach.** The pool rebinds; the terminal's process
+  and scrollback come back from the HOST's tmux on reopen (ADR-0025).
+- **MaxSessions is health, not state**: reconnecting cannot fix a refused
+  channel. Classified from error text (`is_channel_open_failure` in
+  fartcode-ssh) because russh flattens the channel-open reason code.
+- `dial()` deliberately does not publish `error` — a mid-ladder failure is not
+  a failed connection; the caller (or the exhausted ladder) decides.
+
 ## #88 E12-04 remote projects LANDED (2026-08-11) — ADR-0042
 
 Projects can live on an SSH host. `fartcode-core/src/projects/remote.rs` —

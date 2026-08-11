@@ -7,28 +7,35 @@
 //! one blocking body — local `git clone` — goes to `spawn_blocking`, the same
 //! shape `create_project` uses.
 //!
-//! **Connection lifecycle:** each command opens its own SSH connection and
-//! drops it at the end. Pooling, states, and backoff are E12-06; doing it here
-//! would build a second, throwaway lifecycle.
+//! **Connection lifecycle (E12-06):** commands here borrow the POOLED client
+//! from `RemotePtyRegistry` — states, backoff and rehydrate live there, and
+//! nothing in this file opens (or owns) a session of its own.
 
 use std::sync::Arc;
 
 use fartcode_core::projects::remote::{RemoteEntry, RemoteHost};
 use fartcode_core::projects::{ProjectDto, ProjectStore};
-use fartcode_core::ssh_connections::SshConnection;
+use fartcode_core::ssh_connections::{ConnectionState, SshConnection};
 use fartcode_ssh::host::{remote_projects_dir, SshRemoteHost};
 use tauri::State;
 
 use crate::app::App;
 
-/// Resolves a stored profile and connects it.
+/// Resolves a stored profile and hands back the POOLED connection for it
+/// (E12-06 AC2/AC3). Same session the terminals, agents and tmux views use:
+/// a browse costs no handshake, and one reconnect ladder covers them all.
 async fn connect(app: &App, connection_id: &str) -> Result<(SshConnection, SshRemoteHost), String> {
     let connection = app
         .ssh_connections
         .get(connection_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("ssh connection not found: {connection_id}"))?;
-    let host = SshRemoteHost::connect(&connection)
+    let client = app
+        .remote_pty
+        .client_for(connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let host = SshRemoteHost::new(client)
         .await
         .map_err(|e| e.to_string())?;
     Ok((connection, host))
@@ -145,14 +152,53 @@ pub async fn ssh_disconnect(
     .map_err(|e| e.to_string())
 }
 
-/// Whether this process currently holds the connection open.
+/// Lifecycle view of one connection (E12-06 AC1/AC7): where it is, and
+/// whether its host is refusing new channels (MaxSessions).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshConnectionStatus {
+    pub connection_id: String,
+    pub state: ConnectionState,
+    pub connected: bool,
+    pub degraded: bool,
+}
+
+/// Current lifecycle state of a connection.
 #[tauri::command]
 pub async fn ssh_connection_state(
     app: State<'_, Arc<App>>,
     connection_id: String,
-) -> Result<bool, String> {
+) -> Result<SshConnectionStatus, String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || app.remote_pty.is_connected(&connection_id))
-        .await
-        .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || SshConnectionStatus {
+        state: app.remote_pty.state(&connection_id),
+        connected: app.remote_pty.is_connected(&connection_id),
+        degraded: app.remote_pty.is_degraded(&connection_id),
+        connection_id,
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Lifecycle state of every connection this process has touched — what the
+/// connections panel renders on mount, before the event stream takes over.
+#[tauri::command]
+pub async fn ssh_connection_states(
+    app: State<'_, Arc<App>>,
+) -> Result<Vec<SshConnectionStatus>, String> {
+    let app = app.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        app.remote_pty
+            .states()
+            .into_iter()
+            .map(|(connection_id, state)| SshConnectionStatus {
+                connected: app.remote_pty.is_connected(&connection_id),
+                degraded: app.remote_pty.is_degraded(&connection_id),
+                connection_id,
+                state,
+            })
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
 }

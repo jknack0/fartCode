@@ -263,6 +263,12 @@ impl<R: tauri::Runtime> TerminalManager<R> {
             None => None,
         };
         let remote_pty = remote_route.as_ref().map(|(manager, _, _)| manager.clone());
+        // E12-06 AC7: a refused channel on a LIVE session is MaxSessions
+        // pressure, not a dead host — the registry turns it into health, and
+        // a spawn that lands clears it.
+        let remote_connection = remote_route
+            .as_ref()
+            .map(|(_, _, target)| target.connection_id.clone());
         // E12-05 AC12: durability follows the transport. Locally that is a
         // tmux binary on THIS machine (ADR-0025); remotely it is the HOST's
         // tmux server, reached over the same connection the PTY uses — a
@@ -344,7 +350,12 @@ impl<R: tauri::Runtime> TerminalManager<R> {
             remove,
         );
         let handle = match spawn_result {
-            Ok(handle) => handle,
+            Ok(handle) => {
+                if let (Some(registry), Some(connection_id)) = (&self.remote, &remote_connection) {
+                    registry.report_channel_ok(connection_id);
+                }
+                handle
+            }
             Err(e) => {
                 // A failed spawn must not keep the slot reserved (ADR-0028):
                 // the session was neither created nor attached.
@@ -357,6 +368,9 @@ impl<R: tauri::Runtime> TerminalManager<R> {
                                 .map(|used| used.remove(&slot));
                         }
                     }
+                }
+                if let (Some(registry), Some(connection_id)) = (&self.remote, &remote_connection) {
+                    registry.report_channel_error(connection_id, &e);
                 }
                 return Err(e);
             }

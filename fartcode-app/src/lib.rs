@@ -150,6 +150,7 @@ pub fn run() {
             commands::remote_projects::ssh_connect,
             commands::remote_projects::ssh_disconnect,
             commands::remote_projects::ssh_connection_state,
+            commands::remote_projects::ssh_connection_states,
             commands::tasks::create_task,
             commands::tasks::list_project_branches,
             commands::tasks::provision_task,
