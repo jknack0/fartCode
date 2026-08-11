@@ -1,4 +1,30 @@
 # MEMORY.md — fartCode
+## #95 SSH port forwards LANDED (2026-08-11, 8963b08)
+
+E12-09 (shared E6-04). `fartcode-ssh/src/forward.rs`: `open_tunnel` binds a
+127.0.0.1 listener (preferred port → ephemeral on AddrInUse), forwards each
+accepted socket through a fresh direct-tcpip channel, `copy_bidirectional`.
+Remote loopback family fallback 127.0.0.1 → ::1 ONLY on ConnectFailed (Node
+≥17 dev servers often bind [::1] only — ref emdash port-forward-tunnel.ts).
+`TunnelDialer` trait returns a boxed stream (russh `Channel` is not fakeable
+— trait made the tunnel testable with a TCP echo fake). App layer:
+`PortForwardService` (id-keyed, idempotent open, race keeps FIRST tunnel),
+`RegistryDialer` dials via `client_for` each time (rehydrated session picked
+up free) + report_channel_error/ok. Commands port_forward_open/stop/list;
+`ssh_disconnect` tears down that connection\u2019s tunnels. Preview UI → E6-04.
+
+Bites:
+- **#80 rule is mechanical**: even a mutex-only command must be `async` —
+  the no_blocking_tauri_commands test flags registration shape, not cost.
+- russh renders channel-open refusal as `Failed to open channel
+  (ConnectFailed)` inside our `Error::SshChannel` string — detection is a
+  lowercase substring match on "connectfailed".
+- Drive-by: byoi.rs terminate let-else → `?` (clippy -D warnings on current
+  toolchain failed on main; `?` on the Option keeps identical semantics).
+
+Next per the agreed order: E12 is COMPLETE (01–10). Frontier: E6 previews
+(E6-04 consumes this tunnel layer) or E14-02/03/04 UI shell.
+
 ## #100 Terminate warnings LANDED (2026-08-11)
 
 ADR-0044's deferred call, called. `byoi::terminate` still never fails, but
