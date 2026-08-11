@@ -300,6 +300,10 @@ pub async fn provision_task(app: State<'_, Arc<App>>, task_id: String) -> Result
 
 /// `provision_task`'s body, off the IPC thread.
 pub fn provision_task_blocking(app: &App, task_id: &str) -> Result<(), String> {
+    // E12-10: a BYOI task's workspace is a machine, not a worktree — the
+    // project's provision script makes it, and core's provision is a no-op
+    // for that row kind.
+    crate::byoi_tasks::provision(app, task_id).map_err(|e| e.to_string())?;
     app.task_creation
         .provision(task_id)
         .map(|_| ())
@@ -395,6 +399,10 @@ pub fn delete_task_blocking<R: tauri::Runtime>(
     // row deletion cascades the conversation rows away (best-effort, like
     // the PTY reap).
     acp.stop_task(task_id);
+    // E12-10: destroy the BYOI machine BEFORE the rows that name it are
+    // gone. Never fails — a machine that refuses to die must not make the
+    // task undeletable (it warns, and leaks).
+    crate::byoi_tasks::terminate(app, task_id);
     let options = DeleteTaskOptions {
         delete_worktree: delete_worktree.unwrap_or(true),
         delete_branch: delete_branch.unwrap_or(false),

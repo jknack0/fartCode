@@ -6,6 +6,7 @@
 mod acp_events;
 pub mod acp_runtime;
 pub mod app;
+pub mod byoi_tasks;
 pub mod commands;
 pub mod dispatch;
 pub mod dossier_index;
@@ -151,6 +152,7 @@ pub fn run() {
             commands::remote_projects::ssh_disconnect,
             commands::remote_projects::ssh_connection_state,
             commands::remote_projects::ssh_connection_states,
+            commands::remote_projects::remote_tasks_enabled,
             commands::tasks::create_task,
             commands::tasks::list_project_branches,
             commands::tasks::provision_task,

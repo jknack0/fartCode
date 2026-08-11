@@ -21,6 +21,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use rusqlite::OptionalExtension;
+
+use crate::db::Db;
 use crate::projects::remote::RemoteOutput;
 use crate::settings::registry::WorkspaceProvider;
 use crate::shell_escape::single_quote;
@@ -288,6 +291,109 @@ impl ScriptRunner for LocalScriptRunner {
             ))),
         }
     }
+}
+
+// ── Task-side state (E12-10) ──────────────────────────────────────
+
+/// A task's BYOI workspace row, and what provisioning has recorded on it.
+///
+/// `remote_workspace_id.is_some()` is the "already provisioned" test: the
+/// provision command is idempotent, and re-running a script that boots a VM
+/// would leak the first one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ByoiWorkspace {
+    pub workspace_id: String,
+    pub remote_workspace_id: Option<String>,
+    pub ssh_connection_id: Option<String>,
+    pub path: Option<String>,
+}
+
+/// `(workspace id, config JSON, ssh connection id, path)` as stored.
+type ByoiRow = (String, Option<String>, Option<String>, Option<String>);
+
+/// The task's BYOI workspace, or `None` when the task's workspace is an
+/// ordinary worktree / project-root row.
+pub fn byoi_workspace_for_task(db: &dyn Db, task_id: &str) -> Result<Option<ByoiWorkspace>, Error> {
+    let conn = db
+        .conn()
+        .lock()
+        .map_err(|_| Error::Internal("db connection mutex poisoned".into()))?;
+    let row: Option<ByoiRow> = conn
+        .query_row(
+            "SELECT w.id, w.config, w.ssh_connection_id, w.path
+               FROM tasks t JOIN workspaces w ON w.id = t.workspace_id
+              WHERE t.id = ?1 AND w.kind = 'byoi'",
+            [task_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()?;
+    Ok(row.map(
+        |(workspace_id, config, ssh_connection_id, path)| ByoiWorkspace {
+            workspace_id,
+            remote_workspace_id: config
+                .as_deref()
+                .and_then(|c| serde_json::from_str::<serde_json::Value>(c).ok())
+                .and_then(|v| {
+                    v.get("workspace")
+                        .and_then(|w| w.get("remoteWorkspaceId"))
+                        .and_then(|id| id.as_str())
+                        .map(String::from)
+                })
+                .filter(|id| !id.trim().is_empty()),
+            ssh_connection_id,
+            path,
+        },
+    ))
+}
+
+/// Records the machine a provision script just described, on the workspace
+/// row itself.
+///
+/// The row — not an in-memory registry — is what survives a restart, and it
+/// is what teardown reads to know which machine to destroy. `location` and
+/// `ssh_connection_id` follow the same convention as remote projects
+/// (E12-04), so terminals and agents route over SSH without a second rule.
+pub fn record_provisioned_machine(
+    db: &dyn Db,
+    workspace_id: &str,
+    machine_id: &str,
+    ssh_connection_id: &str,
+    path: Option<&str>,
+) -> Result<(), Error> {
+    let conn = db
+        .conn()
+        .lock()
+        .map_err(|_| Error::Internal("db connection mutex poisoned".into()))?;
+    let config: Option<String> = conn
+        .query_row(
+            "SELECT config FROM workspaces WHERE id = ?1",
+            [workspace_id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or_else(|| Error::TaskNotFound(format!("workspace {workspace_id}")))?;
+
+    let mut value: serde_json::Value = config
+        .as_deref()
+        .and_then(|c| serde_json::from_str(c).ok())
+        .unwrap_or_else(|| serde_json::json!({ "version": "2" }));
+    if !value["workspace"].is_object() {
+        value["workspace"] = serde_json::json!({ "kind": "byoi" });
+    }
+    value["workspace"]["remoteWorkspaceId"] = serde_json::json!(machine_id);
+
+    conn.execute(
+        "UPDATE workspaces
+            SET config = ?1,
+                ssh_connection_id = ?2,
+                path = COALESCE(?3, path),
+                type = 'byoi',
+                location = 'remote',
+                updated_at = datetime('now')
+          WHERE id = ?4",
+        rusqlite::params![value.to_string(), ssh_connection_id, path, workspace_id],
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -575,5 +681,96 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("timed out"), "{error}");
+    }
+
+    // ── Task-side state ─────────────────────────────────────────
+
+    fn db_with_task(kind: &str, config: Option<&str>) -> std::sync::Arc<dyn crate::db::Db> {
+        let db = crate::db::SqliteDb::init_in_memory().unwrap();
+        {
+            let conn = db.conn().lock().unwrap();
+            conn.execute(
+                "INSERT INTO workspaces (id, kind, config) VALUES ('w1', ?1, ?2)",
+                rusqlite::params![kind, config],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO projects (id, name, path) VALUES ('p1', 'p', '/tmp/p1')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO tasks (id, project_id, name, status, workspace_id)
+                 VALUES ('t1', 'p1', 't', 'todo', 'w1')",
+                [],
+            )
+            .unwrap();
+        }
+        db
+    }
+
+    #[test]
+    fn byoi_workspace_is_none_for_a_worktree_task() {
+        let db = db_with_task("worktree", None);
+        assert_eq!(byoi_workspace_for_task(db.as_ref(), "t1").unwrap(), None);
+    }
+
+    #[test]
+    fn unprovisioned_byoi_workspace_has_no_machine() {
+        let db = db_with_task(
+            "byoi",
+            Some(r#"{"version":"2","workspace":{"kind":"byoi"}}"#),
+        );
+        let ws = byoi_workspace_for_task(db.as_ref(), "t1").unwrap().unwrap();
+        assert_eq!(ws.workspace_id, "w1");
+        assert_eq!(ws.remote_workspace_id, None);
+        assert_eq!(ws.ssh_connection_id, None);
+    }
+
+    /// The recorded machine survives as ROW state — what teardown reads after
+    /// a restart, when no registry remembers anything.
+    #[test]
+    fn recording_a_machine_makes_the_workspace_remote() {
+        let db = db_with_task(
+            "byoi",
+            Some(r#"{"version":"2","workspace":{"kind":"byoi"}}"#),
+        );
+        record_provisioned_machine(db.as_ref(), "w1", "vm-1", "task:t1", Some("/srv/work"))
+            .unwrap();
+
+        let ws = byoi_workspace_for_task(db.as_ref(), "t1").unwrap().unwrap();
+        assert_eq!(ws.remote_workspace_id.as_deref(), Some("vm-1"));
+        assert_eq!(ws.ssh_connection_id.as_deref(), Some("task:t1"));
+        assert_eq!(ws.path.as_deref(), Some("/srv/work"));
+
+        let (kind, location): (String, String) = {
+            let conn = db.conn().lock().unwrap();
+            conn.query_row(
+                "SELECT kind, location FROM workspaces WHERE id = 'w1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+        // The row keeps its kind (the intent) and gains the transport.
+        assert_eq!(kind, "byoi");
+        assert_eq!(location, "remote");
+    }
+
+    /// A row whose config was never written still records cleanly — legacy
+    /// byoi rows predate the versioned config.
+    #[test]
+    fn recording_repairs_a_configless_row() {
+        let db = db_with_task("byoi", None);
+        record_provisioned_machine(db.as_ref(), "w1", "vm-2", "task:t1", None).unwrap();
+        let ws = byoi_workspace_for_task(db.as_ref(), "t1").unwrap().unwrap();
+        assert_eq!(ws.remote_workspace_id.as_deref(), Some("vm-2"));
+        assert_eq!(ws.path, None);
+    }
+
+    #[test]
+    fn recording_against_a_missing_workspace_fails() {
+        let db = db_with_task("byoi", None);
+        assert!(record_provisioned_machine(db.as_ref(), "nope", "vm", "c", None).is_err());
     }
 }

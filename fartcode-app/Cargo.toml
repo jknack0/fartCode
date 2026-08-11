@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+# E12-10: BYOI remote tasks ship dark. Off by default — provisioning spends
+# money on someone else's infrastructure, so it is opt-in per build.
+remote-tasks = []
+
 [build-dependencies]
 tauri-build = { workspace = true }
 

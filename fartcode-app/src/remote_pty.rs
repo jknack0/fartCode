@@ -30,7 +30,7 @@ use fartcode_core::Error;
 use fartcode_ssh::host::connect_profile;
 use fartcode_ssh::pty::SshPtyManager;
 use fartcode_ssh::tmux::RemoteTmux;
-use fartcode_ssh::{is_channel_open_failure, SshClient};
+use fartcode_ssh::{is_channel_open_failure, ConnectionParams, SshClient};
 use parking_lot::Mutex;
 
 /// Wait before each reconnect attempt, in ms (E12-06 AC4). The array length
@@ -70,6 +70,10 @@ pub struct RemotePtyRegistry {
     states: Mutex<HashMap<String, ConnectionState>>,
     /// Connections whose host refused a new channel (MaxSessions, AC7).
     degraded: Mutex<HashSet<String>>,
+    /// Ad-hoc connections with no saved profile (E12-10): a BYOI machine
+    /// exists only for the task that provisioned it, and its credential came
+    /// from a script's stdout — never the keyring, never a row.
+    transients: Mutex<HashMap<String, ConnectionParams>>,
     generations: Mutex<HashMap<String, u64>>,
     events: Arc<dyn EventBus>,
     runtime: tokio::runtime::Handle,
@@ -93,6 +97,7 @@ impl RemotePtyRegistry {
             manual_disconnects: Mutex::new(HashSet::new()),
             states: Mutex::new(HashMap::new()),
             degraded: Mutex::new(HashSet::new()),
+            transients: Mutex::new(HashMap::new()),
             generations: Mutex::new(HashMap::new()),
             events,
             runtime,
@@ -184,13 +189,24 @@ impl RemotePtyRegistry {
     /// its watchdog. State goes `connecting` → `connected`; failure states are
     /// the caller's call (a mid-ladder failure is not `error` yet).
     async fn dial(&self, connection_id: &str) -> Result<HostEntry, Error> {
-        let profile = self
-            .connections
-            .get(connection_id)?
-            .ok_or_else(|| Error::SshConnectionNotFound(connection_id.to_string()))?;
-
-        self.set_state(connection_id, ConnectionState::Connecting, None, None, None);
-        let client = Arc::new(connect_profile(&profile).await?);
+        // A transient wins over a saved profile: an id like `task:<id>` has
+        // no row to find, and if one somehow existed it would describe a
+        // different machine.
+        let transient = self.transients.lock().get(connection_id).cloned();
+        let client = match transient {
+            Some(params) => {
+                self.set_state(connection_id, ConnectionState::Connecting, None, None, None);
+                Arc::new(SshClient::connect(params).await?)
+            }
+            None => {
+                let profile = self
+                    .connections
+                    .get(connection_id)?
+                    .ok_or_else(|| Error::SshConnectionNotFound(connection_id.to_string()))?;
+                self.set_state(connection_id, ConnectionState::Connecting, None, None, None);
+                Arc::new(connect_profile(&profile).await?)
+            }
+        };
 
         let generation = {
             let mut generations = self.generations.lock();
@@ -243,6 +259,30 @@ impl RemotePtyRegistry {
     pub fn connect(&self, connection_id: &str) -> Result<(), Error> {
         self.manual_disconnects.lock().remove(connection_id);
         self.host_for_connection(connection_id).map(|_| ())
+    }
+
+    /// Registers a machine that has no saved profile (E12-10 BYOI).
+    ///
+    /// The params stay in memory only. Everything else — states, watchdog,
+    /// backoff ladder, manual-disconnect intent — works exactly as it does
+    /// for a profile, because the pool cannot tell the difference after this
+    /// call.
+    pub fn register_transient(&self, connection_id: &str, params: ConnectionParams) {
+        self.manual_disconnects.lock().remove(connection_id);
+        self.transients
+            .lock()
+            .insert(connection_id.to_string(), params);
+    }
+
+    /// Drops a transient machine and its session (the task that owned it is
+    /// being torn down). Nothing can re-dial it afterwards: the params are
+    /// gone, and no row ever described it.
+    pub fn forget_transient(&self, connection_id: &str) {
+        self.transients.lock().remove(connection_id);
+        self.bump_generation(connection_id);
+        self.managers.lock().remove(connection_id);
+        self.clear_degraded(connection_id);
+        self.states.lock().remove(connection_id);
     }
 
     /// Drops the cached manager for a connection (profile edited, host gone).

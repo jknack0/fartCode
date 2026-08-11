@@ -152,6 +152,13 @@ pub async fn ssh_disconnect(
     .map_err(|e| e.to_string())
 }
 
+/// Whether this build can provision BYOI remote tasks (E12-10 gate). The UI
+/// hides the workspace-provider settings when this is false.
+#[tauri::command]
+pub fn remote_tasks_enabled() -> bool {
+    crate::byoi_tasks::ENABLED
+}
+
 /// Lifecycle view of one connection (E12-06 AC1/AC7): where it is, and
 /// whether its host is refusing new channels (MaxSessions).
 #[derive(serde::Serialize)]

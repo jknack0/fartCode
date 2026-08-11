@@ -60,6 +60,7 @@ const SYNC_OK: &[(&str, &str)] = &[
     ("project_settings_share", "writes the small .fartCode.json, no subprocess"),
     ("project_settings_provenance", "reads settings layers, no I/O beyond that file"),
     ("host_dependency_registry_summary", "in-memory registry fold, no PATH scan"),
+    ("remote_tasks_enabled", "returns a compile-time const (E12-10 feature gate)"),
     // -- issues board (SQLite only; ARCHITECTURE §13) ---------------------
     ("issue_create", "INSERT + lane position bookkeeping"),
     ("issue_list", "SELECT + in-memory blocked-status derivation"),

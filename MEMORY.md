@@ -1,4 +1,30 @@
 # MEMORY.md — fartCode
+## #92 E12-10 BYOI task wiring + feature gate LANDED (2026-08-11) — ADR-0045
+
+`fartcode-app/src/byoi_tasks.rs` connects E12-07's contract to real tasks:
+`provision` runs before core's provision (which is a no-op for byoi rows),
+`terminate` runs first in `delete_task_blocking`. `RemotePtyRegistry` gained
+transient connections (`register_transient`/`forget_transient`) so a
+provisioned machine gets the whole E12-06 lifecycle without a saved profile.
+Core gained `byoi_workspace_for_task` + `record_provisioned_machine`.
+Command: `remote_tasks_enabled`.
+
+Bites:
+- **Gate is `remote-tasks`, a cargo feature, default OFF**, enforced at
+  PROVISION only. Teardown deliberately ignores it — a disabled build must
+  still clean up what an enabled one created.
+- **`ssh_connection_id` (not `remoteWorkspaceId`) means "provisioned"**: a
+  script may return a blank id, and re-provision would leak the first VM.
+- Connection id is `task:<task id>` — namespaced so it cannot collide with a
+  saved profile UUID; the pool checks transients BEFORE the profile store.
+- Scripts run where the PROJECT lives, never on the provisioned machine.
+- A new non-async tauri command needs a `SYNC_OK` entry in
+  `tests/no_blocking_tauri_commands.rs` or the guard fails (bit me on
+  `remote_tasks_enabled`).
+- `clippy::assertions_on_constants` rejects `assert!(!ENABLED)` — bind to a
+  `let` first if you want a real test of a `cfg!` const.
+- Deleting a task waits on terminate (10-min budget) by design.
+
 ## #91 E12-07 BYOI provision/terminate LANDED (2026-08-11) — ADR-0044
 
 `fartcode-core/src/tasks/byoi.rs`: the BYOI contract — `ProvisionOutput`
