@@ -18,7 +18,7 @@ use fartcode_core::dependencies::HostDependencyStore;
 use fartcode_core::events::BroadcastEventBus;
 use fartcode_core::projects::DbProjectStore;
 use fartcode_core::pty::launcher::{
-    AgentLaunchContext, AgentLauncher, NoopRemoteRehydrate, RehydrateTarget, Rehydrator,
+    AgentLaunchContext, AgentLauncher, RehydrateTarget, Rehydrator,
 };
 use fartcode_core::pty::tmux::{make_tmux_session_name, parse_tmux_session_name};
 use fartcode_core::tasks::DbTaskStore;
@@ -351,7 +351,6 @@ fn boot_rehydrator_walks_projects_tasks_conversations() {
         projects.clone(),
         db.clone(),
         false,
-        Arc::new(NoopRemoteRehydrate),
         None,
         None,
     );
@@ -373,4 +372,97 @@ fn boot_rehydrator_walks_projects_tasks_conversations() {
     // Session id was re-persisted by the launch (with_conversation_store).
     let stored = conversations.get("conv-boot").unwrap().unwrap();
     assert_eq!(stored.session_id.as_deref(), Some("amp-native-boot"));
+}
+
+/// E12-05 AC13: boot rehydration and remote workspaces.
+///
+/// A remote worktree does not exist on this disk, so the local existence
+/// check must not be what decides. The SSH route does: no route (no SSH
+/// layer) or an unreachable/manually-disconnected host both skip — never a
+/// local resume against a path this machine lacks.
+#[test]
+fn remote_conversations_rehydrate_only_through_their_host() {
+    use fartcode_core::terminals::pty::{RemotePtyLookup, RemotePtyRoute};
+
+    struct Disconnected;
+    impl RemotePtyLookup for Disconnected {
+        fn resolve(&self, _task_id: &str) -> Result<Option<RemotePtyRoute>, fartcode_core::Error> {
+            Err(fartcode_core::Error::Internal(
+                "ssh connection disconnected: conn-1 — reconnect to resume".into(),
+            ))
+        }
+    }
+
+    let build = |lookup: Option<Arc<dyn RemotePtyLookup>>| {
+        let db = SqliteDb::init_in_memory().unwrap();
+        let bus = Arc::new(BroadcastEventBus::new(32));
+        let conversations: Arc<DbConversationStore> =
+            Arc::new(DbConversationStore::new(db.clone(), bus.clone()));
+        let tasks: Arc<DbTaskStore> = Arc::new(DbTaskStore::new(db.clone(), bus.clone()));
+        let projects: Arc<DbProjectStore> = Arc::new(DbProjectStore::new(
+            db.clone(),
+            Arc::new(fartcode_core::settings::DbSettingsStore::new(db.clone())),
+            Arc::new(fartcode_git::CliGit),
+            bus.clone(),
+        ));
+        db.conn()
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO projects (id, name, path) VALUES ('p1', 'demo', '/tmp/demo');
+                 INSERT INTO tasks (id, project_id, name, status, workspace_id)
+                     VALUES ('task-r', 'p1', 'remote boot', 'in_progress', 'ws-r');
+                 INSERT INTO workspaces (id, type, kind, location, path, config, ssh_connection_id)
+                     VALUES ('ws-r', 'local', 'worktree', 'remote',
+                             '/srv/demo/.fartCode/worktrees/seg/branch', '{}', 'conn-1');",
+            )
+            .unwrap();
+        let conv = conversations
+            .create(CreateConversationParams {
+                id: Some("conv-remote".into()),
+                project_id: "p1".into(),
+                task_id: Some("task-r".into()),
+                scope: Some(ConversationScopeDto::Task),
+                provider: Some("amp".into()),
+                title: "Remote boot".into(),
+                auto_approve: None,
+                model: None,
+                initial_prompt: None,
+                initial_queue: None,
+                is_initial_conversation: false,
+                r#type: Some(ConversationTypeDto::Pty),
+            })
+            .unwrap();
+        conversations
+            .set_session_id(&conv.id, "amp-native-remote")
+            .unwrap();
+        Rehydrator::new(
+            Arc::new(PortablePtyManager),
+            Arc::new(HostDependencyStore::new(
+                db.clone(),
+                Arc::new(fartcode_core::dependencies::ProcessInstallRunner),
+            )),
+            Arc::new(BroadcastEventBus::new(16)),
+            conversations,
+            tasks,
+            projects,
+            db,
+            false,
+            None,
+            lookup,
+        )
+    };
+
+    // No SSH layer at all: skipped, and nothing spawned locally.
+    let summary = build(None).rehydrate_all().unwrap();
+    assert_eq!(summary.resumed, 0, "{summary:?}");
+    assert_eq!(summary.skipped, 1, "{summary:?}");
+    assert_eq!(summary.failed, 0, "{summary:?}");
+
+    // Host the user disconnected by hand: still skipped, still no local
+    // resume — boot does not dial back on its own.
+    let summary = build(Some(Arc::new(Disconnected))).rehydrate_all().unwrap();
+    assert_eq!(summary.resumed, 0, "{summary:?}");
+    assert_eq!(summary.skipped, 1, "{summary:?}");
+    assert_eq!(summary.failed, 0, "{summary:?}");
 }

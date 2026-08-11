@@ -177,7 +177,7 @@ fn probe_tmux(candidate: &str) -> bool {
 
 /// Names whose decoded fartCode session id starts with `id_prefix` (pure filter —
 /// foreign and malformed names never match).
-fn tmux_sessions_matching<'a>(
+pub fn tmux_sessions_matching<'a>(
     names: impl IntoIterator<Item = &'a str>,
     id_prefix: &str,
 ) -> Vec<String> {
@@ -188,6 +188,61 @@ fn tmux_sessions_matching<'a>(
         .collect()
 }
 
+/// `list-sessions` output format. Shared by the local process path and the
+/// remote SSH path (E12-05 AC12) so both parse one shape.
+pub const TMUX_LIST_FORMAT: &str = "#{session_name}\t#{session_attached}";
+
+/// Parses `list-sessions -F TMUX_LIST_FORMAT` stdout into `(name, attached)`.
+/// Pure: malformed lines are dropped, so a tmux error message ("no server
+/// running") simply yields no rows.
+pub fn parse_tmux_session_rows(stdout: &str) -> Vec<(String, bool)> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let (name, attached) = line.trim_end().split_once('\t')?;
+            Some((name.to_string(), attached == "1"))
+        })
+        .collect()
+}
+
+/// fartCode sessions among `rows` whose decoded id starts with `id_prefix`
+/// (pure — the caller supplies the listing, local or remote).
+pub fn sessions_from_rows(rows: &[(String, bool)], id_prefix: &str) -> Vec<TmuxSessionInfo> {
+    rows.iter()
+        .filter_map(|(name, attached)| {
+            Some(TmuxSessionInfo {
+                session_id: parse_tmux_session_name(name)?,
+                attached: *attached,
+            })
+        })
+        .filter(|info| info.session_id.starts_with(id_prefix))
+        .collect()
+}
+
+/// Remote availability probe (E12-05 AC12): the host may have no tmux, in
+/// which case remote terminals spawn plain — same degradation as locally.
+pub fn remote_tmux_probe_command() -> String {
+    "command -v tmux".to_string()
+}
+
+/// Remote `list-sessions`. The format string is escaped, never interpolated
+/// (AC14) — it is full of `#{}` that a shell must not touch.
+pub fn remote_tmux_list_command() -> String {
+    format!(
+        "tmux list-sessions -F {}",
+        crate::shell_escape::single_quote(TMUX_LIST_FORMAT)
+    )
+}
+
+/// Remote `kill-session`. Best-effort on the remote too: a session that is
+/// already gone exits nonzero and that is not an error.
+pub fn remote_tmux_kill_command(session_name: &str) -> String {
+    format!(
+        "tmux kill-session -t {} 2>/dev/null || true",
+        crate::shell_escape::single_quote(session_name)
+    )
+}
+
 /// `list-sessions` rows for the local tmux server. Best-effort: tmux
 /// absent / no server running → empty.
 fn list_tmux_session_rows() -> Vec<(String, bool)> {
@@ -195,11 +250,7 @@ fn list_tmux_session_rows() -> Vec<(String, bool)> {
         return Vec::new();
     };
     let output = std::process::Command::new(&binary.command)
-        .args([
-            "list-sessions",
-            "-F",
-            "#{session_name}\t#{session_attached}",
-        ])
+        .args(["list-sessions", "-F", TMUX_LIST_FORMAT])
         .output();
     let Ok(output) = output else {
         return Vec::new();
@@ -208,13 +259,7 @@ fn list_tmux_session_rows() -> Vec<(String, bool)> {
         // No tmux server running → nothing to list.
         return Vec::new();
     }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let (name, attached) = line.split_once('\t')?;
-            Some((name.to_string(), attached == "1"))
-        })
-        .collect()
+    parse_tmux_session_rows(&String::from_utf8_lossy(&output.stdout))
 }
 
 /// One live fartCode tmux session (decoded id + attach state).
@@ -232,16 +277,7 @@ pub struct TmuxSessionInfo {
 /// names never match — they must decode via `parse_tmux_session_name`
 /// first. Best-effort: no tmux / no server → empty.
 pub fn list_tmux_sessions_by_prefix(id_prefix: &str) -> Vec<TmuxSessionInfo> {
-    list_tmux_session_rows()
-        .into_iter()
-        .filter_map(|(name, attached)| {
-            Some(TmuxSessionInfo {
-                session_id: parse_tmux_session_name(&name)?,
-                attached,
-            })
-        })
-        .filter(|info| info.session_id.starts_with(id_prefix))
-        .collect()
+    sessions_from_rows(&list_tmux_session_rows(), id_prefix)
 }
 
 /// Slot for a task's next durable terminal (ADR-0028): reuse the smallest
@@ -536,5 +572,59 @@ mod tests {
             .filter(|id| id.starts_with("proj-1:task-1:terminal:"))
             .collect();
         assert_eq!(matched, vec!["proj-1:task-1:terminal:0"]);
+    }
+
+    #[test]
+    fn parses_list_sessions_rows() {
+        let rows = parse_tmux_session_rows("a\t1\nb\t0\r\nrubbish\n");
+        assert_eq!(
+            rows,
+            vec![("a".to_string(), true), ("b".to_string(), false)]
+        );
+    }
+
+    #[test]
+    fn sessions_from_rows_filters_foreign_and_prefix() {
+        let ours = make_tmux_session_name("p1:t1:terminal:0");
+        let other_task = make_tmux_session_name("p1:t2:terminal:0");
+        let rows = vec![
+            (ours.clone(), false),
+            (other_task, true),
+            ("someone-elses-session".to_string(), true),
+        ];
+        let found = sessions_from_rows(&rows, "p1:t1:terminal:");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].session_id, "p1:t1:terminal:0");
+        assert!(!found[0].attached);
+    }
+
+    #[test]
+    fn remote_tmux_commands_are_escaped() {
+        // The list format is full of `#{}`; the shell must never see it raw.
+        let list = remote_tmux_list_command();
+        assert!(list.contains(&format!("'{TMUX_LIST_FORMAT}'")), "{list}");
+        // A session name is our own base64url, but the escape is what keeps
+        // it that way if a caller ever passes something else (AC14).
+        let kill = remote_tmux_kill_command("fartCode-x'; rm -rf /");
+        assert!(kill.contains(r#"'fartCode-x'\''; rm -rf /'"#), "{kill}");
+        assert!(kill.ends_with("|| true"), "{kill}");
+    }
+
+    #[test]
+    fn remote_session_command_survives_a_hostile_worktree_path() {
+        // E12-05 AC14: a remote worktree path with quotes, spaces and a
+        // semicolon is data inside the tmux session command, never syntax.
+        let cwd = std::path::Path::new("/home/u/wt/it's here; rm -rf /");
+        let inner = build_terminal_session_command(cwd, "/bin/bash");
+        assert_eq!(
+            inner,
+            r#"cd '/home/u/wt/it'\''s here; rm -rf /' && exec '/bin/bash'"#
+        );
+        let line = build_tmux_shell_line(&make_tmux_session_name("p:t:terminal:0"), &inner);
+        // The whole session command rides as ONE JSON-quoted tmux argument.
+        assert!(
+            line.contains(&serde_json::to_string(&inner).unwrap()),
+            "{line}"
+        );
     }
 }

@@ -1055,7 +1055,7 @@ fn main() {
 
     // -- 26. Boot rehydration orchestration (E2-07) --------------------------
     use fartcode_core::projects::DbProjectStore;
-    use fartcode_core::pty::launcher::{NoopRemoteRehydrate, RehydrateSummary, Rehydrator};
+    use fartcode_core::pty::launcher::{RehydrateSummary, Rehydrator};
     use fartcode_core::tasks::DbTaskStore;
     let rh_db = fartcode_core::db::SqliteDb::init_in_memory().unwrap();
     let rh_bus = Arc::new(fartcode_core::events::BroadcastEventBus::new(16));
@@ -1079,7 +1079,6 @@ fn main() {
         Arc::new(rh_projects),
         rh_db.clone(),
         false,
-        Arc::new(NoopRemoteRehydrate),
         None,
         None,
     );
@@ -1088,11 +1087,6 @@ fn main() {
     check(
         empty_summary == RehydrateSummary::default(),
         "boot rehydration on an empty DB is a clean no-op",
-    );
-    use fartcode_core::pty::launcher::RemoteRehydrate;
-    check(
-        NoopRemoteRehydrate.rehydrate_remote("any-session").is_ok(),
-        "Phase-3 remote-rehydrate hook is a no-op stub",
     );
 
     println!(

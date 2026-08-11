@@ -111,3 +111,48 @@ pub async fn clone_project(app: State<'_, Arc<App>>, url: String) -> Result<Proj
     .await
     .map_err(|e| e.to_string())?
 }
+
+/// Opens (or re-opens) a connection and holds it in the shared registry
+/// (E12-05 AC13). Explicit, so a failure is reported to the user who asked
+/// for it rather than swallowed by a background path.
+#[tauri::command]
+pub async fn ssh_connect(app: State<'_, Arc<App>>, connection_id: String) -> Result<bool, String> {
+    let app = app.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        app.remote_pty
+            .connect(&connection_id)
+            .map(|()| true)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Drops a connection at the user's request (E12-05 AC13). The intent is
+/// remembered: terminals and boot rehydration will NOT dial back on their
+/// own — only another `ssh_connect` does.
+#[tauri::command]
+pub async fn ssh_disconnect(
+    app: State<'_, Arc<App>>,
+    connection_id: String,
+) -> Result<bool, String> {
+    let app = app.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        app.remote_pty.disconnect(&connection_id);
+        false
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Whether this process currently holds the connection open.
+#[tauri::command]
+pub async fn ssh_connection_state(
+    app: State<'_, Arc<App>>,
+    connection_id: String,
+) -> Result<bool, String> {
+    let app = app.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || app.remote_pty.is_connected(&connection_id))
+        .await
+        .map_err(|e| e.to_string())
+}

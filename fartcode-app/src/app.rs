@@ -16,7 +16,7 @@ use fartcode_core::projects::remote::RemoteProjectStore;
 use fartcode_core::projects::worktrees::WorktreeManager;
 use fartcode_core::projects::DbProjectStore;
 use fartcode_core::provider_accounts::ProviderAccountStore;
-use fartcode_core::pty::launcher::{NoopRemoteRehydrate, Rehydrator};
+use fartcode_core::pty::launcher::Rehydrator;
 use fartcode_core::pty::sessions::SessionRegistry;
 use fartcode_core::settings::DbSettingsStore;
 use fartcode_core::ssh_connections::SshConnectionStore;
@@ -127,7 +127,6 @@ impl App {
             projects.clone(),
             db.clone(),
             false, // auto-approve defaults off on boot
-            Arc::new(NoopRemoteRehydrate),
             Some(sessions.clone()),
             Some(remote_pty.clone()),
         );

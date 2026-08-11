@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 
 use fartcode_core::terminals::lifecycle::LifecycleScriptType;
 use fartcode_core::terminals::pty::{EnvPolicy, PtyHandle, PtyManager, PtySize};
+use fartcode_ssh::tmux::RemoteTmux;
 use fartcode_terminal::PortablePtyManager;
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -59,6 +60,10 @@ struct Entry {
     /// Decoded tmux session id (`{project}:{task}:terminal:{slot}`) when
     /// the PTY runs a durable session (ADR-0025); `None` for plain shells.
     tmux_session_id: Option<String>,
+    /// The host's tmux when this terminal is durable on a REMOTE machine
+    /// (E12-05 AC12) — teardown must kill the session where it lives, not
+    /// on this laptop's tmux server.
+    remote_tmux: Option<Arc<RemoteTmux>>,
     /// Script type when this terminal runs a lifecycle script (E1-06);
     /// `None` for plain shells and agent terminals. Lifecycle entries are
     /// RETAINED after the script exits (the tab still shows the output tail
@@ -257,50 +262,58 @@ impl<R: tauri::Runtime> TerminalManager<R> {
             Some(registry) => registry.route_for_task(task_id)?,
             None => None,
         };
-        let remote_pty = remote_route.as_ref().map(|(manager, _)| manager.clone());
-        // tmux durability resolves a binary on THIS machine (ADR-0025), so it
-        // cannot describe a remote session — remote tmux is E12-05's tmux
-        // criterion, still open.
+        let remote_pty = remote_route.as_ref().map(|(manager, _, _)| manager.clone());
+        // E12-05 AC12: durability follows the transport. Locally that is a
+        // tmux binary on THIS machine (ADR-0025); remotely it is the HOST's
+        // tmux server, reached over the same connection the PTY uses — a
+        // local binary cannot describe (or kill) a session over there. A
+        // host without tmux degrades to a plain spawn, same as locally.
+        let remote_tmux = remote_route
+            .as_ref()
+            .filter(|_| tmux)
+            .map(|(_, remote, _)| remote.clone())
+            .filter(|remote| remote.available());
         let tmux_binary = (tmux && remote_pty.is_none())
             .then(fartcode_core::pty::tmux::resolve_tmux_binary)
             .flatten();
-        if tmux && remote_pty.is_some() {
-            tracing::debug!(task_id, "remote terminal — tmux durability not yet wired");
-        }
         let mut tmux_session_id: Option<String> = None;
+        let durable = tmux_binary.is_some() || remote_tmux.is_some();
         let (spawn_cmd, spawn_args, spawn_env): (String, Vec<String>, Vec<(String, String)>) =
-            match tmux_binary {
-                Some(binary) => {
-                    let slot = self.pick_slot(project_id, task_id);
-                    let session_id = format!("{project_id}:{task_id}:terminal:{slot}");
-                    let name = fartcode_core::pty::tmux::make_tmux_session_name(&session_id);
-                    // E2-13 (#52): startup commands spawn as `sh -c '<cmd>'`,
-                    // which the plain builder cannot carry — args go into the
-                    // session command too.
-                    let inner = if args.is_empty() {
-                        fartcode_core::pty::tmux::build_terminal_session_command(cwd, program)
-                    } else {
-                        fartcode_core::pty::tmux::build_terminal_session_command_args(
-                            cwd, program, args,
-                        )
-                    };
-                    let line = fartcode_core::pty::tmux::build_tmux_shell_line(&name, &inner);
-                    // tmux needs TERM; portable-pty sets none and Dock-launched
-                    // apps may inherit no TERM either. PATH overlay covers the
-                    // Dock PATH that lacks Homebrew.
-                    let mut env = vec![("TERM".into(), "xterm-256color".into())];
-                    if let Some(path) = &binary.path_overlay {
-                        env.push(("PATH".into(), path.clone()));
-                    }
-                    tmux_session_id = Some(session_id);
-                    ("/bin/sh".into(), vec!["-c".into(), line], env)
+            if durable {
+                let prefix = format!("{project_id}:{task_id}:terminal:");
+                let live = match &remote_tmux {
+                    Some(remote) => remote.list_sessions_by_prefix(&prefix),
+                    None => fartcode_core::pty::tmux::list_tmux_sessions_by_prefix(&prefix),
+                };
+                let slot = self.pick_slot(task_id, &prefix, &live);
+                let session_id = format!("{prefix}{slot}");
+                let name = fartcode_core::pty::tmux::make_tmux_session_name(&session_id);
+                // E2-13 (#52): startup commands spawn as `sh -c '<cmd>'`,
+                // which the plain builder cannot carry — args go into the
+                // session command too.
+                let inner = if args.is_empty() {
+                    fartcode_core::pty::tmux::build_terminal_session_command(cwd, program)
+                } else {
+                    fartcode_core::pty::tmux::build_terminal_session_command_args(
+                        cwd, program, args,
+                    )
+                };
+                let line = fartcode_core::pty::tmux::build_tmux_shell_line(&name, &inner);
+                // tmux needs TERM; portable-pty sets none and Dock-launched
+                // apps may inherit no TERM either. PATH overlay covers the
+                // Dock PATH that lacks Homebrew — it describes THIS machine,
+                // so it never travels to a remote session.
+                let mut env = vec![("TERM".into(), "xterm-256color".into())];
+                if let Some(path) = tmux_binary.as_ref().and_then(|b| b.path_overlay.as_ref()) {
+                    env.push(("PATH".into(), path.clone()));
                 }
-                None => {
-                    if tmux {
-                        tracing::debug!(task_id, "tmux enabled but no binary — plain spawn");
-                    }
-                    (program.to_string(), args.to_vec(), env.to_vec())
+                tmux_session_id = Some(session_id);
+                ("/bin/sh".into(), vec!["-c".into(), line], env)
+            } else {
+                if tmux {
+                    tracing::debug!(task_id, "tmux enabled but no binary — plain spawn");
                 }
+                (program.to_string(), args.to_vec(), env.to_vec())
             };
         let pty: &dyn PtyManager = match remote_pty.as_deref() {
             Some(manager) => manager,
@@ -309,7 +322,7 @@ impl<R: tauri::Runtime> TerminalManager<R> {
         // E12-05 AC7: the agent/script learns which remote workspace it is
         // in. Local terminals never see the variable.
         let spawn_env: Vec<(String, String)> = match &remote_route {
-            Some((_, target)) => spawn_env
+            Some((_, _, target)) => spawn_env
                 .into_iter()
                 .chain([(
                     "REMOTE_WORKSPACE_ID".to_string(),
@@ -353,6 +366,7 @@ impl<R: tauri::Runtime> TerminalManager<R> {
             task_id: task_id.to_string(),
             agent: agent.map(str::to_string),
             tmux_session_id,
+            remote_tmux: remote_tmux.clone(),
             lifecycle_type: lifecycle.map(|t| t.as_str().to_string()),
             exited: AtomicBool::new(false),
             exit_code: Mutex::new(None),
@@ -460,16 +474,19 @@ impl<R: tauri::Runtime> TerminalManager<R> {
     /// Slot for the task's next open (ADR-0028): reuse the smallest live
     /// DETACHED session this process does not already own; else the first
     /// free slot. See `choose_terminal_slot` for the policy.
-    fn pick_slot(&self, project_id: &str, task_id: &str) -> u32 {
-        let prefix = format!("{project_id}:{task_id}:terminal:");
-        let live = fartcode_core::pty::tmux::list_tmux_sessions_by_prefix(&prefix);
+    fn pick_slot(
+        &self,
+        task_id: &str,
+        prefix: &str,
+        live: &[fartcode_core::pty::tmux::TmuxSessionInfo],
+    ) -> u32 {
         let owned = self
             .task_slots
             .lock()
             .get(task_id)
             .cloned()
             .unwrap_or_default();
-        let slot = fartcode_core::pty::tmux::choose_terminal_slot(&prefix, &owned, &live);
+        let slot = fartcode_core::pty::tmux::choose_terminal_slot(prefix, &owned, live);
         self.task_slots
             .lock()
             .entry(task_id.to_string())
@@ -491,10 +508,31 @@ impl<R: tauri::Runtime> TerminalManager<R> {
                 .filter_map(|e| e.tmux_session_id.clone())
                 .collect()
         };
-        fartcode_core::pty::tmux::list_tmux_sessions_by_prefix(&prefix)
-            .iter()
+        let live = match self.remote_tmux_for_task(task_id) {
+            Some(remote) => remote.list_sessions_by_prefix(&prefix),
+            None => fartcode_core::pty::tmux::list_tmux_sessions_by_prefix(&prefix),
+        };
+        live.iter()
             .filter(|s| !owned.contains(&s.session_id))
             .count()
+    }
+
+    /// The tmux server a task's durable sessions live on when its workspace
+    /// is remote (E12-05 AC12); `None` for local tasks. Prefers a live
+    /// terminal's handle — teardown can run after the task row is gone —
+    /// and falls back to resolving the route.
+    fn remote_tmux_for_task(&self, task_id: &str) -> Option<Arc<RemoteTmux>> {
+        let from_entry = self
+            .terminals
+            .lock()
+            .values()
+            .find(|e| e.task_id == task_id)
+            .and_then(|e| e.remote_tmux.clone());
+        if from_entry.is_some() {
+            return from_entry;
+        }
+        let (_, remote, _) = self.remote.as_ref()?.route_for_task(task_id).ok()??;
+        Some(remote)
     }
 
     /// Terminals of a task (the diff selection prompt routes to the agent
@@ -609,8 +647,13 @@ impl<R: tauri::Runtime> TerminalManager<R> {
             let _ = entry.handle.lock().kill();
             if let Some(session_id) = &entry.tmux_session_id {
                 let name = fartcode_core::pty::tmux::make_tmux_session_name(session_id);
-                if let Err(e) = fartcode_core::pty::tmux::kill_tmux_session(&name) {
-                    tracing::warn!(session = %name, error = %e, "tmux kill-session on close failed");
+                match &entry.remote_tmux {
+                    Some(remote) => remote.kill_session(&name),
+                    None => {
+                        if let Err(e) = fartcode_core::pty::tmux::kill_tmux_session(&name) {
+                            tracing::warn!(session = %name, error = %e, "tmux kill-session on close failed");
+                        }
+                    }
                 }
                 // The session is gone — free its slot so the next open can
                 // recreate a low-numbered session instead of climbing forever.
@@ -630,6 +673,9 @@ impl<R: tauri::Runtime> TerminalManager<R> {
     /// Also sweeps the task's tmux sessions — including ones orphaned by a
     /// crashed app instance (ADR-0025). Best-effort: absent tmux → no-op.
     pub fn close_task(&self, project_id: &str, task_id: &str) {
+        // Resolved BEFORE the entries are dropped: closing them removes the
+        // last handle that knows which host the sessions live on.
+        let remote = self.remote_tmux_for_task(task_id);
         let ids: Vec<String> = self
             .terminals
             .lock()
@@ -640,9 +686,11 @@ impl<R: tauri::Runtime> TerminalManager<R> {
         for id in ids {
             self.close(&id);
         }
-        let killed = fartcode_core::pty::tmux::kill_tmux_sessions_by_prefix(&format!(
-            "{project_id}:{task_id}:terminal:"
-        ));
+        let prefix = format!("{project_id}:{task_id}:terminal:");
+        let killed = match remote {
+            Some(remote) => remote.kill_sessions_by_prefix(&prefix),
+            None => fartcode_core::pty::tmux::kill_tmux_sessions_by_prefix(&prefix),
+        };
         if killed > 0 {
             tracing::info!(
                 task_id,

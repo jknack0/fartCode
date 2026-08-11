@@ -612,22 +612,6 @@ impl AgentLauncher {
     }
 }
 
-/// Phase-3 hook (E2-07): rehydrate a remote terminal session after an SSH
-/// reconnect. Phase 0 ships the stub — remote sessions are out of scope until
-/// `fartcode-ssh` lands.
-pub trait RemoteRehydrate: Send + Sync {
-    fn rehydrate_remote(&self, session_id: &str) -> Result<(), Error>;
-}
-
-/// Phase-0 stub: no remote rehydration.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NoopRemoteRehydrate;
-impl RemoteRehydrate for NoopRemoteRehydrate {
-    fn rehydrate_remote(&self, _session_id: &str) -> Result<(), Error> {
-        Ok(())
-    }
-}
-
 /// Boot rehydration orchestration (E2-07, reference boot order: rehydrate
 /// after DB init): for every project → task → PTY conversation that was
 /// previously spawned, relaunch the agent with resume flags in its worktree.
@@ -646,8 +630,11 @@ pub struct Rehydrator {
     /// Trust-state fallback for auto-approve (the conversation's own toggle
     /// wins; see `AgentLauncher::rehydrate`).
     default_auto_approve: bool,
-    /// Phase-3 remote hook (stub).
-    remote: Arc<dyn RemoteRehydrate>,
+    /// E12-05 AC13: resolves a remote task's host so a boot resume reattaches
+    /// the session ON that host. `None` means this build has no SSH layer, in
+    /// which case remote conversations are skipped — never resumed locally
+    /// against a path this machine does not have.
+    remote_pty: Option<Arc<dyn RemotePtyLookup>>,
 }
 
 /// Result of a boot rehydration pass.
@@ -669,7 +656,6 @@ impl Rehydrator {
         projects: Arc<dyn ProjectStore>,
         db: Arc<dyn Db>,
         default_auto_approve: bool,
-        remote: Arc<dyn RemoteRehydrate>,
         sessions: Option<Arc<super::sessions::SessionRegistry>>,
         // E12-05: routes launches for remote-workspace tasks to an SSH PTY.
         // `None` keeps every launch local (Phase 0/2 behavior).
@@ -680,8 +666,8 @@ impl Rehydrator {
         if let Some(reg) = sessions {
             launcher = launcher.with_session_registry(reg);
         }
-        if let Some(lookup) = remote_pty {
-            launcher = launcher.with_remote_pty(lookup);
+        if let Some(lookup) = &remote_pty {
+            launcher = launcher.with_remote_pty(lookup.clone());
         }
         Self {
             launcher: Arc::new(launcher),
@@ -690,7 +676,7 @@ impl Rehydrator {
             projects,
             db,
             default_auto_approve,
-            remote,
+            remote_pty,
         }
     }
 
@@ -718,20 +704,28 @@ impl Rehydrator {
                         summary.skipped += 1; // byoi/project-root: no worktree to resume in
                         continue;
                     };
-                    let worktree_path: String = self
+                    let workspace: Option<(String, String)> = self
                         .db
                         .conn()
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
                         .query_row(
-                            "SELECT path FROM workspaces WHERE id = ?1",
+                            "SELECT path, COALESCE(location, 'local') FROM workspaces WHERE id = ?1",
                             [workspace_id],
-                            |row| row.get::<_, String>(0),
+                            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
                         )
                         .optional()
-                        .map_err(Error::from)?
-                        .unwrap_or_default();
-                    if worktree_path.is_empty() || !Path::new(&worktree_path).is_dir() {
+                        .map_err(Error::from)?;
+                    let (worktree_path, location) = workspace.unwrap_or_default();
+                    // E12-05 AC13: a remote worktree is not on this disk, so
+                    // the local existence check would skip every remote
+                    // session forever. Remote rows are gated on the SSH route
+                    // instead — and a build without one skips them rather
+                    // than resuming locally against a path we do not have.
+                    let is_remote = location == "remote";
+                    if worktree_path.is_empty()
+                        || (!is_remote && !Path::new(&worktree_path).is_dir())
+                    {
                         tracing::warn!(
                             conversation = %conv.id,
                             path = %worktree_path,
@@ -739,6 +733,41 @@ impl Rehydrator {
                         );
                         summary.skipped += 1;
                         continue;
+                    }
+                    if is_remote {
+                        match self.remote_pty.as_ref().map(|r| r.resolve(&task.id)) {
+                            // Reachable host: the launcher spawns through it,
+                            // and with tmux on the host that spawn IS the
+                            // reattach (AC12).
+                            Some(Ok(Some(_))) => {}
+                            Some(Ok(None)) => {
+                                tracing::warn!(
+                                    conversation = %conv.id,
+                                    "rehydrate skipped: remote workspace with no route"
+                                );
+                                summary.skipped += 1;
+                                continue;
+                            }
+                            // Host unreachable, or the user disconnected it by
+                            // hand: boot must not reconnect behind their back.
+                            Some(Err(e)) => {
+                                tracing::warn!(
+                                    conversation = %conv.id,
+                                    error = %e,
+                                    "rehydrate skipped: remote host not available"
+                                );
+                                summary.skipped += 1;
+                                continue;
+                            }
+                            None => {
+                                tracing::warn!(
+                                    conversation = %conv.id,
+                                    "rehydrate skipped: remote workspace, no SSH layer"
+                                );
+                                summary.skipped += 1;
+                                continue;
+                            }
+                        }
                     }
                     let target = RehydrateTarget {
                         provider_id,
@@ -751,18 +780,8 @@ impl Rehydrator {
                     };
                     let launcher = self.launcher.clone();
                     let conv = conv.clone();
-                    let remote = self.remote.clone();
                     handles.push(std::thread::spawn(move || {
-                        // Phase-3 hook: after a SUCCESSFUL local resume,
-                        // notify the remote side (SSH reconnect re-attaches
-                        // the terminal).
-                        let result = launcher.rehydrate(&conv, &target);
-                        if result.is_ok() {
-                            if let Some(sid) = conv.session_id.as_deref() {
-                                let _ = remote.rehydrate_remote(sid);
-                            }
-                        }
-                        result
+                        launcher.rehydrate(&conv, &target)
                     }));
                     summary.resumed += 1;
                 }

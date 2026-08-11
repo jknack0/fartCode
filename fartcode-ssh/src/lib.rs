@@ -18,6 +18,7 @@ pub mod config;
 pub mod host;
 pub mod pty;
 pub mod sftp;
+pub mod tmux;
 
 // ── Auth method ──────────────────────────────────────────────
 
