@@ -1,4 +1,28 @@
 # MEMORY.md — fartCode
+## #97 Editor tabs LANDED (2026-08-11, 8e79c4a)
+
+E5-02. Backend: `fartcode_core::files::read_file` (write_file containment
+mirrored, symlink-escape tested) + async `read_workspace_file` (#80).
+Frontend: `file-editor` tab kind, id `edit:<workspaceId>:<path>` re-parsed
+on restore (diff-tab pattern, no sidecar). Ownership split that matters:
+the editors STORE owns disk content + dirty/preview/save-error; the
+EditorView owns live text — a module-level view registry lets ⌘S write the
+LIVE doc (`view.state.doc.toString()`), never the loaded snapshot. Preview
+semantics cloned from openDiffTab: preview open replaces the pane's
+current preview editor; first edit or re-open flips persistent. ⌘⇧S =
+saveAll(dirty only). Clean tabs refetch on `files:changed` for their path;
+dirty tabs never clobbered (post-save echo is a no-op because save patches
+content = doc). Tree→editor wired at app boot via the E5-01 open-file seam
+(`wireOpenFileIntents` in App.tsx).
+
+Bites:
+- closeTab drops NO kind-specific store state for diff tabs either —
+  editor follows precedent (tiny leak, consistent; revisit if it matters).
+- Unsaved text drops on restart by design — `editor_buffers` recovery is
+  E5-03.
+
+Next: E5-03 autosave/recovery (2 s debounce → editor_buffers, table +
+schema already exist).
 ## #96 File tree panel LANDED (2026-08-11, c6a89cf)
 
 E5-01 — the editor epic opens (last unbuilt Phase-1 epic). Backend:
