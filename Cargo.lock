@@ -1382,6 +1382,7 @@ name = "fartcode-app"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol-schema",
+ "async-trait",
  "base64 0.22.1",
  "fartcode-acp",
  "fartcode-core",

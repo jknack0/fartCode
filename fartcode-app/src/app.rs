@@ -53,6 +53,8 @@ pub struct App {
     /// E12-05 remote PTY routing (one SSH manager per connection), shared by
     /// boot rehydration and the terminal manager.
     pub remote_pty: Arc<crate::remote_pty::RemotePtyRegistry>,
+    /// E12-09 SSH port-forward tunnels (shared with E6-04 previews).
+    pub port_forwards: Arc<crate::port_forwards::PortForwardService>,
     /// E4-01 workspace file+git watcher (registered via `watchers.rs`).
     pub fs_watch: Arc<FsWatchService>,
     /// E4-10 diff line comments (§14).
@@ -200,6 +202,9 @@ impl App {
             provider_accounts,
             ssh_connections,
             remote_projects,
+            port_forwards: Arc::new(crate::port_forwards::PortForwardService::new(
+                remote_pty.clone(),
+            )),
             remote_pty,
             fs_watch,
             line_comments,

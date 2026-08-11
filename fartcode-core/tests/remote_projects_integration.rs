@@ -338,7 +338,8 @@ async fn new_inits_an_empty_repo_and_adds_it() {
     assert!(host
         .commands()
         .iter()
-        .any(|c| c.first().map(String::as_str) == Some("git") && c.get(1).map(String::as_str) == Some("init")));
+        .any(|c| c.first().map(String::as_str) == Some("git")
+            && c.get(1).map(String::as_str) == Some("init")));
 
     // An occupied target is refused, and the empty name never reaches disk.
     let occupied = fx
@@ -346,7 +347,10 @@ async fn new_inits_an_empty_repo_and_adds_it() {
         .create_remote_new(&host, "conn-b", "my app", "/home/dev/fartCode")
         .await
         .unwrap_err();
-    assert!(occupied.to_string().contains("already exists"), "{occupied}");
+    assert!(
+        occupied.to_string().contains("already exists"),
+        "{occupied}"
+    );
     let empty = fx
         .store
         .create_remote_new(&host, CONN, "   ", "/home/dev/fartCode")

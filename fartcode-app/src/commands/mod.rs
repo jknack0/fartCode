@@ -13,6 +13,7 @@ pub mod issue_proposals;
 pub mod issues;
 pub mod lifecycle;
 pub mod line_comments;
+pub mod port_forwards;
 pub mod projects;
 pub mod provider_accounts;
 pub mod remote_projects;

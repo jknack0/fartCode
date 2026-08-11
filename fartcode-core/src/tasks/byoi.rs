@@ -211,14 +211,11 @@ pub async fn terminate(
     provider: &WorkspaceProvider,
     remote_workspace_id: Option<&str>,
 ) -> Option<String> {
-    let Some(command) = provider
+    let command = provider
         .terminate_command
         .as_deref()
         .map(str::trim)
-        .filter(|c| !c.is_empty())
-    else {
-        return None;
-    };
+        .filter(|c| !c.is_empty())?;
     let env: Vec<(String, String)> = remote_workspace_id
         .map(str::trim)
         .filter(|id| !id.is_empty())

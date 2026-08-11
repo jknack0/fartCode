@@ -12,6 +12,7 @@ pub mod dispatch;
 pub mod dossier_index;
 pub mod dossiers;
 pub mod indexer;
+pub mod port_forwards;
 pub mod remote_pty;
 pub mod skills;
 pub mod step_engine;
@@ -154,6 +155,9 @@ pub fn run() {
             commands::remote_projects::ssh_connection_state,
             commands::remote_projects::ssh_connection_states,
             commands::remote_projects::remote_tasks_enabled,
+            commands::port_forwards::port_forward_open,
+            commands::port_forwards::port_forward_stop,
+            commands::port_forwards::port_forward_list,
             commands::ssh_connections::ssh_connection_list,
             commands::ssh_connections::ssh_connection_save,
             commands::ssh_connections::ssh_connection_delete,

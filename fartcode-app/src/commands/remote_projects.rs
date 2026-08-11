@@ -164,6 +164,9 @@ pub async fn ssh_disconnect(
     connection_id: String,
 ) -> Result<bool, String> {
     let app = app.inner().clone();
+    // E12-09: a disconnected connection cannot carry tunnels — tear them
+    // down with it instead of leaving listeners that spray doomed dials.
+    app.port_forwards.stop_for_connection(&connection_id);
     tauri::async_runtime::spawn_blocking(move || {
         app.remote_pty.disconnect(&connection_id);
         false

@@ -385,9 +385,7 @@ impl RemoteProjectStore {
             return Ok(existing);
         }
         if host.stat(&target).await?.is_some() {
-            return Err(Error::Internal(format!(
-                "target already exists: {target}"
-            )));
+            return Err(Error::Internal(format!("target already exists: {target}")));
         }
         host.mkdir_all(&target).await?;
         // `--initial-branch` over a post-init rename; the branch matters

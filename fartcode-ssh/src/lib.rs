@@ -15,9 +15,10 @@ use tokio::io::AsyncReadExt;
 use tracing::{debug, info};
 
 pub mod byoi;
-pub mod known_hosts;
 pub mod config;
+pub mod forward;
 pub mod host;
+pub mod known_hosts;
 pub mod pty;
 pub mod sftp;
 pub mod tmux;

@@ -93,8 +93,8 @@ fn applies(patterns: &HostPatterns, cands: &[String]) -> bool {
             hit
         }
         HostPatterns::HashedName { salt, hash } => cands.iter().any(|c| {
-            let mut mac = Hmac::<sha1::Sha1>::new_from_slice(salt)
-                .expect("hmac accepts any key length");
+            let mut mac =
+                Hmac::<sha1::Sha1>::new_from_slice(salt).expect("hmac accepts any key length");
             mac.update(c.as_bytes());
             mac.finalize().into_bytes().as_slice() == hash
         }),
@@ -203,7 +203,10 @@ mod tests {
         struct Lcg(u64);
         impl ssh_key::rand_core::RngCore for Lcg {
             fn next_u32(&mut self) -> u32 {
-                self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                self.0 = self
+                    .0
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 (self.0 >> 32) as u32
             }
             fn next_u64(&mut self) -> u64 {
@@ -263,7 +266,12 @@ mod tests {
         );
         // A negation vetoes the entry even though the glob matches.
         assert_eq!(
-            verify(&line("*.example,!build.example", &k), "build.example", 22, &k),
+            verify(
+                &line("*.example,!build.example", &k),
+                "build.example",
+                22,
+                &k
+            ),
             Verdict::Unknown
         );
         assert_eq!(
@@ -293,10 +301,16 @@ mod tests {
     #[test]
     fn revoked_refuses_and_junk_lines_are_skipped() {
         let k = key(6);
-        let file = format!("# comment\nnot a valid line\n@revoked build.example {}", k.to_openssh().unwrap());
+        let file = format!(
+            "# comment\nnot a valid line\n@revoked build.example {}",
+            k.to_openssh().unwrap()
+        );
         assert_eq!(verify(&file, "build.example", 22, &k), Verdict::Revoked);
         // A revoked entry for a DIFFERENT key is neither a match nor a mismatch.
-        assert_eq!(verify(&file, "build.example", 22, &key(7)), Verdict::Unknown);
+        assert_eq!(
+            verify(&file, "build.example", 22, &key(7)),
+            Verdict::Unknown
+        );
     }
 
     #[test]
