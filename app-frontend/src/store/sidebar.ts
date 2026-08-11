@@ -8,6 +8,7 @@ import {
   TaskDto,
   createTask as apiCreateTask,
   createProject as apiCreateProject,
+  createRemoteProject as apiCreateRemoteProject,
   deleteProject as apiDeleteProject,
   deleteTask as apiDeleteTask,
   listProjects,
@@ -34,6 +35,8 @@ interface SidebarState {
   toggleCollapsed: (id: string) => void;
   createTask: (projectId: string, opts?: CreateTaskOptions) => Promise<void>;
   createProject: (path: string) => Promise<void>;
+  /** Remote project picker (E12-04): an existing repo on an SSH host. */
+  createRemoteProject: (connectionId: string, remotePath: string) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   deleteTask: (projectId: string, taskId: string) => Promise<void>;
   togglePin: (id: string) => Promise<void>;
@@ -147,6 +150,15 @@ export const useSidebar = create<SidebarState>((set, get) => ({
 
   createProject: async (path) => {
     const created = await apiCreateProject(path);
+    set((s) => ({
+      projects: [...s.projects, created],
+      selectedProjectId: created.id,
+      selectedTaskId: null,
+    }));
+  },
+
+  createRemoteProject: async (connectionId, remotePath) => {
+    const created = await apiCreateRemoteProject(connectionId, remotePath);
     set((s) => ({
       projects: [...s.projects, created],
       selectedProjectId: created.id,

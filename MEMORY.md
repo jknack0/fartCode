@@ -1,4 +1,31 @@
 # MEMORY.md — fartCode
+## #95 Remote project picker LANDED (2026-08-11)
+
+`remote_browse` finally has a caller: the Add-project dialog
+(`Modals.tsx::CreateProjectDialog`) grew a local/remote source toggle. Remote
+tab = connection select (profiles from `ssh_connection_list`) + a directory
+walker over the POOLED session; "add remote project" hands the CURRENT
+directory to `create_remote_project` via a new `useSidebar.createRemoteProject`
+action (same append+select bookkeeping as local). New tauri.ts bindings:
+`RemoteEntryDto`, `remoteBrowse`, `createRemoteProject`.
+
+Bites:
+- **`remote_browse` never echoes the cwd back** — no-path means the host's
+  login dir, but the response is entries only. The dialog recovers cwd from an
+  entry's parent path; an EMPTY login dir leaves cwd unknown (and add
+  disabled) until the user types a path.
+- Every click is a fresh listing, not client-side tree state — one round trip
+  per step, nothing to invalidate on reconnect.
+- Files are filtered out client-side; the picker deals only in directories.
+- Repo validation stays server-side in `create_remote_project` — the picker
+  does not probe for `.git`, the error row reports the backend's verdict.
+- `react-hooks/exhaustive-deps` is NOT installed in this eslint config — a
+  disable comment for it is itself a lint error.
+- Styling: `fc-src-toggle` + `fc-remote-list` in modals.css; everything else
+  reuses the composer grammar (fc-input-row / fc-opt-row).
+
+Still missing UI: workspace-provider (BYOI) settings form.
+
 ## #94 SSH connections UI + command layer LANDED (2026-08-11)
 
 E12-03's store finally has a door: `fartcode-app/src/commands/ssh_connections.rs`

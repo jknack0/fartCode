@@ -242,3 +242,52 @@
   padding: 12px 18px;
   border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
+/* -- add-project source toggle + remote picker (E12-04) -------------------- */
+
+.fc-src-toggle {
+  display: flex;
+  gap: 4px;
+  padding: 12px 18px 0;
+}
+.fc-src-toggle button {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 99px;
+  background: none;
+  color: var(--meta);
+  cursor: pointer;
+}
+.fc-src-toggle button.on {
+  color: var(--text-card);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.fc-remote-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 10px;
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.fc-remote-list button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-card);
+  cursor: pointer;
+}
+.fc-remote-list button:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.fc-remote-empty {
+  padding: 3px 8px;
+  color: var(--meta);
+}

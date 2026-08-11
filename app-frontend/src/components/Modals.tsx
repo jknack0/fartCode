@@ -11,6 +11,8 @@ import SettingsModal from "./SettingsModal";
 import {
   BranchRef,
   CreateTaskOptions,
+  RemoteEntryDto,
+  SshConnectionDto,
   archiveTask,
   createTask as apiCreateTask,
   createTaskFromComment,
@@ -19,6 +21,8 @@ import {
   listLineComments,
   listProjectBranches,
   listProviders,
+  remoteBrowse,
+  sshConnectionList,
   terminalListForTask,
   terminalOpenAgent,
   terminalWrite,
@@ -38,16 +42,71 @@ function typingTarget(e: KeyboardEvent): boolean {
 }
 
 export function CreateProjectDialog({ onClose }: { onClose: () => void }) {
+  const [mode, setMode] = useState<"local" | "remote">("local");
   const [path, setPath] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const createProject = useSidebar((s) => s.createProject);
+  const createRemoteProject = useSidebar((s) => s.createRemoteProject);
+
+  // Remote picker (E12-04): connections from the profile store; the browser
+  // walks the host over the POOLED session (`remote_browse`, E12-06).
+  const [connections, setConnections] = useState<SshConnectionDto[] | null>(null);
+  const [connectionId, setConnectionId] = useState("");
+  const [cwd, setCwd] = useState("");
+  const [entries, setEntries] = useState<RemoteEntryDto[]>([]);
+  const [browsing, setBrowsing] = useState(false);
+
+  // Lazy: the connection list loads the first time the remote tab opens.
+  useEffect(() => {
+    if (mode !== "remote" || connections !== null) return;
+    sshConnectionList()
+      .then((list) => {
+        setConnections(list);
+        const first = list[0];
+        if (first) setConnectionId((id) => id || first.id);
+      })
+      .catch((e) => setError(String(e)));
+  }, [mode, connections]);
+
+  const browse = async (target?: string) => {
+    if (!connectionId) return;
+    setBrowsing(true);
+    setError(null);
+    try {
+      const list = await remoteBrowse(connectionId, target);
+      setEntries(list.filter((en) => en.kind === "dir"));
+      if (target) setCwd(target);
+      else {
+        // No target = the host's login dir; the backend never echoes it
+        // back, so recover it from an entry's parent.
+        const first = list[0];
+        if (first) setCwd(first.path.replace(/\/[^/]*$/, "") || "/");
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBrowsing(false);
+    }
+  };
+
+  // First listing when a connection is chosen (or switched).
+  useEffect(() => {
+    if (mode !== "remote" || !connectionId) return;
+    setCwd("");
+    setEntries([]);
+    void browse();
+  }, [mode, connectionId]);
+
+  const parent = cwd.replace(/\/[^/]*$/, "") || "/";
+  const target = mode === "local" ? path.trim() : cwd.trim();
 
   const submit = async () => {
-    if (!path.trim() || busy) return;
+    if (!target || busy || (mode === "remote" && !connectionId)) return;
     setBusy(true);
     try {
-      await createProject(path.trim());
+      if (mode === "local") await createProject(target);
+      else await createRemoteProject(connectionId, target);
       onClose();
     } catch (e) {
       setError(String(e));
@@ -63,34 +122,125 @@ export function CreateProjectDialog({ onClose }: { onClose: () => void }) {
         aria-label="Add project"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="fc-input-row">
-          <span className="fc-input-glyph" aria-hidden>
-            ›
-          </span>
-          <input
-            className="fc-input mono"
-            autoFocus
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && void submit()}
-            placeholder="/path/to/repo"
-            aria-label="Path to a local git repository"
-          />
+        <div className="fc-src-toggle" role="tablist" aria-label="Project source">
           <button
             type="button"
-            className="fc-input-action"
-            onClick={async () => {
-              try {
-                const selected = await open({ directory: true, multiple: false });
-                if (selected) setPath(selected as string);
-              } catch (e) {
-                setError("Dialog failed: " + String(e));
-              }
-            }}
+            role="tab"
+            aria-selected={mode === "local"}
+            className={mode === "local" ? "on" : ""}
+            onClick={() => setMode("local")}
           >
-            browse…
+            local
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "remote"}
+            className={mode === "remote" ? "on" : ""}
+            onClick={() => setMode("remote")}
+          >
+            remote · ssh
           </button>
         </div>
+        {mode === "local" ? (
+          <div className="fc-input-row">
+            <span className="fc-input-glyph" aria-hidden>
+              ›
+            </span>
+            <input
+              className="fc-input mono"
+              autoFocus
+              value={path}
+              onChange={(e) => setPath(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void submit()}
+              placeholder="/path/to/repo"
+              aria-label="Path to a local git repository"
+            />
+            <button
+              type="button"
+              className="fc-input-action"
+              onClick={async () => {
+                try {
+                  const selected = await open({ directory: true, multiple: false });
+                  if (selected) setPath(selected as string);
+                } catch (e) {
+                  setError("Dialog failed: " + String(e));
+                }
+              }}
+            >
+              browse…
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="fc-opt-rows">
+              <div className="fc-opt-row">
+                <span>host</span>
+                <span className="fc-opt-value">
+                  <span className="fc-opt-ellipsis">
+                    {connections === null
+                      ? "…"
+                      : connections.length === 0
+                        ? "no connections — add one in settings"
+                        : (connections.find((c) => c.id === connectionId)?.name ?? "pick a host")}
+                  </span>
+                  <span aria-hidden>⌄</span>
+                  <select
+                    value={connectionId}
+                    aria-label="SSH connection"
+                    onChange={(e) => setConnectionId(e.target.value)}
+                  >
+                    {(connections ?? []).map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} · {c.username}@{c.host}
+                      </option>
+                    ))}
+                  </select>
+                </span>
+              </div>
+            </div>
+            <div className="fc-input-row">
+              <span className="fc-input-glyph" aria-hidden>
+                ›
+              </span>
+              <input
+                className="fc-input mono"
+                value={cwd}
+                onChange={(e) => setCwd(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void browse(cwd.trim() || undefined)}
+                placeholder="/path/on/host"
+                aria-label="Remote repository path"
+              />
+              <button
+                type="button"
+                className="fc-input-action"
+                disabled={!connectionId || browsing}
+                onClick={() => void browse(cwd.trim() || undefined)}
+              >
+                {browsing ? "listing…" : "list"}
+              </button>
+            </div>
+            <ul className="fc-remote-list" aria-label="Remote directories">
+              {cwd && cwd !== "/" && (
+                <li>
+                  <button type="button" onClick={() => void browse(parent)}>
+                    ..
+                  </button>
+                </li>
+              )}
+              {entries.map((en) => (
+                <li key={en.path}>
+                  <button type="button" onClick={() => void browse(en.path)}>
+                    {en.name}/
+                  </button>
+                </li>
+              ))}
+              {!browsing && entries.length === 0 && (
+                <li className="fc-remote-empty">no subdirectories</li>
+              )}
+            </ul>
+          </>
+        )}
         {error && (
           <p className="fc-modal-error row" role="alert">
             {error}
@@ -103,12 +253,17 @@ export function CreateProjectDialog({ onClose }: { onClose: () => void }) {
             </button>
           </div>
           <div className="fc-modal-foot-side">
-            <button type="button" disabled={!path.trim() || busy} onClick={submit}>
+            <button
+              type="button"
+              disabled={!target || busy || (mode === "remote" && !connectionId)}
+              onClick={submit}
+            >
               {busy ? (
                 "adding…"
               ) : (
                 <>
-                  <span className="fc-key">↵</span> add project
+                  <span className="fc-key">↵</span>{" "}
+                  {mode === "local" ? "add project" : "add remote project"}
                 </>
               )}
             </button>

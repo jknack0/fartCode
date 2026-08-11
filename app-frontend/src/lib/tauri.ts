@@ -1810,3 +1810,28 @@ export function sshDisconnect(connectionId: string): Promise<boolean> {
 export function remoteTasksEnabled(): Promise<boolean> {
   return invoke("remote_tasks_enabled");
 }
+
+/** One entry in a remote directory listing (E12-04). */
+export interface RemoteEntryDto {
+  /** Absolute remote path. */
+  path: string;
+  name: string;
+  kind: "file" | "dir" | "symlink";
+}
+
+/** Lists a directory on the connection's host; no path = the login dir. */
+export function remoteBrowse(
+  connectionId: string,
+  path?: string,
+  includeHidden?: boolean,
+): Promise<RemoteEntryDto[]> {
+  return invoke("remote_browse", { connectionId, path, includeHidden });
+}
+
+/** Adds an existing repository on the remote host as a project. */
+export function createRemoteProject(
+  connectionId: string,
+  remotePath: string,
+): Promise<ProjectDto> {
+  return invoke("create_remote_project", { connectionId, remotePath });
+}
