@@ -1,4 +1,29 @@
 # MEMORY.md — fartCode
+## #97 Clone flows UI LANDED (2026-08-11)
+
+E12-04 shipped Pick/Clone/New commands; #95 wired Pick. Now Clone:
+`CreateProjectDialog` grew a `clone url` pill (right end of the source
+toggle, orthogonal to the local/remote tabs). Clone on:
+- local tab → `clone_project` (FLOWS.md F2 — e2e FIRST-16's
+  "unreachable-entirely" finally closed),
+- remote tab → `clone_remote_project(connectionId, url)` — host select stays,
+  directory browser hides (the backend picks the projects dir per profile).
+New bindings `cloneProject`/`cloneRemoteProject` + matching sidebar store
+actions (same append+select bookkeeping).
+
+Bites:
+- **Host select had to be HOISTED out of the remote-tab fragment** —
+  clone+remote needs the connection but not the browser, so the JSX is now
+  `{remote && select} {clone ? url : local ? path : browser}` rather than a
+  two-arm ternary owning everything.
+- Clone destination is the BACKEND's choice on both paths (local projects
+  dir setting / `remote_projects_dir` per profile) — the dialog deliberately
+  offers no destination field.
+- `cloneProject` collides with the dialog-local naming — store selectors are
+  bound as `cloneProjectAction`/`cloneRemoteProjectAction` in Modals.tsx.
+- Footer verb tracks the pair: add project / add remote project / clone
+  project / clone on host — the label is the submit contract.
+
 ## #96 BYOI settings gate LANDED (2026-08-11)
 
 The workspace-provider settings turned out to already EXIST — the

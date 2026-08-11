@@ -48,6 +48,8 @@ export function CreateProjectDialog({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const createProject = useSidebar((s) => s.createProject);
   const createRemoteProject = useSidebar((s) => s.createRemoteProject);
+  const cloneProjectAction = useSidebar((s) => s.cloneProject);
+  const cloneRemoteProjectAction = useSidebar((s) => s.cloneRemoteProject);
 
   // Remote picker (E12-04): connections from the profile store; the browser
   // walks the host over the POOLED session (`remote_browse`, E12-06).
@@ -56,6 +58,11 @@ export function CreateProjectDialog({ onClose }: { onClose: () => void }) {
   const [cwd, setCwd] = useState("");
   const [entries, setEntries] = useState<RemoteEntryDto[]>([]);
   const [browsing, setBrowsing] = useState(false);
+
+  // Clone-by-URL (FLOWS.md F2 local / E12-04 remote): same tabs, the input
+  // becomes a git URL and the browser is irrelevant.
+  const [clone, setClone] = useState(false);
+  const [url, setUrl] = useState("");
 
   // Lazy: the connection list loads the first time the remote tab opens.
   useEffect(() => {
@@ -99,13 +106,16 @@ export function CreateProjectDialog({ onClose }: { onClose: () => void }) {
   }, [mode, connectionId]);
 
   const parent = cwd.replace(/\/[^/]*$/, "") || "/";
-  const target = mode === "local" ? path.trim() : cwd.trim();
+  const target = clone ? url.trim() : mode === "local" ? path.trim() : cwd.trim();
 
   const submit = async () => {
     if (!target || busy || (mode === "remote" && !connectionId)) return;
     setBusy(true);
     try {
-      if (mode === "local") await createProject(target);
+      if (clone) {
+        if (mode === "local") await cloneProjectAction(target);
+        else await cloneRemoteProjectAction(connectionId, target);
+      } else if (mode === "local") await createProject(target);
       else await createRemoteProject(connectionId, target);
       onClose();
     } catch (e) {
@@ -141,8 +151,63 @@ export function CreateProjectDialog({ onClose }: { onClose: () => void }) {
           >
             remote · ssh
           </button>
+          <button
+            type="button"
+            className={`fc-clone-pill${clone ? " on" : ""}`}
+            aria-pressed={clone}
+            onClick={() => setClone((v) => !v)}
+          >
+            clone url
+          </button>
         </div>
-        {mode === "local" ? (
+        {mode === "remote" && (
+          <div className="fc-opt-rows">
+            <div className="fc-opt-row">
+              <span>host</span>
+              <span className="fc-opt-value">
+                <span className="fc-opt-ellipsis">
+                  {connections === null
+                    ? "…"
+                    : connections.length === 0
+                      ? "no connections — add one in settings"
+                      : (connections.find((c) => c.id === connectionId)?.name ?? "pick a host")}
+                </span>
+                <span aria-hidden>⌄</span>
+                <select
+                  value={connectionId}
+                  aria-label="SSH connection"
+                  onChange={(e) => setConnectionId(e.target.value)}
+                >
+                  {(connections ?? []).map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} · {c.username}@{c.host}
+                    </option>
+                  ))}
+                </select>
+              </span>
+            </div>
+          </div>
+        )}
+        {clone ? (
+          <div className="fc-input-row">
+            <span className="fc-input-glyph" aria-hidden>
+              ›
+            </span>
+            <input
+              className="fc-input mono"
+              autoFocus
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void submit()}
+              placeholder={
+                mode === "local"
+                  ? "https://… or git@… — clones into your projects dir"
+                  : "https://… or git@… — clones on the host"
+              }
+              aria-label="Repository URL to clone"
+            />
+          </div>
+        ) : mode === "local" ? (
           <div className="fc-input-row">
             <span className="fc-input-glyph" aria-hidden>
               ›
@@ -173,32 +238,6 @@ export function CreateProjectDialog({ onClose }: { onClose: () => void }) {
           </div>
         ) : (
           <>
-            <div className="fc-opt-rows">
-              <div className="fc-opt-row">
-                <span>host</span>
-                <span className="fc-opt-value">
-                  <span className="fc-opt-ellipsis">
-                    {connections === null
-                      ? "…"
-                      : connections.length === 0
-                        ? "no connections — add one in settings"
-                        : (connections.find((c) => c.id === connectionId)?.name ?? "pick a host")}
-                  </span>
-                  <span aria-hidden>⌄</span>
-                  <select
-                    value={connectionId}
-                    aria-label="SSH connection"
-                    onChange={(e) => setConnectionId(e.target.value)}
-                  >
-                    {(connections ?? []).map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} · {c.username}@{c.host}
-                      </option>
-                    ))}
-                  </select>
-                </span>
-              </div>
-            </div>
             <div className="fc-input-row">
               <span className="fc-input-glyph" aria-hidden>
                 ›
@@ -263,7 +302,13 @@ export function CreateProjectDialog({ onClose }: { onClose: () => void }) {
               ) : (
                 <>
                   <span className="fc-key">↵</span>{" "}
-                  {mode === "local" ? "add project" : "add remote project"}
+                  {clone
+                    ? mode === "local"
+                      ? "clone project"
+                      : "clone on host"
+                    : mode === "local"
+                      ? "add project"
+                      : "add remote project"}
                 </>
               )}
             </button>

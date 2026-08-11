@@ -12,6 +12,8 @@ vi.mock("../lib/tauri", () => ({
   remoteBrowse: vi.fn(),
   createProject: vi.fn(),
   createRemoteProject: vi.fn(),
+  cloneProject: vi.fn(),
+  cloneRemoteProject: vi.fn(),
   onFartcodeEvent: vi.fn(() => Promise.resolve(() => {})),
 }));
 
@@ -95,5 +97,44 @@ describe("CreateProjectDialog remote tab", () => {
     );
     const add = screen.getByText("add remote project").closest("button");
     expect(add?.disabled).toBe(true);
+  });
+});
+
+describe("CreateProjectDialog clone url", () => {
+  it("clones locally: url → store cloneProject → close", async () => {
+    const cloneProject = vi.fn().mockResolvedValue(undefined);
+    useSidebar.setState({ cloneProject });
+    const onClose = vi.fn();
+    render(<CreateProjectDialog onClose={onClose} />);
+
+    fireEvent.click(screen.getByText("clone url"));
+    fireEvent.change(screen.getByLabelText("Repository URL to clone"), {
+      target: { value: "git@github.com:acme/api.git" },
+    });
+    fireEvent.click(screen.getByText("clone project"));
+    await waitFor(() =>
+      expect(cloneProject).toHaveBeenCalledWith("git@github.com:acme/api.git"),
+    );
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("clones on the host: remote tab + url → cloneRemoteProject with the connection", async () => {
+    const cloneRemoteProject = vi.fn().mockResolvedValue(undefined);
+    useSidebar.setState({ cloneRemoteProject });
+    render(<CreateProjectDialog onClose={() => {}} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "remote · ssh" }));
+    await waitFor(() => expect(vi.mocked(sshConnectionList)).toHaveBeenCalled());
+    fireEvent.click(screen.getByText("clone url"));
+    fireEvent.change(screen.getByLabelText("Repository URL to clone"), {
+      target: { value: "https://github.com/acme/api" },
+    });
+    fireEvent.click(screen.getByText("clone on host"));
+    await waitFor(() =>
+      expect(cloneRemoteProject).toHaveBeenCalledWith(
+        "c1",
+        "https://github.com/acme/api",
+      ),
+    );
   });
 });

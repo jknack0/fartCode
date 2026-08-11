@@ -9,6 +9,8 @@ import {
   createTask as apiCreateTask,
   createProject as apiCreateProject,
   createRemoteProject as apiCreateRemoteProject,
+  cloneProject as apiCloneProject,
+  cloneRemoteProject as apiCloneRemoteProject,
   deleteProject as apiDeleteProject,
   deleteTask as apiDeleteTask,
   listProjects,
@@ -37,6 +39,10 @@ interface SidebarState {
   createProject: (path: string) => Promise<void>;
   /** Remote project picker (E12-04): an existing repo on an SSH host. */
   createRemoteProject: (connectionId: string, remotePath: string) => Promise<void>;
+  /** FLOWS.md F2: clone a URL into the local projects directory. */
+  cloneProject: (url: string) => Promise<void>;
+  /** E12-04 Clone: clone a URL on the SSH host, then add it. */
+  cloneRemoteProject: (connectionId: string, url: string) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   deleteTask: (projectId: string, taskId: string) => Promise<void>;
   togglePin: (id: string) => Promise<void>;
@@ -159,6 +165,24 @@ export const useSidebar = create<SidebarState>((set, get) => ({
 
   createRemoteProject: async (connectionId, remotePath) => {
     const created = await apiCreateRemoteProject(connectionId, remotePath);
+    set((s) => ({
+      projects: [...s.projects, created],
+      selectedProjectId: created.id,
+      selectedTaskId: null,
+    }));
+  },
+
+  cloneProject: async (url) => {
+    const created = await apiCloneProject(url);
+    set((s) => ({
+      projects: [...s.projects, created],
+      selectedProjectId: created.id,
+      selectedTaskId: null,
+    }));
+  },
+
+  cloneRemoteProject: async (connectionId, url) => {
+    const created = await apiCloneRemoteProject(connectionId, url);
     set((s) => ({
       projects: [...s.projects, created],
       selectedProjectId: created.id,

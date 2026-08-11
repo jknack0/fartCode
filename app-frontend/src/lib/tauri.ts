@@ -1835,3 +1835,16 @@ export function createRemoteProject(
 ): Promise<ProjectDto> {
   return invoke("create_remote_project", { connectionId, remotePath });
 }
+
+/** Clones `url` into the configured local projects directory (FLOWS.md F2). */
+export function cloneProject(url: string): Promise<ProjectDto> {
+  return invoke("clone_project", { url });
+}
+
+/** Clones `url` on the remote host's projects dir, then adds it (E12-04). */
+export function cloneRemoteProject(
+  connectionId: string,
+  url: string,
+): Promise<ProjectDto> {
+  return invoke("clone_remote_project", { connectionId, url });
+}
