@@ -1111,6 +1111,14 @@ export function listWorkspaceDir(
   return invoke("list_workspace_dir", { workspaceId, path });
 }
 
+/** Reads one worktree file as UTF-8 (E5-02); containment backend-side. */
+export function readWorkspaceFile(
+  workspaceId: string,
+  path: string,
+): Promise<string> {
+  return invoke("read_workspace_file", { workspaceId, path });
+}
+
 // -- E4-10 line comments (ARCHITECTURE.md §14) ----------------------------------
 
 export interface LineCommentDto {

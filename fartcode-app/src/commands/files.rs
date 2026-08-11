@@ -22,6 +22,22 @@ pub fn write_workspace_file(
     fartcode_core::files::write_file(&worktree, &path, &content).map_err(String::from)
 }
 
+/// Reads one worktree file as UTF-8 for the editor (E5-02). Containment in
+/// `fartcode_core::files::read_file`; async per the #80 main-thread rule.
+#[tauri::command]
+pub async fn read_workspace_file(
+    app: State<'_, Arc<App>>,
+    workspace_id: String,
+    path: String,
+) -> Result<String, String> {
+    let app = app.inner().clone();
+    off_main_thread(move || {
+        let worktree = workspace_path(&app, &workspace_id)?;
+        fartcode_core::files::read_file(&worktree, &path).map_err(String::from)
+    })
+    .await
+}
+
 /// One file-tree row (E5-01).
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]

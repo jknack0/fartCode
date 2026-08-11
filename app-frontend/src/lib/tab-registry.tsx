@@ -11,6 +11,7 @@
 // the tab id IS the conversation id, a DB row that survives restarts).
 import type { ReactNode } from "react";
 import ConversationView from "../components/ConversationView";
+import FileEditorView from "../components/FileEditorView";
 import FileTreeView from "../components/FileTreeView";
 import DiffView from "../components/DiffView";
 import TerminalView from "../components/TerminalView";
@@ -27,7 +28,7 @@ export interface Tab {
 // terminals live in the ⌘J drawer (store/scripts.ts), never in the tab
 // bar. Persisted lifecycle tabs are dropped by sanitizePane because the
 // kind is no longer registered.
-export type TabKind = "terminal" | "conversation" | "diff" | "files";
+export type TabKind = "terminal" | "conversation" | "diff" | "files" | "file-editor";
 
 export interface TabRenderProps {
   taskId: string;
@@ -75,6 +76,14 @@ export const TAB_KINDS: Record<TabKind, TabKindDef> = {
     render: ({ taskId, tab, active }) => (
       <DiffView tabId={tab.id} title={tab.title} taskId={taskId} active={active} />
     ),
+  },
+
+  "file-editor": {
+    label: "Editor",
+    glyph: "ED",
+    // The tab id encodes the file (`edit:<workspaceId>:<path>`); restored
+    // tabs re-parse and refetch content (unsaved text is E5-03's job).
+    render: ({ tab, active }) => <FileEditorView tabId={tab.id} active={active} />,
   },
 
   files: {

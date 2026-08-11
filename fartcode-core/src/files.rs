@@ -64,6 +64,27 @@ fn resolve_for_write(target: &Path) -> Result<PathBuf, Error> {
     Ok(target.to_path_buf())
 }
 
+/// Reads `<worktree>/<rel_path>` as UTF-8 (E5-02 editor open path).
+/// Same two-way containment as [`write_file`]; the canonical target must
+/// exist and stay under the canonical worktree root (symlinked files
+/// pointing outside are rejected).
+pub fn read_file(worktree: &Path, rel_path: &str) -> Result<String, Error> {
+    let rel = Path::new(rel_path);
+    let lexical = !rel_path.is_empty()
+        && rel
+            .components()
+            .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+    if !lexical {
+        return Err(Error::PathEscape(rel_path.into()));
+    }
+    let canonical_worktree = worktree.canonicalize()?;
+    let resolved = canonical_worktree.join(rel).canonicalize()?;
+    if !resolved.starts_with(&canonical_worktree) {
+        return Err(Error::PathEscape(rel_path.into()));
+    }
+    Ok(std::fs::read_to_string(&resolved)?)
+}
+
 /// One row of a directory listing (E5-01 file tree).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirEntry {
@@ -129,6 +150,34 @@ pub fn list_dir(worktree: &Path, rel_path: &str) -> Result<Vec<DirEntry>, Error>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_file_and_rejects_escapes() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "hello\n").unwrap();
+        assert_eq!(read_file(tmp.path(), "a.txt").unwrap(), "hello\n");
+        for bad in ["../a.txt", "/etc/passwd", ""] {
+            assert!(matches!(
+                read_file(tmp.path(), bad),
+                Err(Error::PathEscape(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn read_rejects_symlink_escape() {
+        let tmp = tempfile::tempdir().unwrap();
+        let worktree = tmp.path().join("wt");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir(&worktree).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "s").unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.txt"), worktree.join("link.txt")).unwrap();
+        assert!(matches!(
+            read_file(&worktree, "link.txt"),
+            Err(Error::PathEscape(_))
+        ));
+    }
 
     #[test]
     fn lists_root_dirs_first_hidden_filtered() {

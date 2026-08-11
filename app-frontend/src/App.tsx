@@ -17,6 +17,7 @@ import { useCommands, hint } from "./lib/useCommands";
 import { wireChangesEvents } from "./store/changes";
 import { useDossierConsent } from "./store/dossierConsent";
 import { wireDiffsEvents } from "./store/diffs";
+import { wireOpenFileIntents } from "./lib/editor-tabs";
 import { useSidebar, wireSidebarEvents } from "./store/sidebar";
 import { useConversations, wireConversationEvents } from "./store/conversations";
 import { wireTabsEvents } from "./store/tabs";
@@ -34,6 +35,7 @@ function App() {
     load().catch(() => {});
     const unlisten = wireSidebarEvents();
     const unlistenTabs = wireTabsEvents();
+    const unwireOpenFile = wireOpenFileIntents();
     const unlistenConversations = wireConversationEvents();
     const unlistenChanges = wireChangesEvents();
     const unlistenDiffs = wireDiffsEvents();
@@ -47,6 +49,7 @@ function App() {
     return () => {
       unlisten();
       unlistenTabs();
+      unwireOpenFile();
       unlistenConversations();
       unlistenChanges();
       unlistenDiffs();
