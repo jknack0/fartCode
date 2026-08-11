@@ -117,6 +117,14 @@ pub fn kill_tmux_session(session_name: &str) -> Result<(), std::io::Error> {
     }
 }
 
+/// Whether THIS machine can run tmux for a local terminal (E13-03).
+///
+/// Windows never does — see [`RESOLVED_TMUX`]. Remote hosts are a separate
+/// question, answered on the host.
+pub fn local_tmux_supported() -> bool {
+    !cfg!(windows)
+}
+
 /// Resolved tmux binary (ADR-0025).
 #[derive(Debug, Clone)]
 pub struct TmuxBinary {
@@ -129,6 +137,13 @@ pub struct TmuxBinary {
 }
 
 static RESOLVED_TMUX: std::sync::LazyLock<Option<TmuxBinary>> = std::sync::LazyLock::new(|| {
+    // E13-03 (#93): Windows local terminals never run tmux. A tmux on PATH
+    // there is msys/WSL — a different filesystem namespace than the worktree
+    // the terminal is for. Remote hosts probe their OWN tmux (E12-05 AC12)
+    // and are unaffected.
+    if !local_tmux_supported() {
+        return None;
+    }
     if probe_tmux("tmux") {
         return Some(TmuxBinary {
             command: "tmux".into(),
@@ -334,6 +349,31 @@ pub fn kill_tmux_sessions_by_prefix(id_prefix: &str) -> usize {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    /// E13-03 (#93): the local tmux path is Windows-free, and binary
+    /// resolution honours that predicate rather than probing PATH.
+    #[test]
+    fn windows_never_runs_local_tmux() {
+        assert_eq!(local_tmux_supported(), !cfg!(windows));
+        if !local_tmux_supported() {
+            assert!(resolve_tmux_binary().is_none());
+        }
+    }
+
+    /// E13-02: a detached survivor is preferred over a fresh slot — the
+    /// reattach path an SSH reconnect depends on.
+    #[test]
+    fn detached_survivor_is_reattached() {
+        let live = vec![TmuxSessionInfo {
+            session_id: "p1:t1:terminal:0".into(),
+            attached: false,
+        }];
+        let owned = HashSet::new();
+        assert_eq!(choose_terminal_slot("p1:t1:terminal:", &owned, &live), 0);
+        // Still owned (a live client) → the survivor is not stolen.
+        let owned = HashSet::from([0_u32]);
+        assert_eq!(choose_terminal_slot("p1:t1:terminal:", &owned, &live), 1);
+    }
 
     #[test]
     fn tmux_name_roundtrips() {

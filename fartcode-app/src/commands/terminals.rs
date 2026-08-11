@@ -120,6 +120,11 @@ pub fn terminal_open_blocking<R: tauri::Runtime>(
         .settings
         .get_project_settings(&ctx.project_id, std::path::Path::new(&ctx.project_path))
         .unwrap_or_default();
+    // E13-02 toggle resolution (reference parity): the app-wide
+    // `tmuxByDefault` is stamped into the project settings row when that row
+    // is created, so a read is just "the project's toggle, else off".
+    // Changing the app default later deliberately does NOT retro-apply to a
+    // project that already answered the question.
     let tmux = settings.tmux.unwrap_or(false);
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     let (program, args) = terminal_program(&settings, &shell);

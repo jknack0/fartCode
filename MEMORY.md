@@ -1,4 +1,25 @@
 # MEMORY.md — fartCode
+## #93 E13 closeout — tmux slot release + Windows guard LANDED (2026-08-11)
+
+Two E13 acceptance items that survived into the SSH era. `release_slot` in
+`fartcode-app/src/terminals.rs` is now the single place a tmux slot is freed
+(failed spawn / close / **unexpected exit**), and the output pump calls it —
+so an SSH drop no longer strands a live remote session while the next open
+mints `:1` beside it. `local_tmux_supported()` in `fartcode-core/src/pty/tmux.rs`
+short-circuits binary resolution on Windows.
+
+Bites:
+- **A dead PTY is not a dead tmux session.** The client dies with the SSH
+  connection; the session keeps running on the host. Ownership tracking has to
+  follow the CLIENT, or reattach after an E12-06 reconnect silently duplicates
+  sessions.
+- `task_slots` is now `Arc<Mutex<..>>` — the pump thread needs it.
+- Windows: tmux on PATH there is msys/WSL, a different filesystem namespace
+  than the worktree. Refuse locally; remote hosts probe their own tmux.
+- Toggle resolution is reference parity and now documented at the read site:
+  app-wide `tmuxByDefault` is stamped into the project row at creation;
+  reads are `tmux ?? false`. Changing the app default does not retro-apply.
+
 ## #92 E12-10 BYOI task wiring + feature gate LANDED (2026-08-11) — ADR-0045
 
 `fartcode-app/src/byoi_tasks.rs` connects E12-07's contract to real tasks:

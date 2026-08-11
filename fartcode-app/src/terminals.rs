@@ -175,11 +175,36 @@ pub struct TerminalManager<R: tauri::Runtime = tauri::Wry> {
     /// Tmux slots allocated per task BY THIS PROCESS (ADR-0025). A restart
     /// starts empty; the first open then prefers REUSING a live detached
     /// session over creating a fresh slot (ADR-0028).
-    task_slots: Mutex<HashMap<String, HashSet<u32>>>,
+    /// Slots (per task) whose tmux session this process currently shows.
+    /// `Arc` because the output pump releases a slot when a PTY dies
+    /// without a close (E13-02: the tmux session survives an SSH drop, and
+    /// the next open must reattach it, not mint a neighbour).
+    task_slots: Arc<Mutex<HashMap<String, HashSet<u32>>>>,
 }
 
 /// One terminal for `list_for_task` (retained lifecycle terminals whose
 /// script already exited are listed too — their tabs reattach the tail).
+/// Frees the slot a durable terminal held, given its session id
+/// (`{project}:{task}:terminal:{slot}`).
+///
+/// A slot is "owned" only while this process has a live client attached to
+/// it. A failed spawn never attached; a close killed the session; an
+/// unexpected exit lost the CLIENT while the SESSION may still be running on
+/// the far end (E13-02, #93) — releasing there is what lets the next open
+/// reattach the survivor instead of creating `:1` beside an orphaned `:0`.
+fn release_slot(
+    slots: &Mutex<HashMap<String, HashSet<u32>>>,
+    task_id: &str,
+    session_id: &str,
+) -> Option<u32> {
+    let (_, slot_str) = session_id.rsplit_once(':')?;
+    let slot = slot_str.parse::<u32>().ok()?;
+    if let Some(used) = slots.lock().get_mut(task_id) {
+        used.remove(&slot);
+    }
+    Some(slot)
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalInfo {
@@ -209,7 +234,7 @@ impl<R: tauri::Runtime> TerminalManager<R> {
             remote: None,
             app,
             terminals: Arc::new(Mutex::new(HashMap::new())),
-            task_slots: Mutex::new(HashMap::new()),
+            task_slots: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -360,14 +385,7 @@ impl<R: tauri::Runtime> TerminalManager<R> {
                 // A failed spawn must not keep the slot reserved (ADR-0028):
                 // the session was neither created nor attached.
                 if let Some(session_id) = &tmux_session_id {
-                    if let Some(rest) = session_id.rsplit_once(':') {
-                        if let Ok(slot) = rest.1.parse::<u32>() {
-                            self.task_slots
-                                .lock()
-                                .get_mut(task_id)
-                                .map(|used| used.remove(&slot));
-                        }
-                    }
+                    release_slot(&self.task_slots, task_id, session_id);
                 }
                 if let (Some(registry), Some(connection_id)) = (&self.remote, &remote_connection) {
                     registry.report_channel_error(connection_id, &e);
@@ -393,6 +411,7 @@ impl<R: tauri::Runtime> TerminalManager<R> {
         // Output pump: drain the PTY reader ~60x/s; watch for exit via
         // try_wait_exit so the tail of output is delivered before exited.
         let pump_id = id.clone();
+        let pump_slots = self.task_slots.clone();
         let app = self.app.clone();
         let terminals = self.terminals.clone();
         std::thread::spawn(move || {
@@ -456,6 +475,13 @@ impl<R: tauri::Runtime> TerminalManager<R> {
                         );
                     }
                     entry.exited.store(true, Ordering::Relaxed);
+                    // E13-02 (#93): the CLIENT is gone; the tmux session may
+                    // not be (an SSH drop kills the attach, not the server's
+                    // session). Release the slot so the next open reattaches
+                    // the survivor instead of minting a neighbour.
+                    if let Some(session_id) = &entry.tmux_session_id {
+                        release_slot(&pump_slots, &entry.task_id, session_id);
+                    }
                     use tauri::Emitter as _;
                     let _ = app.emit(
                         "terminal:exited",
@@ -671,14 +697,7 @@ impl<R: tauri::Runtime> TerminalManager<R> {
                 }
                 // The session is gone — free its slot so the next open can
                 // recreate a low-numbered session instead of climbing forever.
-                if let Some((_, slot_str)) = session_id.rsplit_once(':') {
-                    if let Ok(slot) = slot_str.parse::<u32>() {
-                        self.task_slots
-                            .lock()
-                            .get_mut(&entry.task_id)
-                            .map(|used| used.remove(&slot));
-                    }
-                }
+                release_slot(&self.task_slots, &entry.task_id, session_id);
             }
         }
     }
@@ -726,5 +745,32 @@ impl<R: tauri::Runtime> TerminalManager<R> {
             let _ = entry.handle.lock().kill();
         }
         self.task_slots.lock().clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// E13-02 (#93): an unexpected exit frees the slot, so the next open
+    /// reattaches the surviving session instead of climbing to `:1`.
+    #[test]
+    fn release_slot_frees_the_owned_slot() {
+        let slots = Mutex::new(HashMap::from([(
+            "t1".to_string(),
+            HashSet::from([0_u32, 1]),
+        )]));
+        assert_eq!(release_slot(&slots, "t1", "p1:t1:terminal:0"), Some(0));
+        assert_eq!(slots.lock().get("t1").unwrap(), &HashSet::from([1_u32]));
+    }
+
+    #[test]
+    fn release_slot_ignores_unknown_tasks_and_bad_ids() {
+        let slots: Mutex<HashMap<String, HashSet<u32>>> = Mutex::new(HashMap::new());
+        // Unknown task: parses, nothing to remove.
+        assert_eq!(release_slot(&slots, "ghost", "p:t:terminal:2"), Some(2));
+        // Not a slot id: no panic, no claim.
+        assert_eq!(release_slot(&slots, "t1", "garbage"), None);
+        assert_eq!(release_slot(&slots, "t1", "p:t:terminal:x"), None);
     }
 }
