@@ -1,4 +1,30 @@
 # MEMORY.md — fartCode
+## #96 File tree panel LANDED (2026-08-11, c6a89cf)
+
+E5-01 — the editor epic opens (last unbuilt Phase-1 epic). Backend:
+`fartcode_core::files::list_dir` beside `write_file`, same two-way
+containment (lexical no-abs/no-`..` + canonical starts_with); symlink
+entries list as FILES and are never followed (link-cycle + escape guard);
+hidden dirs filtered (`.git`, `node_modules`, `dist`, `target`, `build`,
+`out`, `.next`, `.venv`, `__pycache__`); dirs-first case-insensitive sort.
+Command `list_workspace_dir` is async + `off_main_thread` (#80). Frontend:
+new `files` tab kind — id `files:<workspaceId>` (restart-safe, no sidecar),
+`FileTreeView` keeps tree state in the component (tabs stay mounted, so it
+survives tab flips free), lazy expand, refetches LOADED dirs on
+`files:changed`/`git:changed` (never polls), changed tint = snapshot paths
++ ancestor dirs from the E4-03 changes store. `lib/open-file.ts` is the
+E5-01→E5-02 seam: tree emits OpenFileIntent, editor tabs will subscribe.
+Header `files` button → `openFileTree` (workspaceId resolved like
+ChangesSidebar: task.workspaceId ?? project.repositoryWorkspaceId).
+
+Bites:
+- Remote (SFTP) workspaces: `workspace_path` errors "no local path" — the
+  tree shows it. SFTP listing is a follow-up (E5 × E12-02).
+- Styles: theme vars are `--meta`/`--foreground`/`--hover-bg`/`--fc-bad-text`
+  (NOT --text-secondary etc.) — check changes.css before guessing.
+
+Next: E5-02 editor tabs (CodeMirror 6 per ARCHITECTURE §Editor,
+`editor_buffers` table already exists) — consumes the open-file seam.
 ## #95 SSH port forwards LANDED (2026-08-11, 8963b08)
 
 E12-09 (shared E6-04). `fartcode-ssh/src/forward.rs`: `open_tunnel` binds a
