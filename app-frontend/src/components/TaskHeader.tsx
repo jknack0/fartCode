@@ -19,7 +19,7 @@
 
 import { useEffect, useState } from "react";
 import { getProjectSettings } from "../lib/tauri";
-import { openLifecycleScript } from "../lib/commands";
+import { openFileTree, openLifecycleScript } from "../lib/commands";
 import { columnSublineTone } from "../lib/columnConfig";
 import {
   pipelineActions,
@@ -224,6 +224,14 @@ export default function TaskHeader({ taskId }: { taskId: string }) {
             {`${hint("open-card-detail") || "⌘⇧I"} card`}
           </button>
         )}
+        <button
+          type="button"
+          className="tv-action"
+          title="Open the file tree"
+          onClick={() => openFileTree(taskId)}
+        >
+          files
+        </button>
         <button
           type="button"
           className="tv-action"

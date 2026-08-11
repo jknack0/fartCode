@@ -1096,6 +1096,21 @@ export function writeWorkspaceFile(
   return invoke("write_workspace_file", { workspaceId, path, content });
 }
 
+/** One file-tree row (E5-01). */
+export interface DirEntryDto {
+  name: string;
+  isDir: boolean;
+}
+
+/** Lists a worktree directory (empty path = root); hidden dirs filtered
+ * and containment enforced backend-side. */
+export function listWorkspaceDir(
+  workspaceId: string,
+  path: string,
+): Promise<DirEntryDto[]> {
+  return invoke("list_workspace_dir", { workspaceId, path });
+}
+
 // -- E4-10 line comments (ARCHITECTURE.md §14) ----------------------------------
 
 export interface LineCommentDto {

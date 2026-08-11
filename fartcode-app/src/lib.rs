@@ -219,6 +219,7 @@ pub fn run() {
             commands::steps::step_parked_list,
             commands::steps::step_ledger_list,
             commands::files::write_workspace_file,
+            commands::files::list_workspace_dir,
             commands::conversations::create_conversation,
             commands::conversations::list_conversations,
             commands::conversations::list_project_conversations,

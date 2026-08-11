@@ -20,6 +20,7 @@
 @import "./styles/project-chat.css";
 @import "./styles/taskview.css";
 @import "./styles/changes.css";
+@import "./styles/filetree.css";
 @import "./styles/pr.css";
 @import "./styles/comments.css";
 @import "./styles/diff.css";

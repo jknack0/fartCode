@@ -11,6 +11,7 @@
 // the tab id IS the conversation id, a DB row that survives restarts).
 import type { ReactNode } from "react";
 import ConversationView from "../components/ConversationView";
+import FileTreeView from "../components/FileTreeView";
 import DiffView from "../components/DiffView";
 import TerminalView from "../components/TerminalView";
 import type { PaneId } from "../store/tabs";
@@ -26,7 +27,7 @@ export interface Tab {
 // terminals live in the ⌘J drawer (store/scripts.ts), never in the tab
 // bar. Persisted lifecycle tabs are dropped by sanitizePane because the
 // kind is no longer registered.
-export type TabKind = "terminal" | "conversation" | "diff";
+export type TabKind = "terminal" | "conversation" | "diff" | "files";
 
 export interface TabRenderProps {
   taskId: string;
@@ -73,6 +74,20 @@ export const TAB_KINDS: Record<TabKind, TabKindDef> = {
     // the diffs store holds the payload (#44, E4-04).
     render: ({ taskId, tab, active }) => (
       <DiffView tabId={tab.id} title={tab.title} taskId={taskId} active={active} />
+    ),
+  },
+
+  files: {
+    label: "Files",
+    glyph: "FS",
+    // The tab id encodes the workspace (`files:<workspaceId>`), so a tab
+    // restored from view-state re-resolves without a sidecar (E5-01).
+    render: ({ taskId, tab, active }) => (
+      <FileTreeView
+        taskId={taskId}
+        workspaceId={tab.id.slice("files:".length)}
+        active={active}
+      />
     ),
   },
 

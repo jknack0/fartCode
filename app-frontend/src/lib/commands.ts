@@ -39,6 +39,29 @@ async function openTerminalTab(taskId: string, pane: PaneId): Promise<void> {
   });
 }
 
+/** Opens (or focuses) the task's file-tree tab (E5-01). One per
+ * workspace — the tab id encodes it, so addTab's dedupe-by-id makes a
+ * second open a focus. */
+export function openFileTree(taskId: string): void {
+  const sidebar = useSidebar.getState();
+  const task = sidebar.selectedProjectId
+    ? (sidebar.tasksByProject[sidebar.selectedProjectId] ?? []).find((t) => t.id === taskId)
+    : null;
+  const project = sidebar.projects.find((p) => p.id === sidebar.selectedProjectId);
+  const workspaceId = task?.workspaceId ?? project?.repositoryWorkspaceId ?? null;
+  if (!workspaceId) return;
+  const tabs = useTabs.getState();
+  const pane: PaneId =
+    tabs.panesByTask[taskId]?.right && tabs.activePaneByTask[taskId] === "right"
+      ? "right"
+      : "left";
+  tabs.addTab(taskId, pane, {
+    id: `files:${workspaceId}`,
+    kind: "files",
+    title: "Files",
+  });
+}
+
 /** Opens the ⌘J drawer on a script's tab (7b — lifecycle scripts live in
  * the drawer, never in the tab bar), starting the script only when it has
  * never run. Reruns are explicit (`r` in the drawer / rerun label). */
