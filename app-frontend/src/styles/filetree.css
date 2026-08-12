@@ -30,6 +30,15 @@
 .ft-changed {
   color: var(--accent);
 }
+.ft-selected {
+  background: var(--hover-bg);
+  color: var(--foreground);
+}
+/* Sheet mode: the tree is a flex child of .fc-changes-main. */
+.sheet-file-tree .file-tree {
+  flex: 1;
+  min-height: 0;
+}
 .ft-glyph {
   display: inline-block;
   width: 14px;

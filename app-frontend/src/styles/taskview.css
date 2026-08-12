@@ -102,13 +102,6 @@
   color: #9a9aa1;
 }
 
-/* The task view's only destructive action reads like its neighbours until
-   the pointer lands on it — the delete confirm, not the button, is where
-   the warning lives (7a: red is spent on the confirm's delete label). */
-.tv-action-danger:hover {
-  color: var(--fc-bad-text);
-}
-
 /* A pipeline action the engine refused. Truncates rather than pushing the
    crumb out of the 46px row; the full text is the title, and clicking
    dismisses. */
@@ -117,6 +110,29 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* -- header utility icons --------------------------------------------------- */
+
+/* The utilities (move / card / files / new task / delete) are drawn icons
+   from the shared set — 12px, 1.5px stroke, currentColor, so they inherit
+   .tv-action's key colour and its hover brightening. Centered against the
+   text buttons' baseline row. */
+.tv-action-icon {
+  align-self: center;
+  display: flex;
+  align-items: center;
+}
+
+.tv-action-icon svg {
+  display: block;
+}
+
+/* The row's only destructive action reads like its neighbours until the
+   pointer lands on it — the delete confirm, not the button, is where the
+   warning lives (7a: red is spent on the confirm's delete label). */
+.tv-action-danger:hover {
+  color: var(--fc-bad-text);
 }
 
 /* -- pipeline overlays (column picker + parked-step confirm) --------------- */

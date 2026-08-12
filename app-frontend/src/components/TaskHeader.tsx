@@ -1,7 +1,10 @@
 // Task header (design_handoff_v2 5a, extended for the pipeline by
 // ADR-0037): the 46px terminal-first header row — breadcrumb + title +
-// agent dot on the left; lifecycle script launchers, the pipeline actions,
-// the Changes toggle and the new-task key on the right, all mono 11px.
+// agent dot on the left; lifecycle script launchers, the pipeline actions
+// and the Changes toggle on the right in mono 11px, then the utilities
+// (move / card / files / new task / delete) as drawn icons — name and
+// chord live in each hover title, so the row stays readable beside the
+// 400px right panel.
 //
 // PIPELINE CONTEXT (ADR-0037). A card's step settles in a `hold` column,
 // or parks behind a queue-mode confirm — and the person who has to act is
@@ -39,7 +42,9 @@ import { useSteps } from "../store/steps";
 import { useTaskCard } from "../store/taskCard";
 import { useUi } from "../store/ui";
 import TaskPipelineOverlay from "./TaskPipelineOverlay";
+import { IconBranch, IconCard, IconColumns, IconFolder, IconPlus, IconTrash } from "./icons";
 import type { BoardColumnDto, IssueDto } from "../lib/tauri";
+
 
 /** Stable empty arrays — a fresh literal in a zustand selector re-renders
  * forever (the board learned this the hard way). */
@@ -88,6 +93,7 @@ export default function TaskHeader({ taskId }: { taskId: string }) {
   useEffect(() => {
     return () => useTaskCard.getState().setOverlay(null);
   }, [taskId]);
+
 
   // Scripts configured on the project (E1-06) — only configured scripts get
   // a launcher. Cheap DB read, refetched per project.
@@ -147,7 +153,9 @@ export default function TaskHeader({ taskId }: { taskId: string }) {
             on a carded one. A card with no derivable ref contributes no
             segment rather than an empty separator. */}
         <span className="tv-crumb">{crumb.join(" / ")} /</span>
-        <span className="tv-title">{task?.name ?? "Task"}</span>
+        <span className="tv-title" title={task?.name ?? undefined}>
+          {task?.name ?? "Task"}
+        </span>
         <span className={dotClass} />
       </div>
       <div className="tv-header-actions">
@@ -188,83 +196,79 @@ export default function TaskHeader({ taskId }: { taskId: string }) {
             type="button"
             className="tv-action"
             data-tone={columnSublineTone(actions.advanceTo)}
-            title={`Advance to ${actions.advanceTo.name}`}
+            title={`Advance to ${actions.advanceTo.name} (${hint("advance-step") || "⌘⇧→"})`}
             onClick={() => runAdvanceStep()}
           >
-            {`${hint("advance-step") || "⌘⇧→"} advance`}
+            advance
           </button>
         )}
         {actions.confirmColumn && (
           <button
             type="button"
             className="tv-action"
-            title={`Dispatch the step parked in ${actions.confirmColumn.name}`}
+            title={`Dispatch the step parked in ${actions.confirmColumn.name} (${hint("confirm-step") || "⌘⇧D"})`}
             onClick={() => runConfirmStep()}
           >
-            {`${hint("confirm-step") || "⌘⇧D"} dispatch`}
+            dispatch
           </button>
         )}
+        <button
+          type="button"
+          className="tv-action tv-action-icon"
+          title={`Toggle changes panel (${hint("toggle-changes") || "⌘⇧1"})`}
+          onClick={() => runCommand("toggle-changes")}
+        >
+          <IconBranch />
+        </button>
+        {/* The utilities ride inline as drawn icons — the label and the
+            chord live in the hover title. move / card appear only when the
+            task has a card; new task is the only mouse path once ⌘\ hides
+            the flyout; delete stays last and red-on-hover — its confirm,
+            which itemizes the agent, worktree and comments, is still the
+            only thing that can destroy. */}
         {actions.canMove && (
           <button
             type="button"
-            className="tv-action"
-            title="Move this card to another column"
+            className="tv-action tv-action-icon"
+            title={`Move this card to another column (${hint("move-to-column") || "⌘⇧M"})`}
             onClick={() => runMoveToColumn()}
           >
-            {`${hint("move-to-column") || "⌘⇧M"} move`}
+            <IconColumns />
           </button>
         )}
         {actions.canOpenCard && (
           <button
             type="button"
-            className="tv-action"
-            title="Open the card detail"
+            className="tv-action tv-action-icon"
+            title={`Open the card detail (${hint("open-card-detail") || "⌘⇧I"})`}
             onClick={() => runOpenCardDetail()}
           >
-            {`${hint("open-card-detail") || "⌘⇧I"} card`}
+            <IconCard />
           </button>
         )}
         <button
           type="button"
-          className="tv-action"
+          className="tv-action tv-action-icon"
           title="Open the file tree"
           onClick={() => openFileTree(taskId)}
         >
-          files
+          <IconFolder />
         </button>
         <button
           type="button"
-          className="tv-action"
-          title="Toggle changes panel"
-          onClick={() => runCommand("toggle-changes")}
-        >
-          {`${hint("toggle-changes") || "⌘⇧1"} changes`}
-        </button>
-        {/* The only mouse path to a new task used to be "+ New task"
-            inside the flyout, which ⌘\ takes away — so a user deep in a
-            task view with the flyout collapsed had none. Same command,
-            just reachable. */}
-        <button
-          type="button"
-          className="tv-action"
-          title="Add a task to this project"
+          className="tv-action tv-action-icon"
+          title={`Add a task to this project (${hint("add-task") || "⌘N"})`}
           onClick={() => runCommand("add-task")}
         >
-          {`${hint("add-task") || "⌘N"} new task`}
+          <IconPlus />
         </button>
-        {/* Retiring a task was keyboard-only (⌘⌫): a task view reached by
-            mouse had no way to get rid of the task it is showing. Same
-            registered command, so the confirm — which itemizes the running
-            agent, the worktree and the comments before anything is
-            destroyed — is the only thing that can delete. Rightmost and
-            red-on-hover: destructive, and last in the row. */}
         <button
           type="button"
-          className="tv-action tv-action-danger"
-          title="Delete this task and its worktree"
+          className="tv-action tv-action-icon tv-action-danger"
+          title={`Delete this task and its worktree (${hint("delete-task") || "⌘⌫"})`}
           onClick={() => runCommand("delete-task")}
         >
-          {`${hint("delete-task") || "⌘⌫"} delete`}
+          <IconTrash />
         </button>
       </div>
       {overlay && ctx.issue && (

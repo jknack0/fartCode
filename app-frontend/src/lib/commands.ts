@@ -39,27 +39,22 @@ async function openTerminalTab(taskId: string, pane: PaneId): Promise<void> {
   });
 }
 
-/** Opens (or focuses) the task's file-tree tab (E5-01). One per
- * workspace — the tab id encodes it, so addTab's dedupe-by-id makes a
- * second open a focus. */
-export function openFileTree(taskId: string): void {
-  const sidebar = useSidebar.getState();
-  const task = sidebar.selectedProjectId
-    ? (sidebar.tasksByProject[sidebar.selectedProjectId] ?? []).find((t) => t.id === taskId)
-    : null;
-  const project = sidebar.projects.find((p) => p.id === sidebar.selectedProjectId);
-  const workspaceId = task?.workspaceId ?? project?.repositoryWorkspaceId ?? null;
-  if (!workspaceId) return;
-  const tabs = useTabs.getState();
-  const pane: PaneId =
-    tabs.panesByTask[taskId]?.right && tabs.activePaneByTask[taskId] === "right"
-      ? "right"
-      : "left";
-  tabs.addTab(taskId, pane, {
-    id: `files:${workspaceId}`,
-    kind: "files",
-    title: "Files",
-  });
+/** Opens the file tree in the right sheet (E5-01, header icon): tree mode
+ * when the sheet is closed, switches to tree mode when open, closes the
+ * sheet when the tree is already showing. Double-clicking a file opens it
+ * in the main content area (editor tab). */
+export function openFileTree(_taskId: string): void {
+  const ui = useUi.getState();
+  if (!ui.changesOpen) {
+    ui.setFileTreeOpen(true);
+    ui.setTaskChatOpen(false);
+    ui.setChangesOpen(true);
+  } else if (ui.fileTreeOpen) {
+    ui.setChangesOpen(false); // tree mode → close the sheet
+  } else {
+    ui.setFileTreeOpen(true); // changes/chat mode → tree mode
+    ui.setTaskChatOpen(false);
+  }
 }
 
 /** Opens the ⌘J drawer on a script's tab (7b — lifecycle scripts live in
@@ -125,11 +120,13 @@ export function openTaskChat(): void {
   const ui = useUi.getState();
   if (!ui.changesOpen) {
     ui.setTaskChatOpen(true);
+    ui.setFileTreeOpen(false);
     ui.setChangesOpen(true);
   } else if (ui.taskChatOpen) {
     ui.setChangesOpen(false); // chat mode → close the sheet
   } else {
-    ui.setTaskChatOpen(true); // changes mode → chat mode
+    ui.setTaskChatOpen(true); // changes/tree mode → chat mode
+    ui.setFileTreeOpen(false);
   }
 }
 
@@ -202,12 +199,15 @@ export function registerAllCommands(): void {
       const projectScope = !useSidebar.getState().selectedTaskId;
       if (!ui.changesOpen) {
         ui.setChangesOpen(true);
+        ui.setFileTreeOpen(false);
         if (projectScope) ui.setProjectChatOpen(false);
         else ui.setTaskChatOpen(false);
       } else if (projectScope && ui.projectChatOpen) {
         ui.setProjectChatOpen(false); // chat mode → changes mode
       } else if (!projectScope && ui.taskChatOpen) {
         ui.setTaskChatOpen(false); // chat mode → changes mode
+      } else if (ui.fileTreeOpen) {
+        ui.setFileTreeOpen(false); // tree mode → changes mode
       } else {
         ui.setChangesOpen(false);
       }

@@ -27,6 +27,9 @@ export default function FileTreeView({ taskId, workspaceId, active }: Props) {
   const [children, setChildren] = useState<Children>({});
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set([""]));
   const [error, setError] = useState<string | null>(null);
+  // Single click selects (highlight only); double click opens the file in
+  // the main content area (editor tab via the open-file intent).
+  const [selected, setSelected] = useState<string | null>(null);
 
   const snapshot = useChanges((s) => s.byWorkspace[workspaceId]?.snapshot ?? null);
   // Changed paths + every ancestor dir, so a change deep in a collapsed
@@ -98,11 +101,12 @@ export default function FileTreeView({ taskId, workspaceId, active }: Props) {
         <button
           key={path}
           type="button"
-          className={`ft-row${e.isDir ? " ft-dir" : ""}${isChanged ? " ft-changed" : ""}`}
+          className={`ft-row${e.isDir ? " ft-dir" : ""}${isChanged ? " ft-changed" : ""}${selected === path ? " ft-selected" : ""}`}
           style={{ paddingLeft: `${8 + depth * 14}px` }}
-          onClick={() =>
-            e.isDir ? toggle(path) : emitOpenFile({ taskId, workspaceId, path })
-          }
+          onClick={() => (e.isDir ? toggle(path) : setSelected(path))}
+          onDoubleClick={() => {
+            if (!e.isDir) emitOpenFile({ taskId, workspaceId, path });
+          }}
         >
           <span className="ft-glyph">
             {e.isDir ? (expanded.has(path) ? "▾" : "▸") : "·"}

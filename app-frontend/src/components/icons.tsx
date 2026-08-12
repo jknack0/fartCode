@@ -130,6 +130,46 @@ export function IconSliders({ size }: IconProps) {
   );
 }
 
+export function IconColumns({ size }: IconProps) {
+  // Arrow entering a column: move this card to another column.
+  return (
+    <svg {...base(size)}>
+      <path d="M1 6h5.5" />
+      <path d="M4.5 4L6.5 6l-2 2" />
+      <path d="M9.5 2.5v7" />
+    </svg>
+  );
+}
+
+export function IconCard({ size }: IconProps) {
+  // Ticket card with a title line: the card detail.
+  return (
+    <svg {...base(size)}>
+      <rect x="1.5" y="2.5" width="9" height="7" rx="1" />
+      <path d="M3.5 5h5M3.5 7h3" />
+    </svg>
+  );
+}
+
+export function IconFolder({ size }: IconProps) {
+  // Folder: the worktree file tree.
+  return (
+    <svg {...base(size)}>
+      <path d="M1.5 9V3.5a1 1 0 0 1 1-1h2l1 1.5h4a1 1 0 0 1 1 1V9a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1z" />
+    </svg>
+  );
+}
+
+export function IconTrash({ size }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M2 3.5h8" />
+      <path d="M4.5 3.5v-1h3v1" />
+      <path d="M3 3.5l.4 5.6a1 1 0 0 0 1 .9h3.2a1 1 0 0 0 1-.9l.4-5.6" />
+    </svg>
+  );
+}
+
 export function IconChat({ size }: IconProps) {
   // Speech bubble: the project chat panel toggle.
   return (

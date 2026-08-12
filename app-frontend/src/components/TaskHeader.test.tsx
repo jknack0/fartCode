@@ -210,13 +210,14 @@ registerAllCommands();
 
 /** Title → the header button, matching how each is rendered. */
 const ACTION = {
-  advance: (column: string) => `Advance to ${column}`,
-  dispatch: (column: string) => `Dispatch the step parked in ${column}`,
-  move: "Move this card to another column",
-  card: "Open the card detail",
-  changes: "Toggle changes panel",
-  newTask: "Add a task to this project",
-  deleteTask: "Delete this task and its worktree",
+  advance: (column: string) => `Advance to ${column} (${hint("advance-step")})`,
+  dispatch: (column: string) =>
+    `Dispatch the step parked in ${column} (${hint("confirm-step")})`,
+  move: /^Move this card to another column/,
+  card: /^Open the card detail/,
+  changes: `Toggle changes panel (${hint("toggle-changes")})`,
+  newTask: /^Add a task to this project/,
+  deleteTask: /^Delete this task and its worktree/,
 };
 
 beforeEach(() => {
@@ -310,12 +311,12 @@ describe("a cardless (⌘N) task has no pipeline", () => {
     vi.mocked(issueList).mockResolvedValue([]);
     await renderHeader();
     await waitFor(() => expect(crumbText()).toBe("fartCode /"));
-    expect(screen.queryByTitle(ACTION.move)).toBeNull();
-    expect(screen.queryByTitle(ACTION.card)).toBeNull();
     expect(screen.queryByTitle(/^Advance to /)).toBeNull();
     expect(screen.queryByTitle(/^Dispatch the step parked/)).toBeNull();
-    // The always-on entries survive.
+    // The always-on entries survive; the pipeline entries stay absent.
     expect(screen.getByTitle(ACTION.changes)).toBeInTheDocument();
+    expect(screen.queryByTitle(ACTION.move)).toBeNull();
+    expect(screen.queryByTitle(ACTION.card)).toBeNull();
     expect(screen.getByTitle(ACTION.newTask)).toBeInTheDocument();
   });
 
@@ -370,11 +371,12 @@ describe("advance — visible only when a step settled in a holding column", () 
     );
   });
 
-  it("labels the button with its key", async () => {
+  it("keeps the chord in the hover title, not the label", async () => {
     await renderHeader();
     act(() => useSteps.setState({ byIssue: { i1: { settledColumnId: "c-implement" } } }));
     const button = screen.getByTitle(ACTION.advance("Review"));
-    expect(button.textContent).toBe(`${hint("advance-step")} advance`);
+    expect(button.textContent).toBe("advance");
+    expect(button.getAttribute("title")).toContain(hint("advance-step"));
     expect(hint("advance-step")).not.toBe("");
   });
 

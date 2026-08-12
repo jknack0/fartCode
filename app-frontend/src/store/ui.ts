@@ -32,6 +32,9 @@ interface UiState {
   /** Task chat panel: right-side panel in the task view, same sheet as
    * Changes (mirrors the project scope's chat panel). */
   taskChatOpen: boolean;
+  /** File tree (E5-01, sheet mode): right-side panel in the task view,
+   * same sheet as Changes — double-click opens the file in the main area. */
+  fileTreeOpen: boolean;
   /** Open card-detail issue id (E17-02): takes precedence over the chat
    * panel in the project view's right region; null shows the chat. */
   boardDetailIssueId: string | null;
@@ -61,6 +64,7 @@ interface UiState {
   setChangesOpen: (open: boolean) => void;
   setProjectChatOpen: (open: boolean) => void;
   setTaskChatOpen: (open: boolean) => void;
+  setFileTreeOpen: (open: boolean) => void;
   setBoardDetailIssueId: (id: string | null) => void;
   setDrawerOpen: (open: boolean) => void;
   setDrawerScript: (script: ScriptType) => void;
@@ -104,6 +108,7 @@ export const useUi = create<UiState>((set, get) => ({
   changesOpen: false,
   projectChatOpen: true,
   taskChatOpen: false,
+  fileTreeOpen: false,
   boardDetailIssueId: null,
   drawerOpen: false,
   drawerScript: "setup",
@@ -123,6 +128,7 @@ export const useUi = create<UiState>((set, get) => ({
   setChangesOpen: (changesOpen) => set({ changesOpen }),
   setProjectChatOpen: (projectChatOpen) => set({ projectChatOpen }),
   setTaskChatOpen: (taskChatOpen) => set({ taskChatOpen }),
+  setFileTreeOpen: (fileTreeOpen) => set({ fileTreeOpen }),
   setBoardDetailIssueId: (boardDetailIssueId) => set({ boardDetailIssueId }),
   setDrawerOpen: (drawerOpen) => set({ drawerOpen }),
   setDrawerScript: (drawerScript) => set({ drawerScript }),
