@@ -252,6 +252,20 @@ export default function TaskHeader({ taskId }: { taskId: string }) {
         >
           {`${hint("add-task") || "⌘N"} new task`}
         </button>
+        {/* Retiring a task was keyboard-only (⌘⌫): a task view reached by
+            mouse had no way to get rid of the task it is showing. Same
+            registered command, so the confirm — which itemizes the running
+            agent, the worktree and the comments before anything is
+            destroyed — is the only thing that can delete. Rightmost and
+            red-on-hover: destructive, and last in the row. */}
+        <button
+          type="button"
+          className="tv-action tv-action-danger"
+          title="Delete this task and its worktree"
+          onClick={() => runCommand("delete-task")}
+        >
+          {`${hint("delete-task") || "⌘⌫"} delete`}
+        </button>
       </div>
       {overlay && ctx.issue && (
         <TaskPipelineOverlay mode={overlay} ctx={ctx} defaultAgent={defaultAgent} />

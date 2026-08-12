@@ -34,11 +34,9 @@ import {
   gitCommitState,
   issueCreate,
   issueEnterColumn,
-  issueImportGithub,
   issueList,
   issueMove,
   onFartcodeEvent,
-  projectGithubIssues,
   stepConfirm,
   type BoardColumnDto,
   type IssueDto,
@@ -68,14 +66,6 @@ import {
 } from "./runState";
 import { ensureDossierConsent, useDossierConsent } from "../../store/dossierConsent";
 
-// GitHub issue sync autoruns on view entry (formerly the header's manual
-// "Sync from GitHub" button): import every open issue not already on the
-// board (deduped by URL); the IssueCreated events then drive the board's
-// own reload. Failures stay quiet — the board works fine offline/local.
-// ponytail: 60s cooldown per project, in-memory only — remount re-syncs.
-const lastIssueSyncAt: Record<string, number> = {};
-const ISSUE_SYNC_COOLDOWN_MS = 60_000;
-
 /** §8b / DESIGN.md Layout: below this WINDOW width the board is one column
  * plus the mono strip. Deliberately not the board pane's own width — see
  * the resize effect. */
@@ -89,28 +79,6 @@ export function isNarrowViewport(): boolean {
  * forever. */
 const NO_COLUMNS: BoardColumnDto[] = [];
 const NO_TASKS: TaskDto[] = [];
-
-async function syncGithubIssues(projectId: string): Promise<void> {
-  const [ghIssues, board] = await Promise.all([
-    projectGithubIssues(projectId),
-    issueList(projectId),
-  ]);
-  const imported = new Set(
-    board.filter((i) => i.externalRef).map((i) => i.externalRef),
-  );
-  for (const g of ghIssues.filter((x) => !imported.has(x.url))) {
-    await issueImportGithub({
-      projectId,
-      number: g.number,
-      title: g.title,
-      url: g.url,
-      body: g.body,
-      labels: g.labels,
-      assignees: g.assignees,
-      milestone: g.milestone,
-    });
-  }
-}
 
 /** Provider chip label: the display name minus any "CLI"/"-cli" suffix
  * ("Claude Code CLI" → "Claude Code"). */
@@ -231,15 +199,9 @@ export default function BoardView({ projectId }: { projectId: string }) {
         })
         .catch((e) => !cancelled && setError(String(e)));
     void reload();
-    // Autorun the GitHub import (cooldown-gated; imports emit IssueCreated,
-    // which the listener below turns into a reload).
-    const now = Date.now();
-    if (now - (lastIssueSyncAt[projectId] ?? 0) >= ISSUE_SYNC_COOLDOWN_MS) {
-      lastIssueSyncAt[projectId] = now;
-      syncGithubIssues(projectId).catch((e) =>
-        console.warn("github issue sync failed:", e),
-      );
-    }
+    // No GitHub autorun here (lib/github-sync.ts): the import runs once,
+    // when the project is added. Re-importing on every board mount turned
+    // board↔task navigation into a launch generator.
     const unlisten = onFartcodeEvent((ev) => {
       if (
         (ev.type === "issue:created" ||

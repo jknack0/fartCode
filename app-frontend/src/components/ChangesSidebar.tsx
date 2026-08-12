@@ -206,9 +206,12 @@ export default function ChangesSidebar() {
       {showDetail ? (
         <CardDetail projectId={selectedProjectId!} issueId={detailIssueId} />
       ) : showChat ? (
-        <ProjectChatPanel projectId={selectedProjectId} />
+        // Keyed: the panel holds the resolved conversation id in state, and
+        // a project switch must not leave the PREVIOUS project's PM agent
+        // on screen (and receiving prompts) until the new one resolves.
+        <ProjectChatPanel key={selectedProjectId} projectId={selectedProjectId} />
       ) : taskId && taskChatOpen ? (
-        <TaskChatPanel projectId={selectedProjectId!} taskId={taskId} />
+        <TaskChatPanel key={taskId} projectId={selectedProjectId!} taskId={taskId} />
       ) : (
         <div
           className="fc-changes-main"
@@ -331,12 +334,19 @@ export default function ChangesSidebar() {
                 </>
               ) : null}
 
-              {workspaceId && snapshot && (
-                <>
-                  <CommitCard workspaceId={workspaceId} />
-                  <GitFooter workspaceId={workspaceId} />
-                </>
-              )}
+            </div>
+          )}
+
+          {/* The commit surface is DOCKED, not the last row of the list.
+              Inside the scroller it drifted below the fold the moment a task
+              touched more files than the sheet is tall — the input you need
+              after reviewing them is the one thing that must never require a
+              scroll to reach. Sibling of the scroller, so the file list
+              yields (flex: 1) and the dock keeps its height. */}
+          {workspaceId && snapshot && panelTab !== "prs" && (
+            <div className="fc-changes-foot">
+              <CommitCard workspaceId={workspaceId} />
+              <GitFooter workspaceId={workspaceId} />
             </div>
           )}
 

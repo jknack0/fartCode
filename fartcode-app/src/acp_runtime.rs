@@ -126,6 +126,12 @@ pub struct AcpRuntime {
     /// Clients stay alive for the manager's shutdown path (stop() drops
     /// the cell record and shuts the adapter down via its client).
     clients: Mutex<HashMap<String, Arc<AcpClient>>>,
+    /// Serializes the start path. `manager.is_running` cannot see a start
+    /// that is still IN FLIGHT (adapter spawn + initialize take seconds),
+    /// so two mounts of the same panel — board→task navigation, a project
+    /// switch, StrictMode's double effect — each spawned an adapter and the
+    /// second overwrote the first in `clients`, orphaning a live process.
+    start_lock: tokio::sync::Mutex<()>,
 }
 
 impl AcpRuntime {
@@ -147,7 +153,26 @@ impl AcpRuntime {
             events,
             adapter_resolver,
             clients: Mutex::new(HashMap::new()),
+            start_lock: tokio::sync::Mutex::new(()),
         })
+    }
+
+    /// Reference `startSession` idempotency: a running conversation
+    /// returns its existing (persisted) session id.
+    fn running_outcome(&self, conversation_id: &str) -> Result<Option<AcpStartOutcome>, Error> {
+        if !self.manager.is_running(conversation_id) {
+            return Ok(None);
+        }
+        let session_id = self
+            .conversations
+            .get(conversation_id)
+            .map_err(core_err)?
+            .and_then(|c| c.session_id)
+            .unwrap_or_default();
+        Ok(Some(AcpStartOutcome {
+            session_id,
+            resumed: false,
+        }))
     }
 
     /// Starts (or resumes) the ACP session for a conversation.
@@ -157,19 +182,15 @@ impl AcpRuntime {
     /// resolve to [`SessionPath::Acp`]; anything else is rejected so the
     /// TUI path stays untouched.
     pub async fn start(&self, conversation_id: &str) -> Result<AcpStartOutcome, Error> {
-        if self.manager.is_running(conversation_id) {
-            // Reference `startSession` idempotency: a running conversation
-            // returns its existing (persisted) session id.
-            let session_id = self
-                .conversations
-                .get(conversation_id)
-                .map_err(core_err)?
-                .and_then(|c| c.session_id)
-                .unwrap_or_default();
-            return Ok(AcpStartOutcome {
-                session_id,
-                resumed: false,
-            });
+        if let Some(outcome) = self.running_outcome(conversation_id)? {
+            return Ok(outcome);
+        }
+        // One start at a time, re-checked under the lock: the fast path
+        // above only sees sessions the manager has already registered, and
+        // registration happens AFTER the spawn.
+        let _starting = self.start_lock.lock().await;
+        if let Some(outcome) = self.running_outcome(conversation_id)? {
+            return Ok(outcome);
         }
 
         let conv = self

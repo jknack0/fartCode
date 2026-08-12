@@ -104,9 +104,21 @@ export const useConversations = create<ConversationsState>((set, get) => ({
     const key = `project:${projectId}`;
     const existing = (get().byTask[key] ?? []).find((c) => c.runtime === "acp");
     if (existing) return existing;
-    const conv = await getOrCreateProjectConversation(projectId, provider);
-    set((s) => ({ byTask: { ...s.byTask, [key]: [conv] } }));
-    return conv;
+    // In-flight dedupe: `get_or_create_project_conversation` is a
+    // read-then-create and the schema has no uniqueness on (project, scope),
+    // so two overlapping calls each find nothing and each create a PM
+    // conversation — two rows, two agents, permanently. Callers share the
+    // pending promise instead.
+    const pending = ensuringProject.get(key);
+    if (pending) return pending;
+    const inFlight = getOrCreateProjectConversation(projectId, provider)
+      .then((conv) => {
+        set((s) => ({ byTask: { ...s.byTask, [key]: [conv] } }));
+        return conv;
+      })
+      .finally(() => ensuringProject.delete(key));
+    ensuringProject.set(key, inFlight);
+    return inFlight;
   },
 
   create: async (projectId, taskId, provider = null, title) => {
@@ -187,6 +199,9 @@ export const useConversations = create<ConversationsState>((set, get) => ({
 
 /** In-flight hydrate guard (per conversation id). */
 const hydrating = new Set<string>();
+
+/** In-flight `ensureProject` calls, per owner key — see the note there. */
+const ensuringProject = new Map<string, Promise<ConversationDto>>();
 
 /** Applies one live-model snapshot (the acp:transcript payload). */
 function applySnapshot(conversationId: string, models: LiveModels): void {

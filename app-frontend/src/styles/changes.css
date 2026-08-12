@@ -373,10 +373,25 @@ aside.changes-panel {
   overflow-wrap: anywhere;
 }
 
+/* -- Docked commit surface ------------------------------------------------ */
+
+/* Commit card + git footer, pinned under the scrolling file list. Its own
+   padding (the scroller's 18px stops at the hairline) and a top rule so the
+   dock reads as a separate surface rather than a stuck list row. */
+.changes-panel .fc-changes-foot {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 18px 18px;
+  border-top: 1px solid var(--hairline);
+}
+
 /* -- Footer: hint line + add-remote edge case ----------------------------- */
 
+/* No `margin-top: auto` — the dock sizes to content now; pushing was only
+   ever needed while this lived at the bottom of the scroll column. */
 .changes-panel .fc-git-footer {
-  margin-top: auto;
   flex: none;
   display: flex;
   flex-direction: column;

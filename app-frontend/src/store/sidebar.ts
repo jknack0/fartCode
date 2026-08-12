@@ -1,6 +1,7 @@
 // Sidebar state (E1-04): projects → tasks tree, pinned section, and the
 // task-switch ordering contract (visible tree order, skipping collapsed).
 import { create } from "zustand";
+import { syncGithubIssues } from "../lib/github-sync";
 import {
   CreateTaskOptions,
   FartcodeEvent,
@@ -164,6 +165,11 @@ export const useSidebar = create<SidebarState>((set, get) => ({
       selectedProjectId: created.id,
       selectedTaskId: null,
     }));
+    // Import the checkout's open GitHub issues ONCE, here — the board no
+    // longer syncs on mount (lib/github-sync.ts).
+    void syncGithubIssues(created.id).catch((e) =>
+      console.warn("github issue sync failed:", e),
+    );
   },
 
   createRemoteProject: async (connectionId, remotePath) => {
@@ -173,6 +179,11 @@ export const useSidebar = create<SidebarState>((set, get) => ({
       selectedProjectId: created.id,
       selectedTaskId: null,
     }));
+    // Import the checkout's open GitHub issues ONCE, here — the board no
+    // longer syncs on mount (lib/github-sync.ts).
+    void syncGithubIssues(created.id).catch((e) =>
+      console.warn("github issue sync failed:", e),
+    );
   },
 
   cloneProject: async (url) => {
@@ -182,6 +193,11 @@ export const useSidebar = create<SidebarState>((set, get) => ({
       selectedProjectId: created.id,
       selectedTaskId: null,
     }));
+    // Import the checkout's open GitHub issues ONCE, here — the board no
+    // longer syncs on mount (lib/github-sync.ts).
+    void syncGithubIssues(created.id).catch((e) =>
+      console.warn("github issue sync failed:", e),
+    );
   },
 
   cloneRemoteProject: async (connectionId, url) => {
@@ -191,6 +207,11 @@ export const useSidebar = create<SidebarState>((set, get) => ({
       selectedProjectId: created.id,
       selectedTaskId: null,
     }));
+    // Import the checkout's open GitHub issues ONCE, here — the board no
+    // longer syncs on mount (lib/github-sync.ts).
+    void syncGithubIssues(created.id).catch((e) =>
+      console.warn("github issue sync failed:", e),
+    );
   },
 
   newRemoteProject: async (connectionId, name) => {
@@ -200,6 +221,11 @@ export const useSidebar = create<SidebarState>((set, get) => ({
       selectedProjectId: created.id,
       selectedTaskId: null,
     }));
+    // Import the checkout's open GitHub issues ONCE, here — the board no
+    // longer syncs on mount (lib/github-sync.ts).
+    void syncGithubIssues(created.id).catch((e) =>
+      console.warn("github issue sync failed:", e),
+    );
   },
 
   deleteProject: async (id) => {

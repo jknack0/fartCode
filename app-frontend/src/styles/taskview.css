@@ -102,6 +102,13 @@
   color: #9a9aa1;
 }
 
+/* The task view's only destructive action reads like its neighbours until
+   the pointer lands on it — the delete confirm, not the button, is where
+   the warning lives (7a: red is spent on the confirm's delete label). */
+.tv-action-danger:hover {
+  color: var(--fc-bad-text);
+}
+
 /* A pipeline action the engine refused. Truncates rather than pushing the
    crumb out of the 46px row; the full text is the title, and clicking
    dismisses. */

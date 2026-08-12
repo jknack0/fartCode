@@ -193,8 +193,20 @@ function focusTask(taskId: string): void {
   else sidebar.selectTask(taskId);
 }
 
+/** Navigation is scoped to the project you are LOOKING AT. The launch
+ * listener is app-lifetime and unfiltered (it has to be — settle chains
+ * fire while the board is unmounted), so an automatic launch in ANOTHER
+ * project used to drag the selection across: you were on ade's board and
+ * landed in a steadEHR task. The agent still starts either way; only the
+ * navigation is withheld. */
+function focusIfCurrentProject(launch: StepLaunchDirective): void {
+  if (useSidebar.getState().selectedProjectId !== launch.projectId) return;
+  focusTask(launch.taskId);
+}
+
 /** The launch payload as it rides the event. */
 export interface StepLaunchDirective {
+  projectId: string;
   taskId: string;
   prompt: string;
   provider: string;
@@ -230,13 +242,13 @@ export async function runLaunchDirective(
     // The engine says so itself (empty prompt), or the probe catches what
     // the engine cannot see.
     if (launch.reattached || !launch.prompt || (await hasLiveAgent(launch.taskId))) {
-      focusTask(launch.taskId);
+      focusIfCurrentProject(launch);
       return;
     }
     const terminalId = await terminalOpenAgent(launch.taskId, launch.provider, 24, 80);
     useScripts.getState().noteAgentSpawn(launch.taskId, terminalId);
     await terminalWrite(terminalId, `\u001b[200~${launch.prompt}\u001b[201~\r`);
-    focusTask(launch.taskId);
+    focusIfCurrentProject(launch);
   } catch (e) {
     useSteps.getState().setError(String(e));
   }
@@ -257,6 +269,7 @@ export function wireStepEvents(): () => void {
       // A launch supersedes every derived state the card carried.
       steps.clearIssue(event.issueId);
       void runLaunchDirective({
+        projectId: event.projectId,
         taskId: event.taskId,
         prompt: event.prompt,
         provider: event.provider,

@@ -72,6 +72,7 @@ vi.mock("../lib/tauri", () => ({
 }));
 
 import TaskHeader from "./TaskHeader";
+import { deleteTask } from "../lib/tauri";
 import { registerAllCommands } from "../lib/commands";
 import { hint } from "../lib/useCommands";
 import {
@@ -215,6 +216,7 @@ const ACTION = {
   card: "Open the card detail",
   changes: "Toggle changes panel",
   newTask: "Add a task to this project",
+  deleteTask: "Delete this task and its worktree",
 };
 
 beforeEach(() => {
@@ -561,6 +563,19 @@ describe("the agent dot derives from the live session", () => {
       }),
     );
     expect(document.querySelector(".tv-header-id .status-dot")).toHaveClass("tv-dot-idle");
+  });
+});
+
+describe("reachable delete", () => {
+  it("opens the confirm for this task rather than deleting it", async () => {
+    await renderHeader();
+    screen.getByTitle(ACTION.deleteTask).click();
+    // The header opens the SAME confirm the ⌘⌫ command opens — nothing is
+    // destroyed on the press, and the modal is what itemizes the worktree.
+    await waitFor(() =>
+      expect(useUi.getState().deleteTaskTarget).toEqual({ projectId: "p1", taskId: "t1" }),
+    );
+    expect(vi.mocked(deleteTask)).not.toHaveBeenCalled();
   });
 });
 

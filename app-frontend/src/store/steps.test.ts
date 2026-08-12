@@ -89,12 +89,15 @@ beforeEach(() => {
   vi.mocked(stepParkedList).mockResolvedValue([]);
   useSteps.setState({ byIssue: {}, hydrated: {}, error: null });
   useScripts.setState({ byTask: {}, agentByTask: {} });
-  useSidebar.setState({ tasksByProject: {}, selectedTaskId: null, selectedProjectId: null });
+  // The board you are looking at: launches for OTHER projects must not
+  // navigate (see the cross-project test below).
+  useSidebar.setState({ tasksByProject: {}, selectedTaskId: null, selectedProjectId: "p1" });
 });
 
 describe("the launch directive", () => {
   it("opens a session and pastes the step prompt when nothing is running", async () => {
     await runLaunchDirective({
+      projectId: "p1",
       taskId: "task-1",
       prompt: "implement the thing",
       provider: "claude",
@@ -117,6 +120,7 @@ describe("the launch directive", () => {
     ]);
 
     await runLaunchDirective({
+      projectId: "p1",
       taskId: "task-1",
       prompt: "implement the thing",
       provider: "claude",
@@ -134,6 +138,7 @@ describe("the launch directive", () => {
     });
 
     await runLaunchDirective({
+      projectId: "p1",
       taskId: "task-1",
       prompt: "implement the thing",
       provider: "claude",
@@ -146,6 +151,7 @@ describe("the launch directive", () => {
 
   it("focuses without writing when the engine says it reattached", async () => {
     await runLaunchDirective({
+      projectId: "p1",
       taskId: "task-1",
       prompt: "",
       provider: "claude",
@@ -157,10 +163,30 @@ describe("the launch directive", () => {
     expect(useSidebar.getState().selectedTaskId).toBe("task-1");
   });
 
+  // The cross-project bleed: the launch listener is app-lifetime and
+  // unfiltered, so a settle-chained launch in a project you are NOT looking
+  // at used to yank the selection into it mid-work.
+  it("starts the agent but does not navigate when another project is selected", async () => {
+    useSidebar.setState({ selectedProjectId: "p2", selectedTaskId: null });
+
+    await runLaunchDirective({
+      projectId: "p1",
+      taskId: "task-1",
+      prompt: "implement the thing",
+      provider: "claude",
+      reattached: false,
+    });
+
+    expect(terminalOpenAgent).toHaveBeenCalledWith("task-1", "claude", 24, 80);
+    expect(useSidebar.getState().selectedTaskId).toBeNull();
+    expect(useSidebar.getState().selectedProjectId).toBe("p2");
+  });
+
   it("surfaces a directive that could not be carried out", async () => {
     vi.mocked(terminalOpenAgent).mockRejectedValue(new Error("agent not installed: claude"));
 
     await runLaunchDirective({
+      projectId: "p1",
       taskId: "task-1",
       prompt: "go",
       provider: "claude",
