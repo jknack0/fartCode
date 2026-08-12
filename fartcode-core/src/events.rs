@@ -34,6 +34,12 @@ pub enum InternalEvent {
         project_id: String,
         name: String,
     },
+    /// Task name replaced (LLM title summary of a prompt-length name).
+    TaskRenamed {
+        id: String,
+        project_id: String,
+        name: String,
+    },
     TaskProvisioned {
         id: String,
         workspace_id: String,

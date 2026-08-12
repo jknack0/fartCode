@@ -140,6 +140,9 @@ pub trait TaskStore: Send + Sync {
     /// `status_changed_at`.
     fn update_status(&self, id: &str, status: TaskStatus) -> Result<Task, Error>;
 
+    /// Replaces the task's name. Emits `task:renamed`.
+    fn rename(&self, id: &str, name: &str) -> Result<Task, Error>;
+
     fn set_pinned(&self, id: &str, pinned: bool) -> Result<Task, Error>;
 
     /// Archive keeps the row (non-destructive; the reference reaps the
@@ -397,6 +400,25 @@ impl TaskStore for DbTaskStore {
                 ],
             );
         }
+        self.get(id)?.ok_or_else(|| Error::TaskNotFound(id.into()))
+    }
+
+    fn rename(&self, id: &str, name: &str) -> Result<Task, Error> {
+        let task = self
+            .get(id)?
+            .ok_or_else(|| Error::TaskNotFound(id.into()))?;
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE tasks SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
+                rusqlite::params![name, id],
+            )?;
+            Ok(())
+        })?;
+        self.event_bus.send(InternalEvent::TaskRenamed {
+            id: id.into(),
+            project_id: task.project_id.clone(),
+            name: name.into(),
+        });
         self.get(id)?.ok_or_else(|| Error::TaskNotFound(id.into()))
     }
 

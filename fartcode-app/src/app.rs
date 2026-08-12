@@ -268,6 +268,13 @@ pub fn event_to_value(event: &InternalEvent) -> Option<serde_json::Value> {
         } => Some(json!({
             "type": "task:created", "id": id, "projectId": project_id, "name": name,
         })),
+        InternalEvent::TaskRenamed {
+            id,
+            project_id,
+            name,
+        } => Some(json!({
+            "type": "task:renamed", "taskId": id, "projectId": project_id, "name": name,
+        })),
         InternalEvent::TaskDeleted { id } => Some(json!({ "type": "task:deleted", "taskId": id })),
         InternalEvent::TaskStatusChanged { id, new_status, .. } => {
             Some(json!({ "type": "task:status_changed", "taskId": id, "status": new_status }))
