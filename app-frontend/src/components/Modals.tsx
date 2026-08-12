@@ -29,7 +29,7 @@ import {
 import { hint } from "../lib/useCommands";
 import { useLineComments } from "../store/line-comments";
 
-import { useSidebar } from "../store/sidebar";
+import { titleWillSummarize, useSidebar } from "../store/sidebar";
 import { useUi } from "../store/ui";
 
 /** True when the key event originates in a text-entry element — single-key
@@ -381,6 +381,16 @@ export function CreateTaskDialog({
   const [touched, setTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Set once create returns for a prompt-length name: the modal stays open
+  // until the LLM title lands (task:renamed clears pendingTitle and selects
+  // the task) or the store's 10s cap reveals it — either way we close.
+  const [waitingId, setWaitingId] = useState<string | null>(null);
+  const stillNaming = useSidebar((s) =>
+    waitingId ? (s.pendingTitle[waitingId] ?? false) : false,
+  );
+  useEffect(() => {
+    if (waitingId && !stillNaming) onClose();
+  }, [waitingId, stillNaming, onClose]);
   const baseRef =
     useSidebar((s) => s.projects.find((p) => p.id === projectId))?.baseRef ??
     "main";
@@ -429,6 +439,14 @@ export function CreateTaskDialog({
         }
       }
       const task = await apiCreateTask(projectId, name.trim() || "New task", opts);
+      // Prompt-length names rename ~1-2s later (background LLM title) —
+      // the task stays hidden (and unselected) until the title lands;
+      // task:renamed reveals AND selects it.
+      const hideUntilTitled = titleWillSummarize(task.name);
+      if (hideUntilTitled) useSidebar.getState().markTitlePending(task.id);
+      // Hold the modal open (naming banner) until the titled task is
+      // actually on the left sheet — the watcher effect closes it.
+      if (hideUntilTitled) setWaitingId(task.id);
       // Mirror the sidebar store's createTask bookkeeping (that path
       // hardcodes the name — see notes): append + select immediately; the
       // task:created event refetch keeps it consistent.
@@ -443,11 +461,12 @@ export function CreateTaskDialog({
               ? existing
               : [...existing, task],
           },
-          selectedProjectId: projectId,
-          selectedTaskId: task.id,
+          ...(hideUntilTitled
+            ? {}
+            : { selectedProjectId: projectId, selectedTaskId: task.id }),
         };
       });
-      onClose();
+      if (!hideUntilTitled) onClose();
     } catch (e) {
       setError(String(e));
       setBusy(false);
@@ -535,8 +554,8 @@ export function CreateTaskDialog({
           </div>
           <div className="fc-modal-foot-side">
             <button type="button" disabled={busy} onClick={submit}>
-              {busy ? (
-                "creating…"
+              {busy || waitingId ? (
+                <span className="fc-btn-spinner" role="status" aria-label="creating task" />
               ) : (
                 <>
                   <span className="fc-key">↵</span> create & start

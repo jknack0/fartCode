@@ -26,6 +26,8 @@ import {
 interface SidebarState {
   projects: ProjectDto[];
   tasksByProject: Record<string, TaskDto[]>;
+  /** Task ids whose pasted-prompt name awaits its LLM title (skeleton renders meanwhile). */
+  pendingTitle: Record<string, boolean>;
   collapsed: Record<string, boolean>;
   selectedProjectId: string | null;
   selectedTaskId: string | null;
@@ -38,6 +40,7 @@ interface SidebarState {
   switchToTask: (task: TaskDto) => void;
   toggleCollapsed: (id: string) => void;
   createTask: (projectId: string, opts?: CreateTaskOptions) => Promise<void>;
+  markTitlePending: (taskId: string) => void;
   createProject: (path: string) => Promise<void>;
   /** Remote project picker (E12-04): an existing repo on an SSH host. */
   createRemoteProject: (connectionId: string, remotePath: string) => Promise<void>;
@@ -51,6 +54,10 @@ interface SidebarState {
   deleteTask: (projectId: string, taskId: string) => Promise<void>;
   togglePin: (id: string) => Promise<void>;
 }
+
+/** Mirrors SUMMARIZE_NAME_THRESHOLD in fartcode-app/src/commands/tasks.rs:
+ * names past 60 chars (or multiline) get a background LLM title. */
+export const titleWillSummarize = (name: string) => name.length > 60 || name.includes("\n");
 
 const SIDEBAR_VIEW_STATE_KEY = "view-state:app:sidebar";
 
@@ -69,6 +76,7 @@ function autoPullProject(id: string) {
 export const useSidebar = create<SidebarState>((set, get) => ({
   projects: [],
   tasksByProject: {},
+  pendingTitle: {},
   collapsed: {},
   selectedProjectId: null,
   selectedTaskId: null,
@@ -161,6 +169,21 @@ export const useSidebar = create<SidebarState>((set, get) => ({
         selectedTaskId: task.id,
       };
     });
+  },
+
+  /** Skeleton window for a pasted-prompt title: set at create, cleared by
+   * task:renamed. The summary is best-effort (claude and the ollama
+   * fallback can both fail) and failure emits nothing — the timeout
+   * uncovers the full name so the skeleton can't shimmer forever. */
+  markTitlePending: (taskId: string) => {
+    set((s) => ({ pendingTitle: { ...s.pendingTitle, [taskId]: true } }));
+    setTimeout(() => {
+      set((s) => {
+        if (!s.pendingTitle[taskId]) return s;
+        const { [taskId]: _dropped, ...pendingTitle } = s.pendingTitle;
+        return { ...s, pendingTitle };
+      });
+    }, 10_000);
   },
 
   createProject: async (path) => {
@@ -331,6 +354,27 @@ export function wireSidebarEvents(): () => void {
       });
     } else if (event.type === "project:added") {
       s.load().catch(() => {});
+    } else if (event.type === "task:renamed") {
+      // LLM title landed (create_task's background summary): swap the name
+      // in place — no refetch, the row is already on screen.
+      useSidebar.setState((st) => {
+        // Title landed — reveal the hidden task, and select it when it was
+        // waiting (creation deferred the select to this moment).
+        const wasPending = Boolean(st.pendingTitle[event.taskId]);
+        const { [event.taskId]: _dropped, ...pendingTitle } = st.pendingTitle;
+        return {
+          pendingTitle,
+          ...(wasPending
+            ? { selectedProjectId: event.projectId, selectedTaskId: event.taskId }
+            : {}),
+          tasksByProject: {
+            ...st.tasksByProject,
+            [event.projectId]: (st.tasksByProject[event.projectId] ?? []).map((t) =>
+              t.id === event.taskId ? { ...t, name: event.name } : t,
+            ),
+          },
+        };
+      });
     } else if (
       event.type === "task:created" ||
       event.type === "task:deleted" ||
@@ -339,6 +383,13 @@ export function wireSidebarEvents(): () => void {
       event.type === "task:archived" ||
       event.type === "task:restored"
     ) {
+      // Pasted-prompt names get a background LLM title — mark BEFORE the
+      // refetch (or the modal's own append) paints the row, so the
+      // skeleton shows from first paint. The modal path also marks after
+      // its invoke resolves, but this event usually wins that race.
+      if (event.type === "task:created" && titleWillSummarize(event.name)) {
+        useSidebar.getState().markTitlePending(event.id);
+      }
       // Refetch the affected project's tasks.
       const projectId = event.type === "task:created" ? event.projectId : null;
       if (projectId) {

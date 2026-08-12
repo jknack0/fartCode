@@ -113,8 +113,114 @@ pub fn create_task_blocking<R: tauri::Runtime>(
         // No auto-run setup → unchanged: launch right away.
         None => launch_default_agent(terminals.as_ref(), app, &created.task.id),
     }
+    // Prompt-length names get an LLM title: a pasted paragraph is a fine
+    // prompt but a terrible label. Best-effort + off-thread — the task
+    // stands (and returns) with the full text; the rename lands later as
+    // `task:renamed`.
+    maybe_summarize_task_name(app, &created.task.id, name);
     Ok(TaskDto::from(&created.task))
 }
+
+/// A name longer than a label (or multi-line) is a pasted prompt. This
+/// asks the claude CLI (print mode, haiku — the step engine's own
+/// cheap-model pick) for a short title on a background thread and renames
+/// the task when it answers. When claude is missing or fails (no auth, no
+/// network), a tiny local model (ollama, gemma3:270m — ~240MB) takes the
+/// same prompt. Best-effort at every step: neither CLI on PATH, non-zero
+/// exits, or empty output all leave the full name in place — the task
+/// never waits on this.
+const SUMMARIZE_NAME_THRESHOLD: usize = 60;
+
+/// Local fallback model: small enough to be a non-decision (~240MB), good
+/// enough for "paragraph → 8-word title". Pull once: `ollama pull gemma3:270m`.
+const OLLAMA_TITLE_MODEL: &str = "gemma3:270m";
+
+pub fn maybe_summarize_task_name(app: &Arc<App>, task_id: &str, name: &str) {
+    if name.len() <= SUMMARIZE_NAME_THRESHOLD && !name.contains('\n') {
+        return;
+    }
+    let app = app.clone();
+    let task_id = task_id.to_string();
+    let name = name.to_string();
+    std::thread::spawn(move || {
+        let prompt = format!(
+            "Summarize this coding task into a short title (at most 8 words). \
+             Reply with ONLY the title - no quotes, no trailing period.\n\n{name}"
+        );
+        let title = summarize_via_claude(&task_id, &prompt)
+            .or_else(|| summarize_via_ollama(&task_id, &prompt));
+        let Some(title) = title else {
+            tracing::debug!(task_id, "no summarizer produced a title — name stays verbatim");
+            return;
+        };
+        if let Err(e) = app.tasks.rename(&task_id, &title) {
+            tracing::warn!(task_id, error = %e, "title rename failed");
+        }
+    });
+}
+
+/// First non-empty stdout line, shorn of the wrappers models add despite
+/// instructions (quotes, markdown bold, trailing period), capped at 80 chars.
+fn first_line_title(stdout: &[u8]) -> String {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or_default()
+        .trim_matches(|c| c == '"' || c == '*')
+        .trim_end_matches('.')
+        .chars()
+        .take(80)
+        .collect()
+}
+
+fn summarize_via_claude(task_id: &str, prompt: &str) -> Option<String> {
+    let binary = fartcode_core::pty::launcher::find_on_path("claude")?;
+    let out = std::process::Command::new(&binary)
+        .args(["-p", "--model", "haiku"])
+        .arg(prompt)
+        // Same rule as agent terminals (see terminals.rs): a stray key
+        // flips the CLI to API billing — subscription auth must win.
+        .env_remove("ANTHROPIC_API_KEY")
+        .output();
+    match out {
+        Ok(o) if o.status.success() => {
+            let title = first_line_title(&o.stdout);
+            (!title.is_empty()).then_some(title)
+        }
+        Ok(o) => {
+            tracing::warn!(task_id, code = ?o.status.code(), "claude title summary failed");
+            None
+        }
+        Err(e) => {
+            tracing::warn!(task_id, error = %e, "claude title spawn failed");
+            None
+        }
+    }
+}
+
+fn summarize_via_ollama(task_id: &str, prompt: &str) -> Option<String> {
+    let binary = fartcode_core::pty::launcher::find_on_path("ollama")?;
+    let out = std::process::Command::new(&binary)
+        .args(["run", OLLAMA_TITLE_MODEL])
+        .arg(prompt)
+        .output();
+    match out {
+        Ok(o) if o.status.success() => {
+            let title = first_line_title(&o.stdout);
+            (!title.is_empty()).then_some(title)
+        }
+        Ok(o) => {
+            tracing::warn!(task_id, code = ?o.status.code(), "ollama title summary failed");
+            None
+        }
+        Err(e) => {
+            tracing::warn!(task_id, error = %e, "ollama title spawn failed");
+            None
+        }
+    }
+}
+
 
 /// 7b "A failed setup blocks agent start": blocks until the auto-run setup
 /// terminal exits, then launches the default agent ONLY on exit 0 — a
@@ -414,4 +520,23 @@ pub fn delete_task_blocking<R: tauri::Runtime>(
     // and sweeps its tmux sessions (surviving orphans from crashes too).
     terminals.close_task(project_id, task_id);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::first_line_title;
+
+    #[test]
+    fn first_line_title_strips_model_wrappers() {
+        // gemma3:270m wraps titles in markdown bold despite instructions.
+        assert_eq!(first_line_title(b"**Reconnect Buffer Queue**\n"), "Reconnect Buffer Queue");
+        // claude occasionally quotes and adds a period.
+        assert_eq!(first_line_title(b"\"Fix save button.\"\n"), "Fix save button");
+        // Leading blank lines / spinner-adjacent whitespace skipped.
+        assert_eq!(first_line_title(b"\n  \n  Fix settings save\n"), "Fix settings save");
+        // Empty output stays empty (caller treats as no-title).
+        assert_eq!(first_line_title(b""), "");
+        // 80-char cap.
+        assert_eq!(first_line_title("x".repeat(200).as_bytes()).len(), 80);
+    }
 }

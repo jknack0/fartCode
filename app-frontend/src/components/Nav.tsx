@@ -139,6 +139,7 @@ function ProjectFlyout() {
   const selectedProjectId = useSidebar((s) => s.selectedProjectId);
   const tasksByProject = useSidebar((s) => s.tasksByProject);
   const selectTask = useSidebar((s) => s.selectTask);
+  const pendingTitle = useSidebar((s) => s.pendingTitle);
   const setCreateTaskTarget = useUi((s) => s.setCreateTaskTarget);
   const visible = useUi((s) => s.sidebarVisible);
   const toggleVisible = useUi((s) => s.toggleSidebarVisible);
@@ -155,14 +156,17 @@ function ProjectFlyout() {
   const project = projects.find((p) => p.id === selectedProjectId);
   if (!project || !visible) return null;
 
-  const live = (tasksByProject[project.id] ?? []).filter(
+  // Pasted-prompt tasks stay hidden until their LLM title lands
+  // (task:renamed) or the store's 10s cap gives up and reveals them.
+  const projectTasks = (tasksByProject[project.id] ?? []).filter((t) => !pendingTitle[t.id]);
+  const live = projectTasks.filter(
     (t) => !t.archivedAt && (t.status === "in_progress" || t.status === "review"),
   );
   const needsYou = live.filter((t) => t.status === "review");
   const running = live.filter((t) => t.status === "in_progress");
   // Non-in-flight work (done, todo, failed ad-hoc tasks) has no board card
   // — list the most recent ones so there's always a path back to a task.
-  const recent = (tasksByProject[project.id] ?? [])
+  const recent = projectTasks
     .filter((t) => !t.archivedAt && t.status !== "in_progress" && t.status !== "review")
     .sort(
       (a, b) =>

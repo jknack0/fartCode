@@ -1794,3 +1794,19 @@ a.pr-comment-body:hover { text-decoration: underline; }
 .pr-token-actions { display: flex; gap: 6px; }
 .pr-token-paste { display: flex; gap: 6px; }
 .pr-token-paste input { flex: 1; }
+/* Create button collapses to a spinner while the task is created and its
+   LLM title lands (the modal closes once the task shows on the left sheet). */
+.fc-btn-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  vertical-align: -2px;
+  animation: fc-btn-spin 0.7s linear infinite;
+}
+
+@keyframes fc-btn-spin {
+  to { transform: rotate(360deg); }
+}
