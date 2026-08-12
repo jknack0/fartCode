@@ -349,4 +349,45 @@ mod tests {
         assert!(store.last_sync("w1").unwrap().is_some());
         assert_eq!(store.failure_count("w1").unwrap(), 0);
     }
+
+    /// Kill-restart safety (#49): the cache and kv cursors are plain rows,
+    /// so a fresh boot renders the PR offline from SQLite and the sync
+    /// cursor resumes exactly where the killed process left it.
+    #[test]
+    fn kill_restart_cached_pr_renders_offline_and_cursor_survives() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("app.db");
+        let dto = pr_dto("https://github.com/o/r/pull/42", "t", PrStatus::Open);
+
+        // "Boot 1": a sync lands the payload + success cursor, then dies.
+        {
+            let db: Arc<dyn Db> = SqliteDb::init(Some(path.to_str().unwrap())).unwrap();
+            let bus = Arc::new(BroadcastEventBus::new(16));
+            let store = PrSyncStore::new(db, bus as Arc<dyn EventBus>);
+            store.upsert(Some("w1"), "o", "r", &dto).unwrap();
+            store.record_success("w1").unwrap();
+        }
+
+        // "Boot 2": fresh handles over the same file — cached PR renders
+        // offline, cursor intact, and re-syncing the same payload is still
+        // churn-free (no spurious pr:updated after restart).
+        let db: Arc<dyn Db> = SqliteDb::init(Some(path.to_str().unwrap())).unwrap();
+        let bus = Arc::new(BroadcastEventBus::new(16));
+        let store = PrSyncStore::new(db, bus.clone() as Arc<dyn EventBus>);
+        let mut rx = bus.subscribe();
+        let listed = store.list_for_workspace("w1").unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].url, dto.url);
+        assert_eq!(
+            store.open_pr_url("o", "r", "feat/x").unwrap().as_deref(),
+            Some("https://github.com/o/r/pull/42")
+        );
+        assert!(store.last_sync("w1").unwrap().is_some());
+        assert_eq!(store.failure_count("w1").unwrap(), 0);
+        assert!(
+            !store.upsert(Some("w1"), "o", "r", &dto).unwrap(),
+            "identical payload after restart must not churn"
+        );
+        assert!(rx.try_recv().is_err(), "no event for unchanged payload");
+    }
 }
