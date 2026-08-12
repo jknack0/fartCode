@@ -922,19 +922,27 @@ deliberately (see commands/git.rs:258). The mutex is a contention
 amplifier behind main-thread holders, not a deadlock source. The agent
 test deadlocks were test-authored (guard held across store.get()).
 
-## E2E scenario catalogue + board fix round (2026-08-09)
+## E2E scenario catalogue: DELETED — the backlog is GitHub issues (2026-08-12)
 
-`docs/e2e-scenarios.md` (e535a1a): 449 scenarios over 8 journeys, 153
-deduped gaps (44 high), authored by reading the implementation not the
-specs. Status vocabulary marks unreachable/not-built honestly. USE IT as
-the gap backlog and the E2E test spec. Highest-severity findings not yet
-ticketed: worktree pool keyed on project NAME (two same-named projects
-share a pool; deleting one destroys the other's worktrees), `curl|bash`
-agent install with no confirm, delete_project does no process teardown,
-task.status never changes so needs-you can never render, unbounded chained
-spend (no depth cap/budget on run-mode column chains). No E2E driver
-exists for the Tauri app; the doc separates backend-command-drivable
-scenarios from ones needing tauri-driver.
+`docs/e2e-scenarios.md` (e535a1a, 449 scenarios / 153 gaps) was **removed
+in c7cf0b4**. Do not resurrect it and do not cite it: it was written
+against f942288 and went stale within four days (131 commits), so its
+"not-built" claims were wrong about columns editor, dossier consent, chain
+spend, worktree pool keying and delete_project teardown, all of which had
+landed. THE BACKLOG IS THE ISSUE TRACKER — nowhere else.
+
+Audit that replaced it (2026-08-12): all 96 pre-existing issues closed and
+verified implemented against code (six carried no ticket-id comment —
+#79, #59, #39, #38, #36, #8 — and were confirmed functionally instead).
+The gaps that survived re-verification were filed as **#98–#142** (45
+issues, 17 high), each with file:line evidence: no install confirm, no
+app-settings commands, live-agent drop reattach, unpersisted approval
+state, pane activation, agent-kill confirm, task.status never written,
+unwatched project root, swallowed changes errors, PR sync/merge/dead
+links, console-only command outcomes, no exit-code branch on step settle,
+unindexed board issues. Still true: no E2E driver exists for the Tauri app
+(`make test` is vitest + cargo test), so backend-command-drivable work is
+the only automatable half today.
 
 E18-07 fix round landed (69262eb) closing all 16 review findings. Notable:
 step events now live in an app-lifetime store subscription (store/steps.ts)
