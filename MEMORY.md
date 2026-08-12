@@ -1240,6 +1240,14 @@ in `fartCode App.dc.html`). When adding/restyling UI:
   (tasks_operations_integration.rs); the new mapping is covered by
   fartcode-app/tests/create_task_params.rs.
 
+## E4 epic COMPLETE (2026-08-07)
+
+All 11 children (#41–#51) closed: watcher pipeline, status/diff engine,
+Changes sidebar, unified/split diff renderer, inline editing, commit card,
+PR section, footer git actions, PR sync engine, line comments, agent
+comment tool. Merge gate (fmt + clippy + test + frontend typecheck) green
+on the epic branch. Details in the per-ticket entries below.
+
 ## E4 PR section, PR sync, agent comment tool (#47/#49/#51, 2026-08-07)
 
 - **GitHub client** lives in `fartcode-core/src/github` (token.rs keyring +
