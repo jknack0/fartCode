@@ -484,3 +484,34 @@ aside.changes-panel {
   font-size: 12.5px;
   color: var(--fc-bad-text);
 }
+
+/* -- Sheet close (×): text glyph, mono — no icon sets. Every sheet header
+   carries one because the sheet overlays the content's action buttons. -- */
+.fc-changes-header-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.fc-sheet-close {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-mid);
+  cursor: pointer;
+}
+.fc-sheet-close:hover {
+  background: var(--hover-bg);
+  color: var(--text-card);
+}

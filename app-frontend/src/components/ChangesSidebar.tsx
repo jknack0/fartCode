@@ -17,6 +17,7 @@ import CommitCard from "./CommitCard";
 import GitFooter from "./GitFooter";
 import PullRequestPanel from "./PullRequestPanel";
 import CardDetail from "./board/CardDetail";
+import FileTreeView from "./FileTreeView";
 import ProjectChatPanel from "./projectChat/ProjectChatPanel";
 import TaskChatPanel from "./TaskChatPanel";
 import { useGutterResize } from "../lib/useGutterResize";
@@ -47,6 +48,7 @@ export default function ChangesSidebar() {
   const detailIssueId = useUi((s) => s.boardDetailIssueId);
   const projectChatOpen = useUi((s) => s.projectChatOpen);
   const taskChatOpen = useUi((s) => s.taskChatOpen);
+  const fileTreeOpen = useUi((s) => s.fileTreeOpen);
   const { projects, tasksByProject, selectedProjectId, selectedTaskId } = useSidebar();
   const task = selectedProjectId
     ? (tasksByProject[selectedProjectId] ?? []).find((t) => t.id === selectedTaskId)
@@ -84,6 +86,8 @@ export default function ChangesSidebar() {
   const showDetail = !taskId && detailIssueId !== null;
   const showChat = !taskId && projectChatOpen && selectedProjectId !== null;
   const showTaskChat = Boolean(taskId && taskChatOpen);
+  // File tree mode: same sheet, alternates with changes/chat (never stacks).
+  const showFileTree = Boolean(fileTreeOpen && workspaceId);
 
   // §5d single keys need DOM focus on the panel; give it focus when the
   // changes surface appears (open / tab / sub-view edge), and only on that
@@ -94,7 +98,8 @@ export default function ChangesSidebar() {
     panelTab === "changes" &&
     !showDetail &&
     !showChat &&
-    !showTaskChat;
+    !showTaskChat &&
+    !showFileTree;
   useEffect(() => {
     if (changesVisible) mainRef.current?.focus();
   }, [changesVisible]);
@@ -210,6 +215,28 @@ export default function ChangesSidebar() {
         // a project switch must not leave the PREVIOUS project's PM agent
         // on screen (and receiving prompts) until the new one resolves.
         <ProjectChatPanel key={selectedProjectId} projectId={selectedProjectId} />
+      ) : showFileTree ? (
+        <div className="fc-changes-main sheet-file-tree">
+          <div className="fc-changes-header">
+            <span className="fc-changes-title">Files</span>
+            <span className="fc-changes-header-side">
+              {headerRef && (
+                <span className="fc-changes-ref" title={headerRef}>
+                  {headerRef}
+                </span>
+              )}
+              <button
+                className="fc-sheet-close"
+                aria-label="Close panel"
+                title="Close panel"
+                onClick={() => useUi.getState().setChangesOpen(false)}
+              >
+                ×
+              </button>
+            </span>
+          </div>
+          <FileTreeView taskId={taskId ?? ""} workspaceId={workspaceId!} active />
+        </div>
       ) : taskId && taskChatOpen ? (
         <TaskChatPanel key={taskId} projectId={selectedProjectId!} taskId={taskId} />
       ) : (
@@ -223,11 +250,21 @@ export default function ChangesSidebar() {
         >
           <div className="fc-changes-header">
             <span className="fc-changes-title">Changes</span>
-            {headerRef && (
-              <span className="fc-changes-ref" title={headerRef}>
-                {headerRef}
-              </span>
-            )}
+            <span className="fc-changes-header-side">
+              {headerRef && (
+                <span className="fc-changes-ref" title={headerRef}>
+                  {headerRef}
+                </span>
+              )}
+              <button
+                className="fc-sheet-close"
+                aria-label="Close panel"
+                title="Close panel"
+                onClick={() => useUi.getState().setChangesOpen(false)}
+              >
+                ×
+              </button>
+            </span>
           </div>
 
           {workspaceId && (

@@ -47,7 +47,21 @@ export default function ProjectChatPanel({ projectId }: { projectId: string }) {
     <aside className="project-chat pm-chat">
       <header className="project-chat-header">
         <span>PM</span>
-        <span className="pm-chat-scope">project root · {chord}</span>
+        <span className="fc-changes-header-side">
+          <span className="pm-chat-scope">project root · {chord}</span>
+          <button
+            className="fc-sheet-close"
+            aria-label="Close panel"
+            title="Close panel"
+            onClick={() => {
+              const ui = useUi.getState();
+              ui.setProjectChatOpen(false);
+              ui.setChangesOpen(false); // close the sheet, not just switch modes
+            }}
+          >
+            ×
+          </button>
+        </span>
       </header>
       {error && <p className="error">{error}</p>}
       {conversationId ? (
