@@ -453,14 +453,21 @@ export function CreateTaskDialog({
       // Mirror the sidebar store's createTask bookkeeping (that path
       // hardcodes the name — see notes): append + select immediately; the
       // task:created event refetch keeps it consistent.
-      useSidebar.setState((s) => ({
-        tasksByProject: {
-          ...s.tasksByProject,
-          [projectId]: [...(s.tasksByProject[projectId] ?? []), task],
-        },
-        selectedProjectId: projectId,
-        selectedTaskId: task.id,
-      }));
+      useSidebar.setState((s) => {
+        // The task:created event's refetch can land before this promise
+        // resolves — only append when the refetch hasn't delivered it yet.
+        const existing = s.tasksByProject[projectId] ?? [];
+        return {
+          tasksByProject: {
+            ...s.tasksByProject,
+            [projectId]: existing.some((t) => t.id === task.id)
+              ? existing
+              : [...existing, task],
+          },
+          selectedProjectId: projectId,
+          selectedTaskId: task.id,
+        };
+      });
       onClose();
     } catch (e) {
       setError(String(e));
@@ -564,6 +571,15 @@ export function CreateTaskDialog({
       </div>
     </div>
   );
+}
+
+/** Middle-ellipsis for long worktree/branch names in the confirm title —
+ * the tail (the distinguishing suffix) matters more than the middle. */
+function truncate(name: string, max = 36): string {
+  if (name.length <= max) return name;
+  const head = Math.ceil((max - 1) * 0.6);
+  const tail = max - 1 - head;
+  return `${name.slice(0, head)}…${name.slice(-tail)}`;
 }
 
 /** 7a delete/archive confirm — the one place that itemizes. ⌘⌫ deletes
@@ -705,8 +721,7 @@ function DeleteTaskConfirm({
       >
         <div className="fc-confirm-body">
           <div className="fc-confirm-title">
-            Delete <span className="fc-confirm-id">#{taskId.slice(0, 8)}</span>{" "}
-            {task?.name ?? taskId}?
+            Delete {truncate(branch ?? task?.name ?? `#${taskId.slice(0, 8)}`)}?
           </div>
           <div className="fc-confirm-list">
             {agentRunning && (
@@ -716,12 +731,13 @@ function DeleteTaskConfirm({
               </div>
             )}
             {isWorktree && (
-              <div>{branch ? `removes worktree ${branch}` : "removes the worktree"}</div>
+              <div>
+                {branch
+                  ? "removes the worktree · branch kept"
+                  : "removes the worktree"}
+              </div>
             )}
             {countParts.length > 0 && <div>deletes {countParts.join(" · ")}</div>}
-            {isWorktree && branch && (
-              <div className="fc-confirm-kept">branch {branch} is kept</div>
-            )}
           </div>
           {error && (
             <p className="fc-modal-error" role="alert">
@@ -731,10 +747,6 @@ function DeleteTaskConfirm({
         </div>
         <div className="fc-modal-foot">
           <div className="fc-modal-foot-side">
-            <button type="button" disabled={busy} onClick={onClose}>
-              <span className="fc-key">esc</span> cancel
-            </button>
-            <span aria-hidden>·</span>
             <button type="button" disabled={busy} onClick={doArchive}>
               <span className="fc-key">a</span> archive instead
             </button>
