@@ -775,6 +775,14 @@ impl ColumnStore {
             )));
         }
         let conn = self.conn()?;
+        // EXACTLY ONE column owns each card (fix round): the mirror wins
+        // when set — `column_id`'s FK is `ON DELETE SET NULL`, so a
+        // non-NULL value always names a live column — and the lane
+        // mapping covers only mirrorless (pre-E18) rows. Counting both
+        // unconditionally double-booked cards resident in a NON-SEEDED
+        // column (e.g. a landing Triage), whose interim lane fallback is
+        // Backlog: the seeded Backlog column then looked occupied by
+        // cards the board draws elsewhere and could never be deleted.
         let issue_count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM issues WHERE column_id = ?1",
             rusqlite::params![id],
