@@ -192,11 +192,13 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             match event {
                 tauri::WindowEvent::Resized(_) => resync_webview_frames(window, "resized"),
+                // NOTE: no blind pulse_window_size here — pulsing on every
+                // focus flaps the terminal's row count (1px height change
+                // across a cell boundary) and can leave the bottom row
+                // clipped. The watchdog command still pulses on a DETECTED
+                // believed-vs-true size mismatch.
                 tauri::WindowEvent::Focused(true) => {
                     resync_webview_frames(window, "focused");
-                    // Focus is the "user looks at the app" moment — heal the
-                    // unsensable compositor clip right then.
-                    pulse_window_size(window, "focused");
                 }
                 tauri::WindowEvent::ScaleFactorChanged { .. } => {
                     resync_webview_frames(window, "scale")
