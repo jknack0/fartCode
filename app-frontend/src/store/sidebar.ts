@@ -149,7 +149,12 @@ export const useSidebar = create<SidebarState>((set, get) => ({
   createTask: async (projectId: string, opts?: CreateTaskOptions) => {
     const task = await apiCreateTask(projectId, "New task", opts);
     set((s) => {
-      const tasks = [...(s.tasksByProject[projectId] ?? []), task];
+      // The task:created event's refetch can land before this promise
+      // resolves — only append when the refetch hasn't delivered it yet.
+      const existing = s.tasksByProject[projectId] ?? [];
+      const tasks = existing.some((t) => t.id === task.id)
+        ? existing
+        : [...existing, task];
       return {
         tasksByProject: { ...s.tasksByProject, [projectId]: tasks },
         selectedTaskId: task.id,

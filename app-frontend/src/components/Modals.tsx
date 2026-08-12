@@ -453,14 +453,21 @@ export function CreateTaskDialog({
       // Mirror the sidebar store's createTask bookkeeping (that path
       // hardcodes the name — see notes): append + select immediately; the
       // task:created event refetch keeps it consistent.
-      useSidebar.setState((s) => ({
-        tasksByProject: {
-          ...s.tasksByProject,
-          [projectId]: [...(s.tasksByProject[projectId] ?? []), task],
-        },
-        selectedProjectId: projectId,
-        selectedTaskId: task.id,
-      }));
+      useSidebar.setState((s) => {
+        // The task:created event's refetch can land before this promise
+        // resolves — only append when the refetch hasn't delivered it yet.
+        const existing = s.tasksByProject[projectId] ?? [];
+        return {
+          tasksByProject: {
+            ...s.tasksByProject,
+            [projectId]: existing.some((t) => t.id === task.id)
+              ? existing
+              : [...existing, task],
+          },
+          selectedProjectId: projectId,
+          selectedTaskId: task.id,
+        };
+      });
       onClose();
     } catch (e) {
       setError(String(e));
