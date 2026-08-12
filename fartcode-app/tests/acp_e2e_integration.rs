@@ -7,6 +7,7 @@
 //! (the merge gate); it lives in the shared target directory.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -66,6 +67,9 @@ struct Fixture {
     conversations: Arc<DbConversationStore>,
     events: Arc<RecordingEvents>,
     runtime: Arc<AcpRuntime>,
+    /// Adapter-resolver invocations — one per spawn attempt. The start
+    /// lock's whole job is to keep this at 1 for overlapping starts.
+    spawns: Arc<AtomicUsize>,
     #[allow(dead_code)]
     worktree: tempfile::TempDir,
 }
@@ -95,19 +99,25 @@ impl Fixture {
         let provider_accounts = Arc::new(ProviderAccountStore::new(db.clone()));
         let events = Arc::new(RecordingEvents::default());
         let adapter = fake_adapter_path();
+        let spawns = Arc::new(AtomicUsize::new(0));
+        let spawn_counter = spawns.clone();
         let runtime = AcpRuntime::new(
             conversations.clone(),
             tasks,
             db.clone(),
             provider_accounts,
             events.clone(),
-            Arc::new(move |_provider_id: &str| Ok(adapter.clone())),
+            Arc::new(move |_provider_id: &str| {
+                spawn_counter.fetch_add(1, Ordering::SeqCst);
+                Ok(adapter.clone())
+            }),
         );
         Self {
             db,
             conversations,
             events,
             runtime,
+            spawns,
             worktree,
         }
     }
@@ -276,7 +286,49 @@ async fn non_acp_conversations_are_rejected_by_the_gate() {
     assert!(fx.events.snapshots.lock().is_empty());
 }
 
-// -- acceptance 3: task deletion teardown stops ACP sessions --------------------
+// -- acceptance 3: overlapping starts collapse into one adapter spawn -----------
+
+#[tokio::test]
+async fn concurrent_starts_spawn_exactly_one_adapter() {
+    let fx = Fixture::new();
+    fx.create_conversation("conv-race", ConversationType::Acp, "claude");
+
+    // The double-mount race: board→task navigation, a project switch, or
+    // StrictMode's double effect fire start() twice before the first has
+    // registered with the manager. Without the start lock each call passed
+    // the is_running fast path and spawned its own adapter; the second
+    // overwrote the first in `clients`, orphaning a live process.
+    let (a, b, c) = tokio::join!(
+        fx.runtime.start("conv-race"),
+        fx.runtime.start("conv-race"),
+        fx.runtime.start("conv-race"),
+    );
+    let a = a.unwrap();
+    let b = b.unwrap();
+    let c = c.unwrap();
+
+    // Every caller gets the SAME session (reference startSession
+    // idempotency), and only one adapter process ever existed.
+    assert_eq!(a.session_id, "fake-session-1");
+    assert_eq!(b.session_id, a.session_id);
+    assert_eq!(c.session_id, a.session_id);
+    assert_eq!(
+        fx.spawns.load(Ordering::SeqCst),
+        1,
+        "the start lock must collapse overlapping starts into one spawn"
+    );
+
+    // Still one after the dust settles: a later start is the plain
+    // running-session fast path, not another spawn.
+    let again = fx.runtime.start("conv-race").await.unwrap();
+    assert_eq!(again.session_id, a.session_id);
+    assert!(!again.resumed);
+    assert_eq!(fx.spawns.load(Ordering::SeqCst), 1);
+
+    fx.runtime.stop("conv-race").unwrap();
+}
+
+// -- acceptance 4: task deletion teardown stops ACP sessions --------------------
 
 #[tokio::test]
 async fn stop_task_stops_running_acp_sessions() {
