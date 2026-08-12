@@ -115,7 +115,7 @@
    cards, and the header's hairline floor is inset by the column padding
    instead of butting into its neighbour's and banding the whole board.
    The count comes from --column-count, set inline from board_columns;
-   4–9 columns is the realistic range, and the 150px floor is what makes
+   4–9 columns is the realistic range, and the 280px floor is what makes
    the overflow scroll sideways rather than crush them. */
 .board-frame {
   display: flex;
@@ -129,7 +129,7 @@
 .board-columns {
   display: grid;
   grid-template-columns: repeat(var(--column-count, 1), minmax(0, 1fr));
-  min-width: calc(var(--column-count, 1) * 150px);
+  min-width: calc(var(--column-count, 1) * 280px);
   flex: 1;
   min-height: 0;
 }
@@ -265,6 +265,13 @@
   min-height: 0;
   padding-bottom: 16px;
   overflow-y: auto;
+  /* The column still scrolls; it just never shows the bar (same treatment
+     as .board-strip) — the ruled surface stays hairlines only. */
+  scrollbar-width: none;
+}
+
+.board-lane-cards::-webkit-scrollbar {
+  display: none;
 }
 
 /* Keeps an empty lane a full drop target. */
