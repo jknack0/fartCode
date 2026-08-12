@@ -17,7 +17,6 @@ import {
   createTask as apiCreateTask,
   createTaskFromComment,
   gitCommitState,
-  hostDependencyList,
   listLineComments,
   listProjectBranches,
   listProviders,
@@ -366,7 +365,7 @@ export function CreateProjectDialog({ onClose }: { onClose: () => void }) {
 /** 5h "from" choices: base ref (fresh generated branch), the live checkout,
  * or an existing branch to check out — the pre-redesign picker's exact
  * capabilities, restyled into one options row. */
-type FromValue = "base" | "root" | `b:${string}`;
+type FromValue = "base" | `b:${string}`;
 
 export function CreateTaskDialog({
   projectId,
@@ -378,9 +377,8 @@ export function CreateTaskDialog({
   const [name, setName] = useState("");
   const [branches, setBranches] = useState<BranchRef[]>([]);
   const [from, setFrom] = useState<FromValue>("base");
+  const [worktree, setWorktree] = useState(true);
   const [touched, setTouched] = useState(false);
-  const [optionsOpen, setOptionsOpen] = useState(false);
-  const [agent, setAgent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const baseRef =
@@ -394,22 +392,6 @@ export function CreateTaskDialog({
       .then(setBranches)
       .catch(() => setBranches([])); // picker degrades to the two fixed rows
   }, [projectId]);
-
-  // Agent row value: the default-agent setting (create_task launches it).
-  useEffect(() => {
-    hostDependencyList()
-      .then((deps) => setAgent(deps.find((d) => d.isDefault)?.providerId ?? null))
-      .catch(() => {});
-  }, []);
-
-  // ⌥ unfolds the options block; sticky once revealed (toggle per press).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Alt" && !e.repeat) setOptionsOpen((v) => !v);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
 
   // Remote twins of a local name (and origin/HEAD) are dropped — they check
   // out the same commit as their local.
@@ -425,14 +407,11 @@ export function CreateTaskDialog({
       .map((b) => b.name);
   }, [branches]);
 
-  const fromLabel =
-    from === "base" ? baseRef : from === "root" ? "project root" : from.slice(2);
-  const branchValue =
-    from === "base"
-      ? "auto · fartCode…"
-      : from === "root"
-        ? "current checkout · no isolation"
-        : from.slice(2);
+  const fromLabel = !worktree
+    ? "current checkout"
+    : from === "base"
+      ? `new branch from ${baseRef}`
+      : from.slice(2);
 
   const submit = async () => {
     if (busy) return;
@@ -442,7 +421,7 @@ export function CreateTaskDialog({
       // pick. Empty name keeps the pre-composer default.
       const opts: CreateTaskOptions = {};
       if (touched) {
-        if (from === "root") {
+        if (!worktree) {
           opts.workspace = "project-root";
         } else {
           opts.workspace = "new-worktree";
@@ -503,47 +482,31 @@ export function CreateTaskDialog({
             aria-label="Task name"
           />
         </div>
-        {optionsOpen && (
-          <div className="fc-opt-rows">
-            <div className="fc-opt-row">
-              <span>agent</span>
-              <span className="fc-opt-value">
-                <span className="fc-opt-ellipsis">
-                  {agent ? `${agent} · default model` : "default agent"}
-                </span>
-              </span>
-            </div>
-            <div className="fc-opt-row">
-              <span>from</span>
-              <span className="fc-opt-value">
-                <span className="fc-opt-ellipsis">{fromLabel}</span>
-                <span aria-hidden>⌄</span>
-                <select
-                  value={from}
-                  aria-label="Start from"
-                  onChange={(e) => {
-                    setFrom(e.target.value as FromValue);
-                    setTouched(true);
-                  }}
-                >
-                  <option value="base">{baseRef} · default</option>
-                  <option value="root">project root · current checkout</option>
-                  {branchNames.map((n) => (
-                    <option key={n} value={`b:${n}`}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
-              </span>
-            </div>
-            <div className="fc-opt-row">
-              <span>branch</span>
-              <span className="fc-opt-value fc-opt-plain">
-                <span className="fc-opt-ellipsis">{branchValue}</span>
-              </span>
-            </div>
+        <div className="fc-opt-rows">
+          <div className={worktree ? "fc-opt-row" : "fc-opt-row fc-opt-dim"}>
+            <span>branch</span>
+            <span className="fc-opt-value">
+              <span className="fc-opt-ellipsis">{fromLabel}</span>
+              {worktree && <span aria-hidden>⌄</span>}
+              <select
+                value={from}
+                disabled={!worktree}
+                aria-label="Start from"
+                onChange={(e) => {
+                  setFrom(e.target.value as FromValue);
+                  setTouched(true);
+                }}
+              >
+                <option value="base">new branch from {baseRef} · default</option>
+                {branchNames.map((n) => (
+                  <option key={n} value={`b:${n}`}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </span>
           </div>
-        )}
+        </div>
         {error && (
           <p className="fc-modal-error row" role="alert">
             {error}
@@ -551,10 +514,24 @@ export function CreateTaskDialog({
         )}
         <div className="fc-modal-foot">
           <div className="fc-modal-foot-side">
-            <button type="button" onClick={() => setOptionsOpen((v) => !v)}>
-              <span className="fc-key">⌥</span>{" "}
-              {optionsOpen ? "hide options" : "options"}
-            </button>
+            <label className="fc-foot-check">
+              <span
+                className={"fc-check" + (worktree ? " on" : "")}
+                aria-hidden
+              >
+                {worktree ? "✓" : ""}
+              </span>
+              <input
+                type="checkbox"
+                checked={worktree}
+                aria-label="Isolate in a fresh worktree"
+                onChange={(e) => {
+                  setWorktree(e.target.checked);
+                  setTouched(true);
+                }}
+              />
+              isolated worktree
+            </label>
           </div>
           <div className="fc-modal-foot-side">
             <button type="button" disabled={busy} onClick={submit}>
