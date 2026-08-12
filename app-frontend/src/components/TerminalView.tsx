@@ -6,7 +6,7 @@
 import { useEffect, useRef } from "react";
 import { getTerminalSession } from "../lib/terminals";
 import { terminalResize } from "../lib/tauri";
-import "xterm/css/xterm.css";
+import "@xterm/xterm/css/xterm.css";
 
 export default function TerminalView({
   terminalId,
@@ -26,7 +26,13 @@ export default function TerminalView({
     container.appendChild(session.host);
 
     const sync = () => {
+      // A refit reflows the whole buffer, and xterm anchors the viewport to
+      // content, not to the bottom — so a resize (sidesheet toggle, split)
+      // would detach a bottom-stuck terminal from its own tail. Pin it back.
+      const buf = session.term.buffer.active;
+      const atBottom = buf.viewportY === buf.baseY;
       session.fit.fit();
+      if (atBottom) session.term.scrollToBottom();
       const { cols, rows } = session.term;
       void terminalResize(terminalId, cols, rows).catch(() => {});
     };

@@ -39,6 +39,12 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+# macOS webview-frame resync (tauri#14843 workaround in lib.rs) — versions
+# match what tauri 2.11 already pulls, so this adds no new builds.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+
 [dev-dependencies]
 tempfile = "3"
 

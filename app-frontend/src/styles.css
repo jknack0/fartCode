@@ -102,6 +102,11 @@
   --xterm-cursor: #e8e8ea;
   --xterm-selection-bg: rgba(110, 231, 168, 0.28);
   --xterm-selection-fg: #e8e8ea;
+  /* xterm 6 draws its own overlay scrollbar; keep it on the app's quiet
+     thumb colors (--border / --border-1) instead of its foreground-tinted
+     defaults. */
+  --xterm-scrollbar-thumb: #383738;
+  --xterm-scrollbar-thumb-hover: #626162;
 
   /* type */
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -184,10 +189,19 @@ body {
 .main {
   grid-area: main;
 }
-/* Changes panel (E4-03) — the right-hand review column -------------------- */
+/* Changes panel (E4-03) — the right-hand review sheet -------------------- */
 
 .changes-panel {
-  grid-area: sheet;
+  /* Overlays the main area (shared grid cell) instead of owning a column:
+     opening the sheet must not resize the content under it — squeezing the
+     terminal reflowed its whole scrollback on every toggle. Above pane
+     chrome (gutters 10, inline overlays 20), below palette/modals (40+). */
+  grid-area: main;
+  justify-self: end;
+  z-index: 30;
+  /* Popover shadow (the sheet now leaves the chassis) — one of the four
+     canonical alpha-blacks; do not invent a directional variant. */
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
   display: flex;
   flex-direction: column;
   width: 320px;
@@ -1112,6 +1126,14 @@ button.danger:hover {
 
 .terminal-container .xterm {
   height: 100%;
+}
+
+/* xterm 6 regression: its stylesheet paints .xterm-viewport #000 and (unlike
+   5.x) never overrides it with the theme — so the leftover strip below/right
+   of the character grid showed as a pure-black band. Keep it on the window
+   colour. */
+.terminal-container .xterm .xterm-viewport {
+  background-color: var(--xterm-bg);
 }
 
 .terminal-surface {

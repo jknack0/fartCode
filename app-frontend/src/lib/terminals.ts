@@ -3,7 +3,7 @@
 // shell + scrollback instead of recreating either. PTY lifetime is owned by
 // the tab store (closeTab / dropTask call killTerminal / disposeTerminalSession)
 // — component cleanup only detaches the DOM, never kills the shell.
-import { Terminal } from "xterm";
+import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import {
   onTerminalExited,
@@ -37,6 +37,9 @@ function xtermTheme() {
     cursor: v("--xterm-cursor", "#e8e8ea"),
     selectionBackground: v("--xterm-selection-bg", "rgba(110, 231, 168, 0.28)"),
     selectionForeground: v("--xterm-selection-fg", "#e8e8ea"),
+    scrollbarSliderBackground: v("--xterm-scrollbar-thumb", "#383738"),
+    scrollbarSliderHoverBackground: v("--xterm-scrollbar-thumb-hover", "#626162"),
+    scrollbarSliderActiveBackground: v("--xterm-scrollbar-thumb-hover", "#626162"),
   };
 }
 
@@ -61,6 +64,11 @@ export function getTerminalSession(terminalId: string): TermSession {
     fontSize: 12,
     // DESIGN.md terminal token: 12px/1.6 (xterm defaults to 1.0 otherwise).
     lineHeight: 1.6,
+    // Agent CLIs blow past xterm's 1000-line default constantly. At the cap
+    // every new line trims one off the top, which drags a scrolled-up
+    // viewport away from the bottom (xterm anchors to content) and makes
+    // reflow-on-resize destructive.
+    scrollback: 10_000,
     // Theme values come from styles.css :root (--xterm-*) so the design
     // tokens stay the single source; fallbacks match the current tokens.
     theme: xtermTheme(),
@@ -76,6 +84,33 @@ export function getTerminalSession(terminalId: string): TermSession {
   let ready = false;
   const pending: Uint8Array[] = [];
   const unsubs: Array<() => void> = [];
+
+  // Firehose coalescing: agent CLIs emit hundreds of tiny chunks a second,
+  // and every term.write() costs a parse/render/viewport-sync cycle that
+  // also races user scrolling (github/copilot-cli#1805). Queue chunks and
+  // hand xterm one concatenated write per animation frame. Everything the
+  // terminal shows goes through enqueue() so ordering stays FIFO.
+  let flushHandle: number | null = null;
+  const queue: Uint8Array[] = [];
+  const flush = () => {
+    flushHandle = null;
+    if (disposed || queue.length === 0) return;
+    let total = 0;
+    for (const chunk of queue) total += chunk.length;
+    const joined = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of queue) {
+      joined.set(chunk, offset);
+      offset += chunk.length;
+    }
+    queue.length = 0;
+    term.write(joined);
+  };
+  const enqueue = (bytes: Uint8Array) => {
+    queue.push(bytes);
+    flushHandle ??= requestAnimationFrame(flush);
+  };
+
   // Subscribe BEFORE fetching the scrollback tail so output arriving in
   // between is buffered, not lost; the tail then replays first (reattach
   // after a frontend reload — plain PTYs have no scrollback server).
@@ -83,22 +118,24 @@ export function getTerminalSession(terminalId: string): TermSession {
     const un = await onTerminalOutput(({ terminalId: id, data }) => {
       if (id !== terminalId || disposed || exited) return;
       const bytes = base64ToBytes(data);
-      if (ready) term.write(bytes);
+      if (ready) enqueue(bytes);
       else pending.push(bytes);
     });
     unsubs.push(un);
     const tail = await terminalTail(terminalId).catch(() => null);
-    if (tail && !disposed) term.write(base64ToBytes(tail));
+    if (tail && !disposed) enqueue(base64ToBytes(tail));
     ready = true;
-    for (const bytes of pending) term.write(bytes);
+    for (const bytes of pending) enqueue(bytes);
     pending.length = 0;
   })();
   void onTerminalExited(({ terminalId: id, exitCode }) => {
     if (id === terminalId && !disposed) {
       exited = true;
       session.exited = true;
-      term.write(
-        `\r\n[process exited${exitCode !== null ? ` with code ${exitCode}` : ""}] — close this tab\r\n`,
+      enqueue(
+        new TextEncoder().encode(
+          `\r\n[process exited${exitCode !== null ? ` with code ${exitCode}` : ""}] — close this tab\r\n`,
+        ),
       );
     }
   }).then((un) => unsubs.push(un));
@@ -115,6 +152,7 @@ export function getTerminalSession(terminalId: string): TermSession {
     dispose: () => {
       if (disposed) return;
       disposed = true;
+      if (flushHandle !== null) cancelAnimationFrame(flushHandle);
       onData.dispose();
       unsubs.forEach((un) => un());
       term.dispose();

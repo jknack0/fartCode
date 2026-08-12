@@ -32,6 +32,129 @@ fn prune_view_state_on_boot(app: &App) {
     }
 }
 
+/// macOS: with the Overlay title bar, the WKWebView can get stuck painting
+/// short of the window after resize/minimize/fullscreen transitions
+/// (tauri#14843) — a dead black strip at the window's bottom, or content
+/// clipped past the edge. The stuck state can live INSIDE WebKit (frame
+/// already correct, content view stale), so an identical setFrame is a
+/// no-op; force a real size change instead: shrink the frame by 1pt, then
+/// restore it, plus a layout pass. Both setFrames run in one runloop turn,
+/// so nothing paints in between.
+#[cfg(target_os = "macos")]
+fn resync_webview_frames(window: &tauri::Window, reason: &'static str) {
+    for webview in window.webviews() {
+        let _ = webview.with_webview(move |platform| unsafe {
+            use objc2::msg_send;
+            use objc2::runtime::AnyObject;
+            use objc2_foundation::{NSRect, NSSize};
+            let wv = platform.inner() as *mut AnyObject;
+            if wv.is_null() {
+                return;
+            }
+            let superview: *mut AnyObject = msg_send![&*wv, superview];
+            if superview.is_null() {
+                return;
+            }
+            let bounds: NSRect = msg_send![&*superview, bounds];
+            let frame: NSRect = msg_send![&*wv, frame];
+            let jiggle = NSRect {
+                origin: bounds.origin,
+                size: NSSize {
+                    width: bounds.size.width,
+                    height: (bounds.size.height - 1.0).max(1.0),
+                },
+            };
+            let () = msg_send![&*wv, setFrame: jiggle];
+            let () = msg_send![&*wv, setFrame: bounds];
+            let () = msg_send![&*wv, setNeedsLayout: true];
+            let () = msg_send![&*wv, layoutSubtreeIfNeeded];
+            let () = msg_send![&*wv, setNeedsDisplay: true];
+            // Dev-build ground truth for the desync hunt: one line per event
+            // (frame vs superview bounds BEFORE the jiggle).
+            #[cfg(debug_assertions)]
+            {
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("/tmp/fartcode-webview.log")
+                {
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0);
+                    let _ = writeln!(
+                        f,
+                        "{ts} {reason} bounds={}x{} frame={}x{}@{},{} mismatch={}",
+                        bounds.size.width,
+                        bounds.size.height,
+                        frame.size.width,
+                        frame.size.height,
+                        frame.origin.x,
+                        frame.origin.y,
+                        (frame.size.height - bounds.size.height).abs() > 0.5
+                            || (frame.size.width - bounds.size.width).abs() > 0.5
+                    );
+                }
+            }
+        });
+    }
+}
+
+/// macOS: WebKit's compositor can clip the bottom of the page while every
+/// queryable geometry (window, contentView, webview frame, even the page's
+/// own innerHeight) reads correct — so the stuck state is unsensable and
+/// view-level setFrame never reaches it. The one thing observed to heal it
+/// is a REAL window resize, so force one: grow 1px, restore a beat later.
+/// Imperceptible, but it drives a genuine windowDidResize → contentView →
+/// WebKit viewport round-trip.
+#[cfg(target_os = "macos")]
+fn pulse_window_size(window: &tauri::Window, reason: &'static str) {
+    if window.is_fullscreen().unwrap_or(false) {
+        return; // set_size is a no-op/fight in native fullscreen
+    }
+    let Ok(size) = window.inner_size() else {
+        return;
+    };
+    #[cfg(debug_assertions)]
+    {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/fartcode-webview.log")
+        {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let _ = writeln!(f, "{ts} pulse({reason}) {}x{}", size.width, size.height);
+        }
+    }
+    let _ = window.set_size(tauri::PhysicalSize::new(size.width, size.height + 1));
+    let w = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        let _ = w.set_size(tauri::PhysicalSize::new(size.width, size.height));
+    });
+}
+
+/// Frontend-invoked rescue (tauri#14843 watchdog): the webview compares its
+/// believed viewport against the window's true inner size and calls this on
+/// mismatch. Escalates straight to the window-size pulse — the only lever
+/// that reaches a stuck WebKit compositor — plus the view-frame jiggle for
+/// the milder frame-level desync. No-op on other platforms.
+#[tauri::command]
+fn webview_resync(window: tauri::Window) {
+    #[cfg(target_os = "macos")]
+    {
+        resync_webview_frames(&window, "watchdog");
+        pulse_window_size(&window, "watchdog");
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = window;
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Log output for dev runs: defaults to INFO (override with RUST_LOG).
@@ -62,6 +185,24 @@ pub fn run() {
         // must survive so reopening the UI reattaches the same shells.
         // (Task/tab close is the teardown path — it kills the sessions.)
         .on_window_event(|window, event| {
+            // tauri#14843: the webview frame desyncs from the window on
+            // macOS (Overlay title bar) — resync on the events that follow
+            // every way the stuck state can arise (resize, minimize/restore
+            // via refocus, display/scale change).
+            #[cfg(target_os = "macos")]
+            match event {
+                tauri::WindowEvent::Resized(_) => resync_webview_frames(window, "resized"),
+                tauri::WindowEvent::Focused(true) => {
+                    resync_webview_frames(window, "focused");
+                    // Focus is the "user looks at the app" moment — heal the
+                    // unsensable compositor clip right then.
+                    pulse_window_size(window, "focused");
+                }
+                tauri::WindowEvent::ScaleFactorChanged { .. } => {
+                    resync_webview_frames(window, "scale")
+                }
+                _ => {}
+            }
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 if let Some(terminals) = window.try_state::<Arc<terminals::TerminalManager>>() {
                     terminals.detach_all();
@@ -142,6 +283,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            webview_resync,
             commands::projects::list_projects,
             commands::projects::create_project,
             commands::projects::delete_project,
