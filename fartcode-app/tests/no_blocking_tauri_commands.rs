@@ -58,6 +58,8 @@ const SYNC_OK: &[(&str, &str)] = &[
     ("column_reorder", "permutation check + position UPDATEs"),
     // -- settings (kv + one small project-file write) ---------------------
     ("set_default_agent", "single kv write + setting:changed event"),
+    ("get_app_setting", "settings SELECT (typed key, defaults deep-merged)"),
+    ("set_app_setting", "settings UPSERT (validated/canonicalized) + event emit"),
     ("project_settings_share", "writes the small .fartCode.json, no subprocess"),
     ("project_settings_provenance", "reads settings layers, no I/O beyond that file"),
     ("host_dependency_registry_summary", "in-memory registry fold, no PATH scan"),

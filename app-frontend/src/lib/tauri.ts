@@ -187,6 +187,20 @@ export function onFartcodeEvent(cb: (event: FartcodeEvent) => void): Promise<() 
   return listen<FartcodeEvent>("fartcode:event", (e) => cb(e.payload));
 }
 
+// -- App settings (registry-backed; fartcode-core settings/registry.rs) ------
+
+/** Typed read of one app-setting key (defaults deep-merged). Unknown keys
+ * are rejected backend-side with the typed `invalid-setting-key` error. */
+export function getAppSetting(key: string): Promise<unknown> {
+  return invoke("get_app_setting", { key });
+}
+
+/** Typed write of one app-setting key (validated + canonicalized against
+ * the registry; junk fields stripped, unknown keys rejected). */
+export function setAppSetting(key: string, value: unknown): Promise<void> {
+  return invoke("set_app_setting", { key, value });
+}
+
 // -- Project settings (E1-05) ------------------------------------------------
 
 export interface ScriptsDto {

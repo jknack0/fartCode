@@ -116,6 +116,43 @@ pub fn set_default_agent_core(app: &App, provider_id: &str) -> Result<(), String
     Ok(())
 }
 
+/// Generic app-setting read (typed keys, defaults deep-merged). The key is
+/// validated against the settings registry — unknown keys surface the typed
+/// `invalid-setting-key` error, so this surface stays closed.
+#[tauri::command]
+pub fn get_app_setting(app: State<'_, Arc<App>>, key: String) -> Result<serde_json::Value, String> {
+    get_app_setting_core(&app, &key)
+}
+
+/// Command body, split out so tests can drive it without Tauri `State`.
+pub fn get_app_setting_core(app: &App, key: &str) -> Result<serde_json::Value, String> {
+    app.settings.get_json(key).map_err(|e| e.to_string())
+}
+
+/// Generic app-setting write: validates + canonicalizes against the registry
+/// (unknown keys rejected, junk fields stripped) and emits `setting:changed`
+/// so other consumers refetch.
+#[tauri::command]
+pub fn set_app_setting(
+    app: State<'_, Arc<App>>,
+    key: String,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    set_app_setting_core(&app, &key, value)
+}
+
+/// Command body, split out so tests can drive it without Tauri `State`.
+pub fn set_app_setting_core(app: &App, key: &str, value: serde_json::Value) -> Result<(), String> {
+    app.settings
+        .set_json(key, value)
+        .map_err(|e| e.to_string())?;
+    app.event_bus
+        .send(fartcode_core::events::InternalEvent::SettingChanged {
+            key: key.to_string(),
+        });
+    Ok(())
+}
+
 /// 7c shared-vs-local tags: which source won each SHAREABLE setting key
 /// (`preservePatterns` / `shellSetup` / `scripts`) under the effective
 /// merge `defaults < .fartCode.json < DB`. Values: `"default"` | `"shared"`
@@ -140,6 +177,31 @@ mod tests {
     use super::*;
     use fartcode_core::events::InternalEvent;
     use fartcode_core::settings::DEFAULT_AGENT;
+
+    #[test]
+    fn app_setting_commands_validate_round_trip_and_emit() {
+        let app = crate::app::App::init(Some(":memory:")).unwrap();
+        let mut rx = app.event_bus.subscribe();
+
+        // Unknown keys are rejected before anything is stored (closed surface).
+        assert!(get_app_setting_core(&app, "bogus").is_err());
+        assert!(set_app_setting_core(&app, "bogus", serde_json::json!({})).is_err());
+
+        // A partial delta merges with defaults and emits setting:changed.
+        set_app_setting_core(
+            &app,
+            "notifications",
+            serde_json::json!({ "osNotifications": false }),
+        )
+        .unwrap();
+        let value = get_app_setting_core(&app, "notifications").unwrap();
+        assert_eq!(value["osNotifications"], false);
+        assert_eq!(value["enabled"], true); // defaults survive a partial write
+        match rx.try_recv() {
+            Ok(InternalEvent::SettingChanged { key }) => assert_eq!(key, "notifications"),
+            other => panic!("expected SettingChanged, got {other:?}"),
+        }
+    }
 
     #[test]
     fn set_default_agent_validates_persists_and_emits() {

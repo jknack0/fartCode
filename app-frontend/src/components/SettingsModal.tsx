@@ -5,10 +5,12 @@
 // rows; project panes = ProjectSettingsPane (full field map). Rendering is
 // gated by Modals.tsx (settingsOpen / projectSettingsOpen) — the default
 // export here draws the surface unconditionally.
-import { Fragment, useReducer, useState } from "react";
+import { Fragment, useEffect, useReducer, useState } from "react";
 import { chordFromEvent, formatChord, isBindableChord } from "../lib/keychord";
 import { bindings, clearAllOverrides, hint, saveOverride } from "../lib/useCommands";
 import { useSidebar } from "../store/sidebar";
+import { getAppSetting, setAppSetting } from "../lib/tauri";
+import { setOsNotifications } from "../lib/notifications";
 import { useUi } from "../store/ui";
 import AgentsList from "./AgentsList";
 import { ColumnsPane } from "./ColumnsEditor";
@@ -27,6 +29,40 @@ const SCOPE_LABELS: Record<string, string> = {
 };
 
 const SCOPE_ORDER = ["Everywhere", "Project open", "Task open", "Editor focused", "Dialogs"];
+
+/* -- App pane: OS notifications (issue #140) ------------------------------ */
+
+function AppNotifications() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  useEffect(() => {
+    void getAppSetting("notifications")
+      .then((g) =>
+        setEnabled((g as { osNotifications?: boolean })?.osNotifications ?? true),
+      )
+      .catch(() => setEnabled(true));
+  }, []);
+  const toggle = () => {
+    const next = !(enabled ?? true);
+    setEnabled(next);
+    setOsNotifications(next);
+    void setAppSetting("notifications", { osNotifications: next }).catch(() => {});
+  };
+  return (
+    <div className="fc-set-group">
+      <div className="fc-set-group-label">Notifications</div>
+      <div className="fc-set-row-wrap">
+        <button type="button" className="fc-set-row" onClick={toggle} tabIndex={0}>
+          <span className="fc-set-label">
+            OS notifications when an agent needs you
+          </span>
+          <span className="fc-set-value">
+            {enabled == null ? "…" : enabled ? "on" : "off"}
+          </span>
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /* -- Keys pane: the shortcut editor as rows ------------------------------ */
 
@@ -267,6 +303,7 @@ export default function SettingsModal({
           </div>
           {section === "app" && (
             <div className="fc-set-pane-body">
+              <AppNotifications />
               <AgentsList />
               <ProviderAccounts />
               <div className="fc-set-spacer" />

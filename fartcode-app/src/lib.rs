@@ -181,6 +181,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_notification::init())
         // Window close = detach, not teardown (ADR-0028): the tmux sessions
         // must survive so reopening the UI reattaches the same shells.
         // (Task/tab close is the teardown path — it kills the sessions.)
@@ -394,6 +395,8 @@ pub fn run() {
             commands::settings::get_project_settings,
             commands::settings::update_project_settings,
             commands::settings::set_default_agent,
+            commands::settings::get_app_setting,
+            commands::settings::set_app_setting,
             commands::settings::share_with_team,
             commands::settings::project_settings_share,
             commands::settings::project_settings_provenance,

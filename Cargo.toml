@@ -88,6 +88,7 @@ tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-os = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-notification = "2"
 
 # ── Dev ────────────────────────────────────────────────────
 [profile.release]

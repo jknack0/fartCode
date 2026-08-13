@@ -25,6 +25,7 @@ import { wireLineCommentEvents } from "./store/line-comments";
 import { wireDependencyEvents } from "./store/dependencies";
 import { wirePrEvents } from "./store/pr";
 import { wireStepEvents } from "./store/steps";
+import { loadNotificationSetting, wireNotificationEvents } from "./lib/notifications";
 
 function App() {
   const load = useSidebar((s) => s.load);
@@ -48,6 +49,8 @@ function App() {
     // board would unmount itself the moment it fired, losing every
     // settle-chained launch (and the step-done/queued flags with it).
     const unlistenSteps = wireStepEvents();
+    const unlistenNotifications = wireNotificationEvents();
+    void loadNotificationSetting();
     return () => {
       unlisten();
       unlistenTabs();
@@ -59,6 +62,7 @@ function App() {
       unlistenPr();
       unlistenDependencies();
       unlistenSteps();
+      unlistenNotifications();
     };
   }, [load]);
   const ensureConversations = useConversations((s) => s.ensure);
