@@ -44,9 +44,17 @@ pub fn spawn_search_indexer(app: Arc<App>) {
         loop {
             let event = match rx.recv().await {
                 Ok(event) => event,
-                // A lagging subscriber drops events but must survive; only
-                // a closed bus ends the loop.
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                // Best-effort observer: a dropped frame leaves the index
+                // stale only until the next boot backfill rebuilds it. Log
+                // the gap and keep consuming; only a closed bus ends the
+                // loop.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!(
+                        dropped = n,
+                        "search indexer lagged; stale until next backfill"
+                    );
+                    continue;
+                }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             };
             // E19-03: `feature`-row teardown (issue / project deletion)

@@ -21,7 +21,9 @@
 //! the domain module runtime-free and unit-testable; the bus `send` is sync).
 //! The thread exits when the service (and with it the notify watcher +
 //! channel sender) drops. A backend error/rescan marks every registered
-//! workspace git-dirty so consumers resync rather than trust stale state.
+//! workspace git-dirty so consumers resync rather than trust stale state;
+//! `resync_all` lets the app layer force that same path when it may have
+//! missed bus events (a lagged subscriber).
 
 pub mod classifier;
 pub mod layout;
@@ -83,6 +85,9 @@ enum Raw {
 pub struct FsWatchService {
     registry: Arc<Mutex<Registry>>,
     watcher: Mutex<RecommendedWatcher>,
+    /// Dispatcher feed, kept for `resync_all` (the notify callback owns a
+    /// clone).
+    tx: Sender<Raw>,
 }
 
 impl FsWatchService {
@@ -90,8 +95,9 @@ impl FsWatchService {
     /// service drops).
     pub fn new(bus: Arc<dyn EventBus>) -> Result<Self, Error> {
         let (tx, rx) = std::sync::mpsc::channel::<Raw>();
+        let callback_tx = tx.clone();
         let watcher = RecommendedWatcher::new(
-            move |res: notify::Result<notify::Event>| forward(&tx, res),
+            move |res: notify::Result<notify::Event>| forward(&callback_tx, res),
             notify::Config::default(),
         )
         .map_err(|e| Error::Watch(e.to_string()))?;
@@ -102,7 +108,16 @@ impl FsWatchService {
         Ok(Self {
             registry,
             watcher: Mutex::new(watcher),
+            tx,
         })
+    }
+
+    /// Marks every registered workspace git-dirty through the dispatcher's
+    /// resync path — the same one a backend error/rescan takes: events may
+    /// have been lost, so consumers must refetch rather than trust cached
+    /// state. Debounced together with any in-flight batch.
+    pub fn resync_all(&self) {
+        let _ = self.tx.send(Raw::Resync);
     }
 
     /// Registers a task's workspace for watching. Idempotent per task; a
@@ -653,6 +668,26 @@ mod tests {
         assert!(
             !saw.contains("ws-main"),
             "linked index change must not hit main: {saw:?}"
+        );
+    }
+
+    #[test]
+    fn resync_all_marks_registered_workspaces_git_dirty() {
+        let repo = repo_fixture();
+        let (svc, bus) = service();
+        let mut rx = bus.subscribe();
+        svc.register_task("t1", "p1", "ws1", repo.path()).unwrap();
+        settle(&mut rx);
+
+        svc.resync_all();
+        let ev = wait_for(
+            &mut rx,
+            Duration::from_secs(5),
+            |e| matches!(e, InternalEvent::GitChanged { workspace_id, project_id } if workspace_id == "ws1" && project_id == "p1"),
+        );
+        assert!(
+            ev.is_some(),
+            "resync_all should emit GitChanged per workspace"
         );
     }
 

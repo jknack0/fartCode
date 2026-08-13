@@ -414,22 +414,38 @@ pub fn event_to_value(event: &InternalEvent) -> Option<serde_json::Value> {
 /// Tauri emitter (runs for the app's lifetime).
 pub fn spawn_event_forwarder(app_handle: tauri::AppHandle, event_bus: Arc<BroadcastEventBus>) {
     use tauri::Emitter;
-    tauri::async_runtime::spawn(async move {
-        let mut rx = event_bus.subscribe();
-        loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    if let Some(value) = event_to_value(&event) {
-                        let _ = app_handle.emit("fartcode:event", value);
-                    }
+    let rx = event_bus.subscribe();
+    tauri::async_runtime::spawn(forward_events(rx, move |value| {
+        let _ = app_handle.emit("fartcode:event", value);
+    }));
+}
+
+/// Forwarder loop, generic over the emitter so tests can observe the
+/// envelope stream without a Tauri app. Only a closed bus ends it.
+///
+/// Lag here is not skippable the way the other subscribers' is: the
+/// frontend's liveness model is "event → refetch", so a silently dropped
+/// envelope strands the UI stale. On `Lagged` the frontend gets a
+/// `sys:resync` envelope instead — unknown types fall through its event
+/// switches safely today; refetch-on-resync wiring is a follow-up.
+async fn forward_events(
+    mut rx: tokio::sync::broadcast::Receiver<InternalEvent>,
+    emit: impl Fn(serde_json::Value),
+) {
+    loop {
+        match rx.recv().await {
+            Ok(event) => {
+                if let Some(value) = event_to_value(&event) {
+                    emit(value);
                 }
-                // A lagging frontend drops the oldest events but the bridge
-                // must survive — only a closed bus ends the forwarder.
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                tracing::warn!(dropped = n, "event forwarder lagged; emitting sys:resync");
+                emit(serde_json::json!({ "type": "sys:resync", "droppedCount": n }));
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
         }
-    });
+    }
 }
 
 #[cfg(test)]
@@ -573,5 +589,32 @@ mod tests {
             conversation_id: "c".into(),
         })
         .is_none());
+    }
+
+    #[tokio::test]
+    async fn lagged_forwarder_emits_sys_resync() {
+        use fartcode_core::events::{BroadcastEventBus, EventBus};
+        use std::sync::Mutex;
+
+        // Capacity 1: an un-drained receiver lags as soon as the ring wraps.
+        let bus = BroadcastEventBus::new(1);
+        let rx = bus.subscribe();
+        for i in 0..3 {
+            bus.send(InternalEvent::ProjectDeleted {
+                id: format!("p{i}"),
+            });
+        }
+        drop(bus); // close the bus so the loop ends after draining
+
+        let emitted = Mutex::new(Vec::new());
+        forward_events(rx, |v| emitted.lock().unwrap().push(v)).await;
+
+        let emitted = emitted.into_inner().unwrap();
+        assert_eq!(emitted[0]["type"], "sys:resync");
+        assert_eq!(emitted[0]["droppedCount"], 2);
+        // The surviving newest event still follows the resync marker.
+        assert_eq!(emitted[1]["type"], "project:deleted");
+        assert_eq!(emitted[1]["id"], "p2");
+        assert_eq!(emitted.len(), 2);
     }
 }

@@ -438,9 +438,13 @@ pub fn spawn_dossier_timeline(app: Arc<App>) {
                     let _ =
                         tauri::async_runtime::spawn_blocking(move || appender.handle(&event)).await;
                 }
-                // A lagging subscriber drops events but must survive; only
-                // a closed bus ends the loop.
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                // Best-effort observer: the timeline is a breadcrumb log,
+                // not state — a dropped frame is a missing line, nothing to
+                // refetch. Log the gap and keep consuming; only a closed
+                // bus ends the loop.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!(dropped = n, "dossier timeline lagged; breadcrumbs skipped");
+                }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
