@@ -116,12 +116,21 @@ const isEditableTarget = (t: EventTarget | null): boolean =>
     t.tagName === "SELECT" ||
     t.isContentEditable);
 
+/** Pointer drag must not start from a card's own buttons/links — those
+ * own their clicks (blocker refs, gh, ↵ read). */
+const isInteractiveTarget = (t: EventTarget | null): boolean =>
+  t instanceof HTMLElement &&
+  Boolean(t.closest("button, a, input, textarea, select"));
+
 export default function BoardView({ projectId }: { projectId: string }) {
   const [issues, setIssues] = useState<IssueDto[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [over, setOver] = useState<DropTarget | null>(null);
+  /** Pointer position while dragging (viewport coords) — the ghost rides
+   * this state; the auto-scroll loop reads the ref, not this. */
+  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
   const [pending, setPending] = useState<PendingConfirm | null>(null);
   /** Linked task's branch for the confirm footer (fetched lazily). */
   const [pendingBranch, setPendingBranch] = useState<string | null>(null);
@@ -161,6 +170,18 @@ export default function BoardView({ projectId }: { projectId: string }) {
   /** Latest issues for event handlers, which close over their mount. */
   const issuesRef = useRef<IssueDto[]>([]);
   issuesRef.current = issues;
+  /** Pointer-drag origin (the pointerdown spot) — a move past ~4px turns
+   * the press into a drag rather than a click. */
+  const dragOrigin = useRef<{ x: number; y: number } | null>(null);
+  /** Set when a drag just ended so the click the browser pairs with the
+   * pointerup does not also open the card. */
+  const draggedNow = useRef(false);
+  /** Live pointer spot for the auto-scroll loop, which must not re-run on
+   * every pointermove. */
+  const dragPosRef = useRef<{ x: number; y: number } | null>(null);
+  /** Grab offset inside the card + its width, captured at press so the
+   * ghost stays under the pointer instead of jumping to a corner. */
+  const dragGrab = useRef<{ dx: number; dy: number; width: number } | null>(null);
 
   // Columns are the board's shape — load before anything is drawn. The
   // default agent names step columns whose provider is unpinned (§8a
@@ -609,7 +630,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
         return;
       }
       // Within-column positions use the after-removal convention (see
-      // handleDrop).
+      // commitDragAt).
       if (key === "j" && idx < list.length - 1) void reorder(cur, idx + 1);
       else if (key === "k" && idx > 0) void reorder(cur, idx - 1);
       else if (key === "h" || key === "l") {
@@ -645,26 +666,86 @@ export default function BoardView({ projectId }: { projectId: string }) {
     return cards.length;
   };
 
-  const handleDrop = (e: React.DragEvent, column: BoardColumnDto) => {
-    e.preventDefault();
-    setDragId(null);
-    setOver(null);
-    const issueId = e.dataTransfer.getData("text/fartCode-issue");
-    const issue = issues.find((i) => i.id === issueId);
+  /** The `.board-column` under a pointer position, or null. */
+  const columnElAt = (x: number, y: number): HTMLElement | null =>
+    (document
+      .elementFromPoint(x, y)
+      ?.closest?.(".board-column") as HTMLElement | null) ?? null;
+
+  /** Move the insertion indicator to follow the pointer. */
+  const updateDragOver = (x: number, y: number) => {
+    const el = columnElAt(x, y);
+    if (!el) {
+      setOver(null);
+      return;
+    }
+    const columnId = el.dataset.columnId ?? "";
+    const listEl = el.querySelector<HTMLElement>(".board-lane-cards");
+    const index = listEl ? dropIndex(y, listEl) : 0;
+    setOver((o) =>
+      o && o.columnId === columnId && o.index === index
+        ? o
+        : { columnId, index },
+    );
+  };
+
+  /** Commit a pointer drag at its final position — the same within-column
+   * correction and cross-column gates the native drop used. */
+  const commitDragAt = (x: number, y: number) => {
+    const issue = issues.find((i) => i.id === dragId);
     if (!issue) return;
-    const position = dropIndex(e.clientY, e.currentTarget as HTMLElement);
+    const el = columnElAt(x, y);
+    const column = columns.find((c) => c.id === el?.dataset.columnId);
+    if (!column) return;
+    const listEl = el!.querySelector<HTMLElement>(".board-lane-cards");
+    const position = listEl ? dropIndex(y, listEl) : 0;
 
     if (columnOf(issue)?.id === column.id) {
       // Within-column reorder: removing the card shifts later indices down.
       const siblings = cardsIn(column.id);
-      const from = siblings.findIndex((i) => i.id === issueId);
+      const from = siblings.findIndex((i) => i.id === issue.id);
       const to = position > from ? position - 1 : position;
-      if (to === from) return; // dropped back on itself
-      void reorder(issue, to);
+      if (to !== from) void reorder(issue, to);
       return;
     }
     requestMove(issue, column, position);
   };
+
+  // Auto-scroll while a drag hovers the board's edges — slow and
+  // distance-proportional. The ".board-frame" scrolls columns sideways;
+  // each column's card list scrolls itself vertically. Scrolling moves
+  // cards under a stationary pointer, so the drop line is refreshed every
+  // frame (the rAF guard keeps jsdom tests on the non-scrolling path).
+  useEffect(() => {
+    if (!dragId || typeof requestAnimationFrame !== "function") return;
+    const EDGE = 48;
+    let raf = 0;
+    const step = () => {
+      raf = requestAnimationFrame(step);
+      const pos = dragPosRef.current;
+      if (!pos) return;
+      const frame = boardRef.current?.querySelector<HTMLElement>(".board-frame");
+      if (frame) {
+        const r = frame.getBoundingClientRect();
+        let dx = 0;
+        if (pos.x < r.left + EDGE) dx = (pos.x - (r.left + EDGE)) * 0.25;
+        else if (pos.x > r.right - EDGE) dx = (pos.x - (r.right - EDGE)) * 0.25;
+        if (dx !== 0) frame.scrollLeft += dx;
+      }
+      const lane = columnElAt(pos.x, pos.y)?.querySelector<HTMLElement>(".board-lane-cards");
+      if (lane) {
+        const r = lane.getBoundingClientRect();
+        let dy = 0;
+        if (pos.y < r.top + EDGE) dy = (pos.y - (r.top + EDGE)) * 0.25;
+        else if (pos.y > r.bottom - EDGE) dy = (pos.y - (r.bottom - EDGE)) * 0.25;
+        if (dy !== 0) lane.scrollTop += dy;
+      }
+      updateDragOver(pos.x, pos.y);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragId]);
 
   const submitNew = async () => {
     const title = newTitle.trim();
@@ -710,25 +791,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
     const cards = cardsIn(column.id);
     const artifact = stepArtifact(column);
     return (
-      <div
-        className="board-lane-cards"
-        onDragOver={(e) => {
-          if (!dragId) return;
-          e.preventDefault();
-          const index = dropIndex(e.clientY, e.currentTarget as HTMLElement);
-          setOver((o) =>
-            o && o.columnId === column.id && o.index === index
-              ? o
-              : { columnId: column.id, index },
-          );
-        }}
-        onDragLeave={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-            setOver((o) => (o?.columnId === column.id ? null : o));
-          }
-        }}
-        onDrop={(e) => handleDrop(e, column)}
-      >
+      <div className="board-lane-cards">
         {cards.map((issue, i) => (
           <Fragment key={issue.id}>
             {over?.columnId === column.id && over.index === i && dragId !== issue.id && (
@@ -751,16 +814,76 @@ export default function BoardView({ projectId }: { projectId: string }) {
               selected={detailIssueId === issue.id}
               focused={focusId === issue.id}
               dragging={dragId === issue.id}
-              onDragStart={(e) => {
-                e.dataTransfer.setData("text/fartCode-issue", issue.id);
-                e.dataTransfer.effectAllowed = "move";
+              onPointerDown={(e) => {
+                if (e.button !== 0 || isInteractiveTarget(e.target)) return;
+                dragOrigin.current = { x: e.clientX, y: e.clientY };
+                const r = e.currentTarget.getBoundingClientRect();
+                dragGrab.current = {
+                  dx: e.clientX - r.left,
+                  dy: e.clientY - r.top,
+                  width: r.width,
+                };
+              }}
+              onPointerMove={(e) => {
+                if (dragId) {
+                  dragPosRef.current = { x: e.clientX, y: e.clientY };
+                  setDragPos(dragPosRef.current);
+                  updateDragOver(e.clientX, e.clientY);
+                  return;
+                }
+                const origin = dragOrigin.current;
+                if (!origin) return;
+                if (Math.hypot(e.clientX - origin.x, e.clientY - origin.y) < 4) {
+                  return;
+                }
+                dragOrigin.current = null;
+                try {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                } catch {
+                  // capture unsupported — moves still track while hovering the card
+                }
                 setDragId(issue.id);
+                dragPosRef.current = { x: e.clientX, y: e.clientY };
+                setDragPos(dragPosRef.current);
+                updateDragOver(e.clientX, e.clientY);
               }}
-              onDragEnd={() => {
+              onPointerUp={(e) => {
+                dragOrigin.current = null;
+                dragGrab.current = null;
+                if (dragId !== issue.id) return;
+                commitDragAt(e.clientX, e.clientY);
                 setDragId(null);
+                setDragPos(null);
+                dragPosRef.current = null;
                 setOver(null);
+                // The browser pairs a click with this pointerup; eat that
+                // one click, then clear so later clicks are unaffected.
+                draggedNow.current = true;
+                setTimeout(() => {
+                  draggedNow.current = false;
+                }, 0);
               }}
-              onOpen={() => openCard(issue)}
+              onPointerCancel={() => {
+                dragOrigin.current = null;
+                dragGrab.current = null;
+                if (dragId === issue.id) {
+                  setDragId(null);
+                  setDragPos(null);
+                  dragPosRef.current = null;
+                  setOver(null);
+                  draggedNow.current = true;
+                  setTimeout(() => {
+                    draggedNow.current = false;
+                  }, 0);
+                }
+              }}
+              onOpen={() => {
+                if (draggedNow.current) {
+                  draggedNow.current = false;
+                  return;
+                }
+                openCard(issue);
+              }}
               onOpenIssue={(otherId) => {
                 const other = issues.find((x) => x.id === otherId);
                 if (other) openCard(other);
@@ -786,6 +909,30 @@ export default function BoardView({ projectId }: { projectId: string }) {
   // by then (see DossierConsentCard) — so it lands here, beside the other
   // "the app tried and could not" messages.
   const shown = error ?? stepError ?? columnsError ?? consentError;
+
+  /** Ghost that follows the pointer: the picked-up card itself, fixed over
+   * the board, while its source slot keeps the lifted .dragging look. */
+  const ghost = (() => {
+    const grabbed = dragGrab.current;
+    const draggedIssue = dragId ? issues.find((i) => i.id === dragId) : undefined;
+    if (!dragId || !dragPos || !grabbed || !draggedIssue) return null;
+    const { ref, title } = issueRefParts(draggedIssue.title, draggedIssue.externalRef);
+    return (
+      <div
+        className="board-card board-drag-ghost"
+        style={{
+          left: dragPos.x - grabbed.dx,
+          top: dragPos.y - grabbed.dy,
+          width: grabbed.width,
+        }}
+      >
+        <span className="board-card-body">
+          <span className="board-card-meta">{ref}</span>
+          <span className="board-card-title">{title}</span>
+        </span>
+      </div>
+    );
+  })();
 
   return (
     <div className="board" ref={boardRef}>
@@ -871,6 +1018,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
                 <section
                   key={column.id}
                   className="board-column"
+                  data-column-id={column.id}
                   data-done={column.countsAsDone ? "" : undefined}
                 >
                   {renderCards(column)}
@@ -893,6 +1041,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
               <section
                 key={column.id}
                 className="board-column"
+                data-column-id={column.id}
                 data-done={column.countsAsDone ? "" : undefined}
               >
                 <div className="board-lane-head">
@@ -936,6 +1085,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
           summary={summaryOf(pending.column)}
         />
       )}
+      {ghost}
     </div>
   );
 }
@@ -1077,8 +1227,10 @@ function BoardCard({
   selected,
   focused,
   dragging,
-  onDragStart,
-  onDragEnd,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onPointerCancel,
   onOpen,
   onOpenIssue,
   onReadTask,
@@ -1094,8 +1246,10 @@ function BoardCard({
   selected: boolean;
   focused: boolean;
   dragging: boolean;
-  onDragStart: (e: React.DragEvent) => void;
-  onDragEnd: () => void;
+  onPointerDown: (e: React.PointerEvent) => void;
+  onPointerMove: (e: React.PointerEvent) => void;
+  onPointerUp: (e: React.PointerEvent) => void;
+  onPointerCancel: () => void;
   onOpen: () => void;
   onOpenIssue: (issueId: string) => void;
   onReadTask: (taskId: string) => void;
@@ -1183,10 +1337,11 @@ function BoardCard({
         .filter(Boolean)
         .join(" ")}
       data-issue-id={issue.id}
-      draggable
       tabIndex={0}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter") {

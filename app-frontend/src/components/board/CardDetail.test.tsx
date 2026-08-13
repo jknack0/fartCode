@@ -14,6 +14,7 @@ vi.mock("../../lib/tauri", () => ({
   issueUpdate: vi.fn(),
   issueDelete: vi.fn(() => Promise.resolve()),
   issueDispatch: vi.fn(),
+  issueEnterColumn: vi.fn(() => Promise.resolve({ step: "inert", launch: null })),
   issueLink: vi.fn(),
   issueUnlink: vi.fn(),
   dossierRead: vi.fn(() => Promise.resolve(null)),
@@ -29,10 +30,34 @@ vi.mock("../../lib/tauri", () => ({
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: vi.fn(() => Promise.resolve()) }));
 
 import CardDetail from "./CardDetail";
-import { dossierRead, issueList } from "../../lib/tauri";
-import type { DossierDto, IssueDto } from "../../lib/tauri";
+import { dossierRead, issueEnterColumn, issueList } from "../../lib/tauri";
+import type { BoardColumnDto, DossierDto, IssueDto } from "../../lib/tauri";
 import { useColumns } from "../../store/columns";
 import { useUi } from "../../store/ui";
+
+function col(over: Partial<BoardColumnDto> = {}): BoardColumnDto {
+  return {
+    id: "c-backlog",
+    projectId: "p1",
+    name: "Backlog",
+    position: 0,
+    kind: "shelf",
+    countsAsDone: false,
+    isLanding: true,
+    onEnter: "queue",
+    onSettle: "hold",
+    advanceTo: null,
+    stepPrompt: null,
+    stepProvider: null,
+    stepModel: null,
+    stepEffort: null,
+    stepTools: null,
+    seedLane: "backlog",
+    createdAt: null,
+    updatedAt: null,
+    ...over,
+  };
+}
 
 function issue(over: Partial<IssueDto> = {}): IssueDto {
   return {
@@ -225,6 +250,75 @@ describe("dossier group", () => {
     await renderDetail();
     const now = await screen.findByText(/running/);
     expect(now.textContent).toBe(" · running");
+  });
+
+  it("labels the action by the next column — dispatch for a run step", async () => {
+    const ready = col({
+      id: "c-ready",
+      name: "Ready",
+      position: 0,
+      seedLane: "ready",
+      isLanding: false,
+    });
+    const inProgress = col({
+      id: "c-progress",
+      name: "In Progress",
+      position: 1,
+      kind: "agent_step",
+      onEnter: "run",
+      seedLane: "in_progress",
+    });
+    useColumns.setState({ byProject: { p1: [ready, inProgress] } });
+    vi.mocked(issueList).mockResolvedValue([
+      issue({ lane: "ready", columnId: "c-ready" }),
+    ]);
+    vi.mocked(issueEnterColumn).mockClear();
+    await renderDetail();
+
+    const button = await screen.findByText("Dispatch In Progress");
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(issueEnterColumn).toHaveBeenCalledWith("i1", "c-progress"),
+    );
+  });
+
+  it("offers to move the card to the next column and calls the engine", async () => {
+    const inProgress = col({
+      id: "c-progress",
+      name: "In Progress",
+      position: 1,
+      kind: "agent_step",
+      onEnter: "run",
+      onSettle: "advance",
+      seedLane: "in_progress",
+    });
+    const inReview = col({
+      id: "c-review",
+      name: "In Review",
+      position: 2,
+      kind: "human_gate",
+      seedLane: "in_review",
+    });
+    const done = col({
+      id: "c-done",
+      name: "Done",
+      position: 3,
+      kind: "shelf",
+      countsAsDone: true,
+      seedLane: "done",
+    });
+    inProgress.advanceTo = inReview.id;
+    useColumns.setState({ byProject: { p1: [inProgress, inReview, done] } });
+    vi.mocked(issueEnterColumn).mockClear();
+    await renderDetail();
+
+    // The card sits in In Progress; the next column is In Review.
+    const button = await screen.findByText("Move to In Review");
+    fireEvent.click(button);
+
+    await waitFor(() =>
+      expect(issueEnterColumn).toHaveBeenCalledWith("i1", "c-review"),
+    );
   });
 
   it("says `1 section` for a single one", async () => {

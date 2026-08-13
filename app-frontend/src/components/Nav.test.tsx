@@ -16,11 +16,15 @@ vi.mock("../lib/tauri", () => ({
   setViewState: vi.fn(() => Promise.resolve()),
   getViewState: vi.fn(() => Promise.resolve(null)),
   togglePin: vi.fn(),
+  terminalListForTask: vi.fn(() => Promise.resolve([])),
+  terminalOpenLifecycle: vi.fn(() => Promise.resolve("")),
+  onTerminalExited: vi.fn(() => Promise.resolve(() => {})),
 }));
 
 import Nav from "./Nav";
 import { useSidebar } from "../store/sidebar";
 import { useUi } from "../store/ui";
+import { useScripts } from "../store/scripts";
 import type { ProjectDto, TaskDto } from "../lib/tauri";
 
 function project(id: string, name: string): ProjectDto {
@@ -69,6 +73,7 @@ beforeEach(() => {
     selectedTaskId: null,
   });
   useUi.setState({ sidebarVisible: true, settingsOpen: false });
+  useScripts.setState({ byTask: {}, agentByTask: {} });
 });
 
 describe("Nav rail → flyout", () => {
@@ -131,6 +136,9 @@ describe("Nav rail → flyout", () => {
           task({ id: "t-rev", projectId: BETA.id, name: "waiting on you", status: "review" }),
         ],
       },
+    });
+    useScripts.setState({
+      agentByTask: { "t-run": { ids: ["term-1"], running: true, exitedAt: null } },
     });
     render(<Nav />);
 

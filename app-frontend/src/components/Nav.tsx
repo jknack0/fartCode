@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import { useUi } from "../store/ui";
 import { useSidebar } from "../store/sidebar";
+import { useScripts } from "../store/scripts";
 import { TaskDto } from "../lib/tauri";
 import { hint } from "../lib/useCommands";
 
@@ -144,6 +145,7 @@ function ProjectFlyout() {
   const visible = useUi((s) => s.sidebarVisible);
   const toggleVisible = useUi((s) => s.toggleSidebarVisible);
   useUi((s) => s.bindingsVersion);
+  const agentByTask = useScripts((s) => s.agentByTask);
 
   // Elapsed times are derived from statusChangedAt, never stored — refresh
   // on a slow tick (the display is minute-coarse).
@@ -153,21 +155,36 @@ function ProjectFlyout() {
     return () => clearInterval(t);
   }, []);
 
+  // The dot + Running group key on the LIVE agent terminal, never frozen
+  // task.status (TaskHeader's doctrine — TaskStatus has no production
+  // writer, so status is born `in_progress` and never moves). Hydrate each
+  // task's terminal snapshot once so a backend-launched agent (the create
+  // path) reads as running before its task view ever mounts.
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    for (const t of tasksByProject[selectedProjectId] ?? []) {
+      if (useScripts.getState().agentByTask[t.id]) continue;
+      void useScripts.getState().hydrate(t.id).catch(() => {});
+    }
+  }, [selectedProjectId, tasksByProject]);
+
   const project = projects.find((p) => p.id === selectedProjectId);
   if (!project || !visible) return null;
 
   // Pasted-prompt tasks stay hidden until their LLM title lands
   // (task:renamed) or the store's 10s cap gives up and reveals them.
   const projectTasks = (tasksByProject[project.id] ?? []).filter((t) => !pendingTitle[t.id]);
-  const live = projectTasks.filter(
-    (t) => !t.archivedAt && (t.status === "in_progress" || t.status === "review"),
-  );
-  const needsYou = live.filter((t) => t.status === "review");
-  const running = live.filter((t) => t.status === "in_progress");
-  // Non-in-flight work (done, todo, failed ad-hoc tasks) has no board card
-  // — list the most recent ones so there's always a path back to a task.
-  const recent = projectTasks
-    .filter((t) => !t.archivedAt && t.status !== "in_progress" && t.status !== "review")
+  const active = projectTasks.filter((t) => !t.archivedAt);
+  // In-flight work is the LIVE agent terminal, never `task.status` (no
+  // production writer — status is frozen at `in_progress` from birth; the
+  // same audit drives TaskHeader's dot). `review` stays status-keyed for the
+  // future needs-you state (no writer today, so it cannot fire).
+  const needsYou = active.filter((t) => t.status === "review");
+  const running = active.filter((t) => Boolean(agentByTask[t.id]?.running));
+  // Everything at rest — stopped agents and never-run ad-hoc tasks — has no
+  // board card, so list the most recent ones for a path back to them.
+  const recent = active
+    .filter((t) => t.status !== "review" && !agentByTask[t.id]?.running)
     .sort(
       (a, b) =>
         Date.parse(b.lastInteractedAt ?? b.statusChangedAt ?? "") -
@@ -205,29 +222,32 @@ function ProjectFlyout() {
         <div key={g.label} className="flyout-group">
           <div className="flyout-group-label">{g.label}</div>
           <div className="flyout-rows">
-            {g.items.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className="flyout-row"
-                onClick={() => selectTask(t.id)}
-              >
-                <span
-                  className={`status-dot ${t.status === "review" ? "status-needs-you" : `status-${t.status}`}`}
-                />
-                <div style={{ minWidth: 0 }}>
-                  <div className="flyout-row-title">{t.name}</div>
-                  <div className="flyout-row-meta">
-                    {t.status === "review"
-                      ? "needs you"
-                      : t.status === "in_progress"
-                        ? "running"
-                        : t.status.replace("_", " ")}
-                    {t.statusChangedAt ? ` · ${ago(t.statusChangedAt)}` : ""}
+            {g.items.map((t) => {
+              const runningNow = Boolean(agentByTask[t.id]?.running);
+              const dotClass =
+                t.status === "review"
+                  ? "status-dot status-needs-you"
+                  : runningNow
+                    ? "status-dot status-in_progress"
+                    : "status-dot tv-dot-idle";
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  className="flyout-row"
+                  onClick={() => selectTask(t.id)}
+                >
+                  <span className={dotClass} />
+                  <div style={{ minWidth: 0 }}>
+                    <div className="flyout-row-title">{t.name}</div>
+                    <div className="flyout-row-meta">
+                      {t.status === "review" ? "needs you" : runningNow ? "running" : "stopped"}
+                      {t.statusChangedAt ? ` · ${ago(t.statusChangedAt)}` : ""}
+                    </div>
                   </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
         </div>
       ))}

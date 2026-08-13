@@ -18,7 +18,7 @@ import {
   acpStart,
   dossierRead,
   issueDelete,
-  issueDispatch,
+  issueEnterColumn,
   issueLink,
   issueList,
   issueUnlink,
@@ -26,8 +26,6 @@ import {
   listProviders,
   onFartcodeEvent,
   stepLedgerList,
-  terminalOpenAgent,
-  terminalWrite,
   type DossierDto,
   type DossierTimelineEntryDto,
   type IssueDto,
@@ -36,6 +34,7 @@ import {
 } from "../../lib/tauri";
 import { renderMarkdown } from "../../lib/markdown";
 import {
+  advanceTarget,
   columnIdForIssue,
   blockerColumnName,
 } from "../../lib/columnConfig";
@@ -97,7 +96,7 @@ export default function CardDetail({
   const [newAc, setNewAc] = useState("");
   const [edgeTarget, setEdgeTarget] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [dispatching, setDispatching] = useState(false);
+  const [moving, setMoving] = useState(false);
   // Dossier (§8f). `null` = this card has none — no group renders at all.
   const [dossier, setDossier] = useState<DossierDto | null>(null);
   // Spend ledger (#82): every launch and chain-guard hold for this card.
@@ -122,7 +121,14 @@ export default function CardDetail({
   const ledgerColumnName = (id: string | null): string =>
     (id && columns.find((c) => c.id === id)?.name) || "a step";
   const agentByTask = useScripts((s) => s.agentByTask);
-  const close = () => useUi.getState().setBoardDetailIssueId(null);
+  const close = () => {
+    const ui = useUi.getState();
+    ui.setBoardDetailIssueId(null);
+    // The detail is a mode of the ONE right sheet (ChangesSidebar) — its
+    // close button closes the sheet, exactly like the Changes/Files/chat
+    // headers do, rather than leaving the previous mode open behind it.
+    ui.setChangesOpen(false);
+  };
 
   useEffect(() => {
     void useColumns.getState().load(projectId);
@@ -347,40 +353,38 @@ export default function CardDetail({
     ? (projectTasks ?? []).find((t) => t.id === issue.linkedTaskId)
     : undefined;
 
-  /** Dispatch the card (E17-03) — spawn or reattach, then hand off to
-   * the task view. Errors surface inline.
-   *
-   * First-dispatch consent (#74, §8e) is asked HERE, ahead of
-   * `issue_dispatch`, because this is the moment §8e actually names: the
-   * worktree provisions inside that call, and `create_for_task` only mints
-   * a dossier on the arm where the task is being created. Consent arriving
-   * afterwards would be too late for this card forever — the `Some(task)`
-   * arm can never mint it retroactively. */
-  const dispatch = async () => {
-    if (!issue || dispatching) return;
-    setDispatching(true);
-    setError(null);
-    try {
-      // Declining still dispatches; only a withdrawn ask stops here.
-      if (!(await ensureDossierConsent(issue.projectId, issue))) return;
-      const outcome = await issueDispatch(issueId);
-      if (outcome.reattached) {
-        useSidebar.getState().switchToTask(outcome.task);
-        return;
-      }
-      const terminalId = await terminalOpenAgent(outcome.task.id, outcome.provider, 24, 80);
-      await terminalWrite(terminalId, `\u001b[200~${outcome.prompt}\u001b[201~\r`);
-      useSidebar.getState().switchToTask(outcome.task);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setDispatching(false);
-    }
-  };
-
   const openTask = () => {
     const task = linkedTask ?? (projectTasks ?? []).find((t) => t.id === issue?.linkedTaskId);
     if (task) useSidebar.getState().switchToTask(task);
+  };
+
+  /** Move the card to the next column (advance_to ?? next-by-position —
+   * the settle engine's own rule). This is the board-side counterpart of
+   * the task header's advance action, but it is NOT gated on the settle
+   * signal: an agent that finishes its implementation without settling
+   * (a CLI session left open, or an ACP turn not marked Done) leaves the
+   * card in In Progress with no step-done dot, so the way forward has to
+   * be reachable regardless. Same consent gate as every agent-step entry;
+   * shelves and human gates need none. */
+  const moveForward = async () => {
+    if (!issue || !nextColumn || moving) return;
+    setMoving(true);
+    setError(null);
+    try {
+      if (
+        nextColumn.kind === "agent_step" &&
+        !(await ensureDossierConsent(issue.projectId, issue))
+      ) {
+        return;
+      }
+      // The outcome is deliberately ignored — launches and parks arrive
+      // as step:* events like every other entry.
+      await issueEnterColumn(issue.id, nextColumn.id);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setMoving(false);
+    }
   };
 
   if (!issue && !error) {
@@ -409,6 +413,19 @@ export default function CardDetail({
     ? (columns.find((c) => c.id === columnIdForIssue(issue, columns))?.name ??
       issue.lane)
     : "";
+  // Where the card can go next — null on the last column.
+  const currentColumn = issue
+    ? (columns.find((c) => c.id === columnIdForIssue(issue, columns)) ?? null)
+    : null;
+  const nextColumn = currentColumn ? advanceTarget(currentColumn, columns) : null;
+  // The primary action's verb follows the NEXT column: a run-mode agent
+  // step dispatches on entry (bright, confirm-free spend), everything else
+  // is a plain move.
+  const nextActionLabel =
+    nextColumn &&
+    (nextColumn.kind === "agent_step" && nextColumn.onEnter === "run"
+      ? `Dispatch ${nextColumn.name}`
+      : `Move to ${nextColumn.name}`);
 
   return (
     <aside
@@ -435,16 +452,20 @@ export default function CardDetail({
               <button className="primary card-detail-dispatch" onClick={openTask}>
                 Open task
               </button>
-            ) : (
+            ) : nextColumn ? (
               <button
                 className="primary card-detail-dispatch"
-                disabled={dispatching}
-                onClick={() => void dispatch()}
-                title="Create a worktree and launch an agent for this issue"
+                disabled={moving}
+                onClick={() => void moveForward()}
+                title={
+                  nextColumn.kind === "agent_step" && nextColumn.onEnter === "run"
+                    ? `Dispatch an agent in ${nextColumn.name} — the next column on the board`
+                    : `Move this card to ${nextColumn.name} — the next column on the board`
+                }
               >
-                {dispatching ? "Dispatching…" : "Dispatch"}
+                {moving ? "Moving…" : nextActionLabel}
               </button>
-            ))}
+            ) : null)}
           <button className="card-detail-close" onClick={close} aria-label="Close detail">
             ×
           </button>

@@ -536,6 +536,40 @@ export function onTerminalExited(
   );
 }
 
+/** Resolves once the terminal has emitted output (the agent CLI's first
+ * banner/spinner — evidence it is reading stdin) or after `timeoutMs` as
+ * a fallback. Pasting a dispatch prompt the instant the PTY forks lands
+ * bytes in a CLI that is not reading yet; some CLIs flush the input queue
+ * on startup and the paste is lost. The scrollback check closes the race
+ * where the first chunk lands between `terminal_open_agent` resolving and
+ * the subscription below. */
+export function waitForTerminalReady(
+  terminalId: string,
+  timeoutMs = 8000,
+): Promise<void> {
+  return (async () => {
+    if (await terminalTail(terminalId).catch(() => null)) return;
+    await new Promise<void>((resolve) => {
+      let unsub: (() => void) | null = null;
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        unsub?.();
+        resolve();
+      };
+      const timer = setTimeout(finish, timeoutMs);
+      void onTerminalOutput(({ terminalId: id }) => {
+        if (id === terminalId) finish();
+      }).then((un) => {
+        if (done) un();
+        else unsub = un;
+      });
+    });
+  })();
+}
+
 export function terminalOpenAgent(
   taskId: string,
   agent: string,

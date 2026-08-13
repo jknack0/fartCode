@@ -61,6 +61,10 @@
   min-height: 0;
   padding: 0;
   overflow: hidden;
+  /* Pointer drag is the board's move gesture — native text selection
+     must not fire while dragging a card. */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .board-error {
@@ -346,6 +350,20 @@
   background: #1a1a1e;
   border-radius: 6px;
   box-shadow: 0 12px 28px rgba(0,0,0,.55);
+  cursor: grabbing;
+}
+
+/* Drag ghost: the card itself follows the pointer, fixed over the board.
+   The source slot keeps its lifted .dragging look; the ghost must never
+   intercept the hit-test that picks the drop column. */
+.board-drag-ghost {
+  position: fixed;
+  z-index: 100;
+  pointer-events: none;
+  background: #1a1a1e;
+  border-radius: 6px;
+  box-shadow: 0 12px 28px rgba(0,0,0,.55);
+  cursor: grabbing;
 }
 
 /* Queued rows recede whole (frame 4a). */

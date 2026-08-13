@@ -6,8 +6,8 @@
 // left, so any column behind two consecutive empties had no keyboard path
 // at all. The fixture deliberately has interior empty columns.
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 vi.mock("../../lib/tauri", () => ({
   issueList: vi.fn(() => Promise.resolve([])),
@@ -50,7 +50,7 @@ vi.mock("../../lib/tauri", () => ({
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: vi.fn() }));
 
 import BoardView from "./BoardView";
-import { columnList, issueList, stepParkedList } from "../../lib/tauri";
+import { columnList, issueEnterColumn, issueList, stepParkedList } from "../../lib/tauri";
 import type { BoardColumnDto, IssueDto } from "../../lib/tauri";
 import { useColumns } from "../../store/columns";
 import { useSteps } from "../../store/steps";
@@ -137,6 +137,10 @@ function setViewportWidth(width: number): void {
   Object.defineProperty(window, "innerWidth", { value: width, configurable: true, writable: true });
   window.dispatchEvent(new Event("resize"));
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -325,5 +329,99 @@ describe("narrow mode", () => {
     // Every column is still reachable from the strip — it never caps.
     expect(document.querySelectorAll(".board-strip-entry")).toHaveLength(6);
     expect(screen.getByText(/walk\s*every column/)).toBeInTheDocument();
+  });
+});
+
+describe("pointer drag", () => {
+  it("drops a card onto another column through the enter primitive", async () => {
+    await renderBoard();
+    const cardA = document.querySelector<HTMLElement>(
+      '.board-card[data-issue-id="a"]',
+    )!;
+    const targetColumn = document.querySelector<HTMLElement>(
+      '.board-column[data-column-id="c-progress"]',
+    )!;
+    // jsdom has no layout or hit-testing — stub the one hit-test the
+    // drag uses to point at the target column.
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => targetColumn,
+    });
+
+    fireEvent.pointerDown(cardA, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(cardA, { pointerId: 1, clientX: 40, clientY: 40 });
+    // Drag is now active — a further move updates the insertion indicator.
+    fireEvent.pointerMove(cardA, { pointerId: 1, clientX: 40, clientY: 40 });
+    fireEvent.pointerUp(cardA, { pointerId: 1, clientX: 40, clientY: 40 });
+
+    await waitFor(() =>
+      expect(issueEnterColumn).toHaveBeenCalledWith("a", "c-progress", 1),
+    );
+  });
+
+  it("renders a ghost that follows the pointer while dragging", async () => {
+    await renderBoard();
+    const cardA = document.querySelector<HTMLElement>(
+      '.board-card[data-issue-id="a"]',
+    )!;
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => cardA.closest(".board-column"),
+    });
+
+    fireEvent.pointerDown(cardA, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(cardA, { pointerId: 1, clientX: 40, clientY: 40 });
+
+    const ghost = document.querySelector<HTMLElement>(".board-drag-ghost");
+    expect(ghost).not.toBeNull();
+    expect(ghost).toHaveTextContent("a");
+
+    fireEvent.pointerUp(cardA, { pointerId: 1, clientX: 40, clientY: 40 });
+    expect(document.querySelector(".board-drag-ghost")).toBeNull();
+  });
+
+  it("auto-scrolls the board near its edge", async () => {
+    await renderBoard();
+    const rafs: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      rafs.push(cb);
+      return rafs.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const cardA = document.querySelector<HTMLElement>(
+      '.board-card[data-issue-id="a"]',
+    )!;
+    const targetColumn = document.querySelector<HTMLElement>(
+      '.board-column[data-column-id="c-progress"]',
+    )!;
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => targetColumn,
+    });
+
+    fireEvent.pointerDown(cardA, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(cardA, { pointerId: 1, clientX: 60, clientY: 60 });
+
+    const frame = document.querySelector<HTMLElement>(".board-frame")!;
+    expect(frame.scrollLeft).toBe(0);
+    // jsdom rects are zero — 60px sits past every edge — so each frame
+    // scrolls a little; a few frames must move the frame.
+    for (let i = 0; i < 10 && rafs.length > 0; i++) {
+      const cb = rafs.shift()!;
+      act(() => cb(performance.now()));
+    }
+    expect(frame.scrollLeft).toBeGreaterThan(0);
+  });
+
+  it("still opens the card on a plain click (no drag armed)", async () => {
+    await renderBoard();
+    const cardA = document.querySelector<HTMLElement>(
+      '.board-card[data-issue-id="a"]',
+    )!;
+
+    fireEvent.click(cardA);
+
+    await waitFor(() => expect(useUi.getState().boardDetailIssueId).toBe("a"));
+    expect(issueEnterColumn).not.toHaveBeenCalled();
   });
 });

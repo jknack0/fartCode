@@ -25,6 +25,7 @@ import {
   terminalListForTask,
   terminalOpenAgent,
   terminalWrite,
+  waitForTerminalReady,
 } from "../lib/tauri";
 import { hint } from "../lib/useCommands";
 import { useLineComments } from "../store/line-comments";
@@ -902,6 +903,7 @@ export function QuickTaskDialog({ onClose }: { onClose: () => void }) {
       if (provider) {
         try {
           const terminalId = await terminalOpenAgent(result.task.id, provider, 24, 80);
+          await waitForTerminalReady(terminalId);
           await terminalWrite(terminalId, `\u001b[200~${result.prompt}\u001b[201~\r`);
         } catch {
           // No agent available — the task + link still stand; the user can

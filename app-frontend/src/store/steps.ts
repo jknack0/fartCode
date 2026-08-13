@@ -28,6 +28,7 @@ import {
   terminalListForTask,
   terminalOpenAgent,
   terminalWrite,
+  waitForTerminalReady,
   type FartcodeEvent,
 } from "../lib/tauri";
 import { useScripts } from "./scripts";
@@ -247,8 +248,12 @@ export async function runLaunchDirective(
     }
     const terminalId = await terminalOpenAgent(launch.taskId, launch.provider, 24, 80);
     useScripts.getState().noteAgentSpawn(launch.taskId, terminalId);
-    await terminalWrite(terminalId, `\u001b[200~${launch.prompt}\u001b[201~\r`);
+    // Navigate BEFORE the paste: the task view + terminal tab must be on
+    // screen while the agent starts, not materialize after it is already
+    // running. The terminal must exist first so ensureTabs discovers it.
     focusIfCurrentProject(launch);
+    await waitForTerminalReady(terminalId);
+    await terminalWrite(terminalId, `\u001b[200~${launch.prompt}\u001b[201~\r`);
   } catch (e) {
     useSteps.getState().setError(String(e));
   }
