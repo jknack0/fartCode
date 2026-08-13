@@ -50,7 +50,8 @@
 
 /* The hollow needs-you ring keeps its 8px row size (the 1.5px border eats
    inward, so 7px would read undersized). */
-.tv-header-id .status-dot.status-needs-you {
+.tv-header-id .status-dot.status-needs-you,
+.tv-header-id .status-dot.status-launching {
   width: 8px;
   height: 8px;
 }
@@ -59,6 +60,15 @@
    a stopped agent is a non-event (5b's dot). */
 .status-dot.tv-dot-idle {
   background: var(--dot-idle);
+}
+
+/* "starting…" while a dispatch is in flight (drag → prompt pasted). */
+.tv-launching {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--status-in-progress);
+  white-space: nowrap;
+  animation: fc-pulse 1.8s ease-in-out infinite;
 }
 
 .tv-header-actions {

@@ -604,6 +604,13 @@ body {
   background: transparent;
   border: 1.5px solid var(--status-in-progress);
 }
+/* Starting: the SAME hollow amber ring, but pulsing — a dispatch is in
+   flight and the agent is not live yet (needs-you is its static twin). */
+.status-dot.status-launching {
+  background: transparent;
+  border: 1.5px solid var(--status-in-progress);
+  animation: fc-pulse 1.8s ease-in-out infinite;
+}
 .status-dot.status-failed {
   background: var(--fc-bad);
 }

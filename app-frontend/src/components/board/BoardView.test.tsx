@@ -147,7 +147,7 @@ beforeEach(async () => {
   vi.mocked(columnList).mockResolvedValue(COLUMNS);
   vi.mocked(issueList).mockResolvedValue(ISSUES);
   useColumns.setState({ byProject: {}, loading: {}, loaded: {}, error: null });
-  useSteps.setState({ byIssue: {}, hydrated: {}, error: null });
+  useSteps.setState({ byIssue: {}, hydrated: {}, launchingByIssue: {}, error: null });
   useUi.setState({ boardDetailIssueId: null });
   setViewportWidth(1440);
 });

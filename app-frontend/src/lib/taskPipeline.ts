@@ -177,8 +177,15 @@ export async function enterColumn(
   if (column.kind === "agent_step" && !(await ensureDossierConsent(issue.projectId, issue))) {
     return "inert";
   }
-  const outcome = await issueEnterColumn(issue.id, column.id);
-  return outcome.step;
+  if (column.kind === "agent_step") useSteps.getState().beginDispatch(issue.id);
+  try {
+    const outcome = await issueEnterColumn(issue.id, column.id);
+    if (outcome.step === "queued") useSteps.getState().endLaunch(issue.id);
+    return outcome.step;
+  } catch (e) {
+    useSteps.getState().endLaunch(issue.id);
+    throw e;
+  }
 }
 
 /** Fire the parked step. The park is consumed backend-side; the launch it
@@ -188,7 +195,13 @@ export async function enterColumn(
  * the confirm fires. */
 export async function confirmParkedStep(issue: IssueDto): Promise<void> {
   useSteps.getState().clearPark(issue.id);
-  await stepConfirm(issue.id);
+  useSteps.getState().beginDispatch(issue.id);
+  try {
+    await stepConfirm(issue.id);
+  } catch (e) {
+    useSteps.getState().endLaunch(issue.id);
+    throw e;
+  }
 }
 
 // -- the four header actions -------------------------------------------------

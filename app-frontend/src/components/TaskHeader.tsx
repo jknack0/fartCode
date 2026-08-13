@@ -63,6 +63,11 @@ export default function TaskHeader({ taskId }: { taskId: string }) {
   );
   const runs = useScripts((s) => s.byTask[taskId]);
   const agentRunning = useScripts((s) => s.agentByTask[taskId]?.running ?? false);
+  // A dispatch in flight for THIS task (drag → prompt pasted) — shows the
+  // "starting…" label until the directive finishes.
+  const launching = useSteps((s) =>
+    Object.values(s.launchingByIssue).some((l) => l.taskId === taskId),
+  );
   const columns = useColumns((s) =>
     projectId ? (s.byProject[projectId] ?? NO_COLUMNS) : NO_COLUMNS,
   );
@@ -142,9 +147,11 @@ export default function TaskHeader({ taskId }: { taskId: string }) {
   // one frame on a task with no agent at all.
   const dotClass = agentRunning
     ? "status-dot status-in_progress"
-    : task?.status === "review"
-      ? "status-dot status-needs-you"
-      : "status-dot tv-dot-idle";
+    : launching
+      ? "status-dot status-launching"
+      : task?.status === "review"
+        ? "status-dot status-needs-you"
+        : "status-dot tv-dot-idle";
 
   return (
     <header className="tv-header">
@@ -157,6 +164,7 @@ export default function TaskHeader({ taskId }: { taskId: string }) {
           {task?.name ?? "Task"}
         </span>
         <span className={dotClass} />
+        {launching && <span className="tv-launching">starting…</span>}
       </div>
       <div className="tv-header-actions">
         {pipelineError && (

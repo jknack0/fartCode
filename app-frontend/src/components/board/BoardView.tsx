@@ -155,6 +155,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
   // launch navigates to the task view and unmounts this component, so
   // component state would be wiped by the very act it is tracking.
   const steps = useSteps((s) => s.byIssue);
+  const launchingByIssue = useSteps((s) => s.launchingByIssue);
   const stepError = useSteps((s) => s.error);
   /** Park whose confirm the user dismissed — the park itself lives on. */
   const [dismissedPark, setDismissedPark] = useState<string | null>(null);
@@ -366,9 +367,11 @@ export default function BoardView({ projectId }: { projectId: string }) {
    * the card into the refetched list.
    */
   const enter = async (issue: IssueDto, column: BoardColumnDto, position: number | null) => {
+    if (column.kind === "agent_step") useSteps.getState().beginDispatch(issue.id);
     try {
       const outcome = await issueEnterColumn(issue.id, column.id, position ?? undefined);
       if (outcome.step === "queued") {
+        useSteps.getState().endLaunch(issue.id);
         setPending({
           kind: "queued",
           issue: outcome.issue,
@@ -378,6 +381,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
         });
       }
     } catch (e) {
+      useSteps.getState().endLaunch(issue.id);
       setError(String(e));
     }
   };
@@ -441,7 +445,11 @@ export default function BoardView({ projectId }: { projectId: string }) {
       // The park is consumed by the backend; the launch it produces
       // arrives as `step:launch` like every other launch.
       useSteps.getState().clearPark(issue.id);
-      stepConfirm(issue.id).catch((e) => setError(String(e)));
+      useSteps.getState().beginDispatch(issue.id);
+      stepConfirm(issue.id).catch((e) => {
+        useSteps.getState().endLaunch(issue.id);
+        setError(String(e));
+      });
       return;
     }
     void enterGated(issue, column, position);
@@ -806,6 +814,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
               }
               stepDone={steps[issue.id]?.settledColumnId === column.id}
               queued={steps[issue.id]?.queuedColumnId === column.id}
+              launching={Boolean(launchingByIssue[issue.id])}
               holdReason={
                 steps[issue.id]?.heldColumnId === column.id
                   ? (steps[issue.id]?.holdReason ?? null)
@@ -1224,6 +1233,7 @@ function BoardCard({
   agent,
   stepDone,
   queued,
+  launching,
   holdReason,
   artifact,
   selected,
@@ -1242,6 +1252,7 @@ function BoardCard({
   agent: { running: boolean } | undefined;
   stepDone: boolean;
   queued: boolean;
+  launching: boolean;
   /** #82 chain-guard hold reason for THIS column, null when not held. */
   holdReason: string | null;
   artifact: string | null;
@@ -1256,7 +1267,7 @@ function BoardCard({
   onOpenIssue: (issueId: string) => void;
   onReadTask: (taskId: string) => void;
 }) {
-  const rs = runStateFor({ status: task?.status, agent, stepDone, queued });
+  const rs = runStateFor({ status: task?.status, agent, stepDone, queued, launching });
   const { ref, title } = issueRefParts(issue.title, issue.externalRef);
   // "Still blocking?" is the blocker column's counts_as_done flag (E18-03,
   // ADR-0037 item 6) — no lane name is consulted anywhere.
@@ -1265,9 +1276,9 @@ function BoardCard({
 
   const segs: React.ReactNode[] = [];
   if (ref) segs.push(<span key="ref">{ref}</span>);
-  if (task && rs.label) {
+  if (rs.label) {
     segs.push(<span key="run">{rs.label}</span>);
-    if (task.statusChangedAt) {
+    if (task?.statusChangedAt) {
       segs.push(<span key="elapsed">{elapsedShort(task.statusChangedAt)}</span>);
     }
   }

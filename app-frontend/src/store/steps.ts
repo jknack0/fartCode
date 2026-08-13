@@ -52,6 +52,14 @@ export interface StepFlags {
   queuedEffort?: string | null;
 }
 
+/** A dispatch in flight, from the drag that began it until the prompt is
+ * pasted (or the directive is refused). Presence is the whole signal — no
+ * phase bookkeeping. `taskId` arrives with `step:launch`, which is what
+ * lets the flyout count the task as Running before its terminal is open. */
+export interface LaunchState {
+  taskId?: string;
+}
+
 interface StepsState {
   byIssue: Record<string, StepFlags>;
   /** Projects whose parks were re-seeded from `step_parked_list` (E18-09
@@ -72,6 +80,17 @@ interface StepsState {
   clearPark: (issueId: string) => void;
   /** Drops everything known about an issue (deletion, or a fresh launch). */
   clearIssue: (issueId: string) => void;
+  /** A dispatch in flight (drag → prompt pasted, or refused). Presence is
+   * the whole signal — no phase bookkeeping. `taskId` lands with
+   * `step:launch`, which lets the flyout count the task as Running before
+   * its terminal is open. */
+  launchingByIssue: Record<string, LaunchState>;
+  /** Mark a dispatch begun from a user gesture (drag / confirm / advance). */
+  beginDispatch: (issueId: string) => void;
+  /** Attach the provisioned task id once `step:launch` arrives. */
+  noteLaunch: (issueId: string, taskId: string) => void;
+  /** Clear the dispatch (prompt pasted, refused, or errored). */
+  endLaunch: (issueId: string) => void;
 }
 
 /** Clears observed while a `hydrateParkedSteps` query is in flight — one
@@ -93,8 +112,27 @@ export const useSteps = create<StepsState>((set) => ({
   byIssue: {},
   hydrated: {},
   error: null,
+  launchingByIssue: {},
 
   setError: (message) => set({ error: message }),
+
+  beginDispatch: (issueId) =>
+    set((s) => ({
+      launchingByIssue: { ...s.launchingByIssue, [issueId]: {} },
+    })),
+
+  noteLaunch: (issueId, taskId) =>
+    set((s) => ({
+      launchingByIssue: { ...s.launchingByIssue, [issueId]: { taskId } },
+    })),
+
+  endLaunch: (issueId) =>
+    set((s) => {
+      if (!(issueId in s.launchingByIssue)) return s;
+      const launchingByIssue = { ...s.launchingByIssue };
+      delete launchingByIssue[issueId];
+      return { launchingByIssue };
+    }),
 
   notePark: (issueId, columnId, agent) =>
     set((s) => ({
@@ -273,13 +311,16 @@ export function wireStepEvents(): () => void {
     if (event.type === "step:launch") {
       // A launch supersedes every derived state the card carried.
       steps.clearIssue(event.issueId);
+      steps.noteLaunch(event.issueId, event.taskId);
+      // The dispatch stays visible ("starting") until the directive
+      // finishes — prompt pasted, reattached/focused, or refused.
       void runLaunchDirective({
         projectId: event.projectId,
         taskId: event.taskId,
         prompt: event.prompt,
         provider: event.provider,
         reattached: event.reattached,
-      });
+      }).finally(() => useSteps.getState().endLaunch(event.issueId));
       return;
     }
     if (event.type === "step:queued") {

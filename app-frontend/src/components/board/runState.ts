@@ -17,6 +17,7 @@
 export interface RunState {
   kind:
     | "running"
+    | "starting"
     | "needs-you"
     | "failed"
     | "step-done"
@@ -50,6 +51,8 @@ export interface RunStateInput {
   stepDone: boolean;
   /** step:queued parked a step here; the confirm has not fired yet. */
   queued: boolean;
+  /** A dispatch is in flight for this card (drag → prompt pasted). */
+  launching?: boolean;
 }
 
 /** Is an agent live for this card? The scripts store is the authority once
@@ -73,6 +76,11 @@ const NEUTRAL: RunState = {
 };
 
 export function runStateFor(input: RunStateInput): RunState {
+  // A dispatch in flight reads "starting" whatever the card carried — the
+  // old state is being superseded by the launch.
+  if (input.launching) {
+    return { ...NEUTRAL, kind: "starting", dot: "run-starting", label: "starting" };
+  }
   // A failed run outranks everything — it is the one state with a
   // follow-up action ("↵ read").
   if (input.status === "failed") {

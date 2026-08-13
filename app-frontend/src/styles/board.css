@@ -404,6 +404,17 @@
   border: 1px dashed #6e6e75;
 }
 
+/* Starting: pulsing hollow amber — a dispatch is in flight. Sized like the
+   needs-you ring (the 1.5px border eats inward at 7px). */
+.board-card .board-run-dot.run-starting {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  background: transparent;
+  border: 1.5px solid var(--status-in-progress);
+  animation: fc-pulse 1.8s ease-in-out infinite;
+}
+
 /* Step done, column holds (v3): the SAME accent-filled 7px dot as a passed
    check — filled, so it never reads as the hollow needs-you ring. It is
    the state's whole announcement; there is no meta word for it. */

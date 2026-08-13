@@ -88,7 +88,7 @@ beforeEach(() => {
   vi.mocked(terminalOpenAgent).mockResolvedValue("term-1");
   vi.mocked(terminalWrite).mockResolvedValue(undefined);
   vi.mocked(stepParkedList).mockResolvedValue([]);
-  useSteps.setState({ byIssue: {}, hydrated: {}, error: null });
+  useSteps.setState({ byIssue: {}, hydrated: {}, launchingByIssue: {}, error: null });
   useScripts.setState({ byTask: {}, agentByTask: {} });
   // The board you are looking at: launches for OTHER projects must not
   // navigate (see the cross-project test below).
@@ -209,6 +209,25 @@ describe("wireStepEvents", () => {
 
     expect(terminalOpenAgent).toHaveBeenCalledWith("task-1", "claude", 24, 80);
     expect(terminalWrite).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks the card starting while the directive runs and clears it after", async () => {
+    let resolveOpen!: (id: string) => void;
+    vi.mocked(terminalOpenAgent).mockReturnValue(
+      new Promise((r) => {
+        resolveOpen = r as (id: string) => void;
+      }) as ReturnType<typeof terminalOpenAgent>,
+    );
+
+    emit(LAUNCH);
+    await flush();
+    // step:launch recorded the provisioned task before the terminal opened.
+    expect(useSteps.getState().launchingByIssue["iss-1"]).toEqual({ taskId: "task-1" });
+
+    resolveOpen("term-1");
+    await flush();
+    // The prompt was pasted and the dispatch is over — nothing left to show.
+    expect(useSteps.getState().launchingByIssue["iss-1"]).toBeUndefined();
   });
 
   // Findings 4 and 8: the old 4s wall-clock claim refused a second launch

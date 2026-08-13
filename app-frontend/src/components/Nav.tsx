@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { useUi } from "../store/ui";
 import { useSidebar } from "../store/sidebar";
 import { useScripts } from "../store/scripts";
+import { useSteps } from "../store/steps";
 import { TaskDto } from "../lib/tauri";
 import { hint } from "../lib/useCommands";
 
@@ -146,6 +147,7 @@ function ProjectFlyout() {
   const toggleVisible = useUi((s) => s.toggleSidebarVisible);
   useUi((s) => s.bindingsVersion);
   const agentByTask = useScripts((s) => s.agentByTask);
+  const launchingByIssue = useSteps((s) => s.launchingByIssue);
 
   // Elapsed times are derived from statusChangedAt, never stored — refresh
   // on a slow tick (the display is minute-coarse).
@@ -180,11 +182,25 @@ function ProjectFlyout() {
   // same audit drives TaskHeader's dot). `review` stays status-keyed for the
   // future needs-you state (no writer today, so it cannot fire).
   const needsYou = active.filter((t) => t.status === "review");
-  const running = active.filter((t) => Boolean(agentByTask[t.id]?.running));
+  // A dispatch in flight counts as running before its terminal is open —
+  // the task is already provisioned and the prompt is on its way.
+  const launchingTaskIds = new Set(
+    Object.values(launchingByIssue)
+      .map((l) => l.taskId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const running = active.filter(
+    (t) => Boolean(agentByTask[t.id]?.running) || launchingTaskIds.has(t.id),
+  );
   // Everything at rest — stopped agents and never-run ad-hoc tasks — has no
   // board card, so list the most recent ones for a path back to them.
   const recent = active
-    .filter((t) => t.status !== "review" && !agentByTask[t.id]?.running)
+    .filter(
+      (t) =>
+        t.status !== "review" &&
+        !agentByTask[t.id]?.running &&
+        !launchingTaskIds.has(t.id),
+    )
     .sort(
       (a, b) =>
         Date.parse(b.lastInteractedAt ?? b.statusChangedAt ?? "") -
@@ -224,12 +240,15 @@ function ProjectFlyout() {
           <div className="flyout-rows">
             {g.items.map((t) => {
               const runningNow = Boolean(agentByTask[t.id]?.running);
+              const launchingNow = !runningNow && launchingTaskIds.has(t.id);
               const dotClass =
                 t.status === "review"
                   ? "status-dot status-needs-you"
                   : runningNow
                     ? "status-dot status-in_progress"
-                    : "status-dot tv-dot-idle";
+                    : launchingNow
+                      ? "status-dot status-launching"
+                      : "status-dot tv-dot-idle";
               return (
                 <button
                   key={t.id}
