@@ -91,6 +91,13 @@ pub fn spawn_search_indexer(app: Arc<App>) {
                         &[name.as_str()],
                     );
                 }
+                InternalEvent::TaskRenamed { id, name, .. } => {
+                    // #142: the rename path is the ONLY caller of
+                    // `update_title` — a plain upsert would wipe the
+                    // project/task link columns, and a no-op left the
+                    // old title in the index forever.
+                    let _ = fartcode_core::search::update_title(&db, "task", &id, &name);
+                }
                 InternalEvent::TaskDeleted { id } => {
                     let _ = fartcode_core::search::delete(&db, "task", &id);
                 }
