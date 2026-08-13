@@ -10,7 +10,9 @@ import {
   hostDependencyList,
   hostDependencyRegistrySummary,
   hostDependencyUpdate,
+  onDependencyOutput,
 } from "../lib/tauri";
+import { wireEvents } from "../lib/wireEvents";
 
 interface DependenciesState {
   deps: HostDependencyDto[];
@@ -19,6 +21,8 @@ interface DependenciesState {
   error: string | null;
   /** providerIds with an install/update in flight. */
   installing: Record<string, boolean>;
+  /** Live installer output tail per providerId (rendered by the row). */
+  progress: Record<string, string>;
   /** Loads rows + registry summary; refresh forces a re-detect. */
   load: (refresh?: boolean) => Promise<void>;
   install: (providerId: string) => Promise<void>;
@@ -35,6 +39,7 @@ export const useDependencies = create<DependenciesState>((set) => ({
   loading: false,
   error: null,
   installing: {},
+  progress: {},
 
   load: async (refresh = false) => {
     set({ loading: true, error: null });
@@ -50,7 +55,11 @@ export const useDependencies = create<DependenciesState>((set) => ({
   },
 
   install: async (providerId) => {
-    set((s) => ({ installing: { ...s.installing, [providerId]: true }, error: null }));
+    set((s) => ({
+      installing: { ...s.installing, [providerId]: true },
+      progress: { ...s.progress, [providerId]: "" },
+      error: null,
+    }));
     try {
       const row = await hostDependencyInstall(providerId);
       set((s) => ({ deps: replaceRow(s.deps, row) }));
@@ -66,7 +75,11 @@ export const useDependencies = create<DependenciesState>((set) => ({
   },
 
   update: async (providerId) => {
-    set((s) => ({ installing: { ...s.installing, [providerId]: true }, error: null }));
+    set((s) => ({
+      installing: { ...s.installing, [providerId]: true },
+      progress: { ...s.progress, [providerId]: "" },
+      error: null,
+    }));
     try {
       const row = await hostDependencyUpdate(providerId);
       set((s) => ({ deps: replaceRow(s.deps, row) }));
@@ -85,4 +98,17 @@ export const useDependencies = create<DependenciesState>((set) => ({
 /** The default agent's display name ("claude" fallback) — 7c Agent group. */
 export function defaultAgentName(deps: HostDependencyDto[]): string {
   return deps.find((d) => d.isDefault)?.name ?? "claude";
+}
+
+/** App-lifetime wiring: `dependency:output` → per-provider live row tail. */
+export function wireDependencyEvents(): () => void {
+  return wireEvents(onDependencyOutput, ({ providerId, data }) => {
+    useDependencies.setState((s) => {
+      const prev = s.progress[providerId] ?? "";
+      // Chatty installers write a lot; the row only shows the last frame,
+      // so a small bounded tail is enough.
+      const next = (prev + data).slice(-8192);
+      return { progress: { ...s.progress, [providerId]: next } };
+    });
+  });
 }

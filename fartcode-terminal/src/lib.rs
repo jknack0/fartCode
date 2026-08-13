@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use fartcode_core::dependencies::InstallRunner;
 use fartcode_core::terminals::pty::{EnvPolicy, PtyExit, PtyHandle, PtyManager, PtySize};
 use fartcode_core::Error;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtyPair};
@@ -244,9 +245,60 @@ impl Drop for PortablePtyHandle {
     }
 }
 
+/// PTY-backed `InstallRunner` (E2-06 seam): streams installer output live
+/// into the sink via a single-threaded read loop. `ProcessInstallRunner`
+/// (core) buffers to completion because its drain threads cannot call the
+/// non-`Send` sink; a PTY's background reader lets the calling thread drain
+/// and report incrementally.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct PtyInstallRunner;
+
+impl InstallRunner for PtyInstallRunner {
+    fn run(&self, argv: &[String], sink: &mut dyn FnMut(&str)) -> Result<bool, Error> {
+        if argv.is_empty() {
+            return Err(Error::Internal("empty install command".into()));
+        }
+        let mut handle = PortablePtyManager.spawn(
+            &argv[0],
+            &argv[1..],
+            Path::new("."),
+            // Match ProcessInstallRunner's anti-prompt mitigations: npm and
+            // git installers stay non-interactive instead of hanging on a
+            // tty prompt nobody can answer.
+            &[
+                ("CI".into(), "1".into()),
+                ("GIT_TERMINAL_PROMPT".into(), "0".into()),
+            ],
+            PtySize::default(),
+            EnvPolicy::Inherit,
+            &[],
+        )?;
+        loop {
+            let mut buf = Vec::new();
+            if handle.try_read(&mut buf).unwrap_or(false) && !buf.is_empty() {
+                sink(&String::from_utf8_lossy(&buf));
+            }
+            match handle.try_wait_exit() {
+                Ok(Some(exit)) => {
+                    // Reap the reader thread's final chunk before returning.
+                    let _ = handle.flush();
+                    let mut tail = Vec::new();
+                    if handle.try_read(&mut tail).unwrap_or(false) && !tail.is_empty() {
+                        sink(&String::from_utf8_lossy(&tail));
+                    }
+                    return Ok(exit.is_success());
+                }
+                Ok(None) => {}
+                Err(e) => return Err(e),
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{EnvPolicy, PortablePtyManager, PtySize};
+    use super::{EnvPolicy, PortablePtyManager, PtyInstallRunner, PtySize};
     use std::time::Duration;
 
     /// Restores the process env on drop (panic-safe).
@@ -546,6 +598,30 @@ mod tests {
             "reader buffer capped: drained {total} bytes"
         );
         handle.kill().unwrap();
+    }
+
+    #[test]
+    fn pty_install_runner_reports_output_and_exit_code() {
+        let runner = PtyInstallRunner;
+
+        let mut out = String::new();
+        let ok = runner
+            .run(
+                &["/bin/sh".into(), "-c".into(), "echo install-ok".into()],
+                &mut |c| out.push_str(c),
+            )
+            .unwrap();
+        assert!(ok);
+        assert!(out.contains("install-ok"), "got output: {out:?}");
+
+        let mut out2 = String::new();
+        let ok2 = runner
+            .run(
+                &["/bin/sh".into(), "-c".into(), "echo boom; exit 3".into()],
+                &mut |c| out2.push_str(c),
+            )
+            .unwrap();
+        assert!(!ok2, "non-zero exit must fail the install");
     }
 
     #[test]

@@ -2,18 +2,17 @@
 //! list agent CLIs with detection state, install/update them, and summarize
 //! the registry tail (`+ N more in the registry · N acp`).
 //!
-//! Install/update run the blocking `ProcessInstallRunner` on the blocking
+//! Install/update run the PTY-backed `PtyInstallRunner` on the blocking
 //! pool ([`off_main_thread`]) — an npm/curl install must never stall the main
-//! thread. The runner buffers child output and flushes once at the end, so
-//! there is NO incremental progress to report — the `installing · 62%` row
-//! state has no backend feed until a PTY-backed runner lands (E2-06 seam);
-//! callers get the settled DTO when the install finishes.
+//! thread. The runner streams child output live into the sink, which emits
+//! `dependency:output` events so the 7d row shows real progress (not a bare
+//! "installing"); callers get the settled DTO when the install finishes.
 
 use std::sync::Arc;
 
 use fartcode_core::settings::DEFAULT_AGENT;
 use serde::Serialize;
-use tauri::State;
+use tauri::{Emitter, State};
 
 use crate::app::App;
 use crate::commands::off_main_thread;
@@ -34,6 +33,12 @@ pub struct HostDependencyDto {
     pub acp: bool,
     /// Resolvable from the `defaultAgent` app setting.
     pub is_default: bool,
+    /// Manager display name for the confirm sheet (e.g. "npm", "curl").
+    pub install_manager: Option<String>,
+    /// Exact install command the runner executes.
+    pub install_command: Option<String>,
+    /// Exact update command the runner executes.
+    pub update_command: Option<String>,
 }
 
 /// Registry tail counts (7d: `+ 31 more in the registry · 22 acp`).
@@ -44,7 +49,16 @@ pub struct DependencyRegistrySummaryDto {
     pub acp: usize,
 }
 
+/// Live install/update output chunk (emitted as `dependency:output`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyOutput {
+    pub provider_id: String,
+    pub data: String,
+}
+
 fn dto_from_status(
+    store: &fartcode_core::dependencies::HostDependencyStore,
     dep: &fartcode_core::dependencies::HostDependency,
     status: fartcode_core::dependencies::HostDependencyStatus,
     latest: Option<String>,
@@ -53,6 +67,12 @@ fn dto_from_status(
     let acp = fartcode_providers::get(&dep.id)
         .map(|p| p.capabilities.acp)
         .unwrap_or(false);
+    let install = store.install_command(&dep.id);
+    let update = store.update_command(&dep.id);
+    let (install_manager, install_command) = match install {
+        Some((manager, command)) => (Some(manager), Some(command)),
+        None => (None, None),
+    };
     HostDependencyDto {
         provider_id: dep.id.clone(),
         name: dep.name.clone(),
@@ -62,6 +82,9 @@ fn dto_from_status(
         latest,
         acp,
         is_default: dep.id == default_agent,
+        install_manager,
+        install_command,
+        update_command: update.map(|(_, command)| command),
     }
 }
 
@@ -76,7 +99,13 @@ fn list_blocking(app: &App, refresh: bool) -> Result<Vec<HostDependencyDto>, Str
         }
         .map_err(|e| e.to_string())?;
         let latest = app.host_dependencies.latest_version(&dep.id);
-        out.push(dto_from_status(&dep, status, latest, &default_agent));
+        out.push(dto_from_status(
+            &app.host_dependencies,
+            &dep,
+            status,
+            latest,
+            &default_agent,
+        ));
     }
     Ok(out)
 }
@@ -103,22 +132,36 @@ fn provider_dto(app: &App, provider_id: &str) -> Result<HostDependencyDto, Strin
         .map_err(|e| e.to_string())?;
     let default_agent = app.settings.get(&DEFAULT_AGENT).unwrap_or_default();
     let latest = app.host_dependencies.latest_version(provider_id);
-    Ok(dto_from_status(&dep, status, latest, &default_agent))
+    Ok(dto_from_status(
+        &app.host_dependencies,
+        &dep,
+        status,
+        latest,
+        &default_agent,
+    ))
 }
 
 /// Installs the provider's CLI via its registry install plan (npm / curl /
-/// brew / …) and returns the re-detected row. Installer output is logged
-/// (`tracing`, target visible with RUST_LOG) — no live stream yet, see the
-/// module docs.
+/// brew / …) and returns the re-detected row. Installer output is streamed
+/// to the frontend as `dependency:output` events AND logged (`tracing`,
+/// target visible with RUST_LOG).
 #[tauri::command]
 pub async fn host_dependency_install(
     app: State<'_, Arc<App>>,
+    app_handle: tauri::AppHandle,
     provider_id: String,
 ) -> Result<HostDependencyDto, String> {
     let app = app.inner().clone();
     off_main_thread(move || {
         let mut sink = |chunk: &str| {
             tracing::info!(provider_id = %provider_id, output = %chunk, "dependency install output");
+            let _ = app_handle.emit(
+                "dependency:output",
+                DependencyOutput {
+                    provider_id: provider_id.clone(),
+                    data: chunk.to_string(),
+                },
+            );
         };
         app.host_dependencies
             .install(&provider_id, &mut sink)
@@ -133,12 +176,20 @@ pub async fn host_dependency_install(
 #[tauri::command]
 pub async fn host_dependency_update(
     app: State<'_, Arc<App>>,
+    app_handle: tauri::AppHandle,
     provider_id: String,
 ) -> Result<HostDependencyDto, String> {
     let app = app.inner().clone();
     off_main_thread(move || {
         let mut sink = |chunk: &str| {
             tracing::info!(provider_id = %provider_id, output = %chunk, "dependency update output");
+            let _ = app_handle.emit(
+                "dependency:output",
+                DependencyOutput {
+                    provider_id: provider_id.clone(),
+                    data: chunk.to_string(),
+                },
+            );
         };
         app.host_dependencies
             .update(&provider_id, &mut sink)

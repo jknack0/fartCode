@@ -272,6 +272,13 @@
   height: 7px;
 }
 
+/* The exact command the confirm sheet asks consent to run. */
+.fc-confirm-command {
+  color: var(--text-card);
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
 /* -- inline errors ---------------------------------------------------------- */
 
 .fc-modal-error {

@@ -418,6 +418,12 @@ export interface HostDependencyDto {
   latest: string | null;
   acp: boolean;
   isDefault: boolean;
+  /** Manager display name for the confirm sheet (e.g. "npm", "curl"). */
+  installManager: string | null;
+  /** Exact install command the runner executes. */
+  installCommand: string | null;
+  /** Exact update command the runner executes. */
+  updateCommand: string | null;
 }
 
 /** Registry tail counts (7d `+ 31 more in the registry · 22 acp`). */
@@ -446,6 +452,16 @@ export function hostDependencyUpdate(id: string): Promise<HostDependencyDto> {
 
 export function hostDependencyRegistrySummary(): Promise<DependencyRegistrySummaryDto> {
   return invoke("host_dependency_registry_summary");
+}
+
+/** Subscribe to live install/update output chunks (plain text, keyed by
+ * providerId); returns an unsubscribe fn. */
+export function onDependencyOutput(
+  cb: (payload: { providerId: string; data: string }) => void,
+): Promise<() => void> {
+  return listen<{ providerId: string; data: string }>("dependency:output", (e) =>
+    cb(e.payload),
+  );
 }
 
 // -- E2-12 interactive terminals ---------------------------------------------

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use fartcode_core::conversations::DbConversationStore;
 use fartcode_core::db::{Db, SqliteDb};
-use fartcode_core::dependencies::{HostDependencyStore, ProcessInstallRunner};
+use fartcode_core::dependencies::HostDependencyStore;
 use fartcode_core::events::EventBus;
 use fartcode_core::events::{BroadcastEventBus, InternalEvent};
 use fartcode_core::fs_watch::FsWatchService;
@@ -115,7 +115,7 @@ impl App {
         // the `host_dependency_*` commands (same kv detection cache).
         let host_dependencies = Arc::new(HostDependencyStore::new(
             db.clone(),
-            Arc::new(ProcessInstallRunner),
+            Arc::new(fartcode_terminal::PtyInstallRunner),
         ));
 
         // E2-07 boot rehydration: previously-spawned PTY conversations are
