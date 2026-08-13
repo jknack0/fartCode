@@ -390,6 +390,52 @@ body {
   flex: 1;
 }
 
+/* Project tiles scroll inside the rail; the mark, + and the command-key tile stay pinned.
+   flex-shrink (basis auto) lets the region give way to the + / spacer /
+   settings tile below it once ~15 projects outgrow the rail — it shrinks and
+   scrolls instead of pushing the bottom tiles off-screen. The scrollbar is
+   hidden: the rail is a 56px gutter, so a bar would sit on the glyphs (the
+   board's narrow strip hides its the same way). */
+.rail-scroll {
+  flex: 0 1 auto;
+  min-height: 0;
+  width: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  scrollbar-width: none;
+}
+
+.rail-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* -- §4g narrow (<900px window): per-surface contract --------------------
+   The board already collapses to one column + the mono strip (BoardView's
+   isNarrowViewport, JS — it follows the window, not the pane). Below 900px
+   the rail narrows to 48px with 30px tiles (DESIGN.md Layout / handoff
+   §4g). The flyout keeps its 244px width — §4g gives it no narrow variant
+   and it already scrolls internally — and the task view is already fluid
+   (truncating crumb, overflow-x tab bar). The changes sheet (and the PR
+   tab inside it) clamps to the main pane so a wide drag-resize can't cover
+   the rail/flyout. */
+@media (max-width: 899px) {
+  .rail {
+    width: 48px;
+  }
+
+  .rail-tile {
+    width: 30px;
+    height: 30px;
+  }
+
+  .changes-panel {
+    max-width: 100%;
+  }
+}
+
 /* -- project flyout: name, path · branch, in-flight work only ------------ */
 
 .flyout {

@@ -82,35 +82,37 @@ function LeftRail() {
         </text>
       </svg>
 
-      {projects.map((p) => {
-        const agent = agentState(tasksByProject[p.id] ?? []);
-        return (
-          <button
-            key={p.id}
-            type="button"
-            className={`rail-tile${p.id === selectedProjectId ? " active" : ""}`}
-            title={`${p.name} — right-click to delete`}
-            aria-label={p.name}
-            onClick={() => {
-              selectProject(p.id);
-              // Clicking a tile is also the mouse path back from a collapsed
-              // flyout — ⌘\ is otherwise the only way to reopen it.
-              setSidebarVisible(true);
-            }}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setDeleteProjectTarget(p.id);
-            }}
-          >
-            {p.name[0] ?? "?"}
-            {agent && (
-              <span className="tile-dot">
-                <span className={`status-dot status-${agent === "running" ? "in_progress" : "needs-you"}`} />
-              </span>
-            )}
-          </button>
-        );
-      })}
+      <div className="rail-scroll">
+        {projects.map((p) => {
+          const agent = agentState(tasksByProject[p.id] ?? []);
+          return (
+            <button
+              key={p.id}
+              type="button"
+              className={`rail-tile${p.id === selectedProjectId ? " active" : ""}`}
+              title={`${p.name} — right-click to delete`}
+              aria-label={p.name}
+              onClick={() => {
+                selectProject(p.id);
+                // Clicking a tile is also the mouse path back from a collapsed
+                // flyout — ⌘\ is otherwise the only way to reopen it.
+                setSidebarVisible(true);
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setDeleteProjectTarget(p.id);
+              }}
+            >
+              {p.name[0] ?? "?"}
+              {agent && (
+                <span className="tile-dot">
+                  <span className={`status-dot status-${agent === "running" ? "in_progress" : "needs-you"}`} />
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
 
       <button
         type="button"

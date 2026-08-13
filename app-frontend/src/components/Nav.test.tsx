@@ -117,6 +117,23 @@ describe("Nav rail → flyout", () => {
     expect(screen.getByRole("button", { name: "Alpha" }).className).not.toContain("active");
   });
 
+  it("pins the mark, + and ⌘ while project tiles scroll", () => {
+    const { container } = render(<Nav />);
+    const scroll = container.querySelector(".rail-scroll")!;
+    expect(scroll).toBeTruthy();
+    // The project tiles live inside the scrolling region…
+    expect(scroll.querySelector('[aria-label="Alpha"]')).toBeTruthy();
+    expect(scroll.querySelector('[aria-label="Beta"]')).toBeTruthy();
+    // …while the mark and the + / ⌘ controls stay pinned on the rail.
+    expect(scroll.querySelector(".rail-mark")).toBeNull();
+    expect(scroll.querySelector('[aria-label="Add project"]')).toBeNull();
+    expect(scroll.querySelector('[aria-label="Settings"]')).toBeNull();
+    const rail = container.querySelector(".rail")!;
+    expect(rail.querySelector(".rail-mark")).toBeTruthy();
+    expect(rail.querySelector('[aria-label="Add project"]')).toBeTruthy();
+    expect(rail.querySelector('[aria-label="Settings"]')).toBeTruthy();
+  });
+
   it("collapses the flyout from its own control", async () => {
     render(<Nav />);
     await userEvent.click(screen.getByRole("button", { name: "Collapse project flyout" }));
