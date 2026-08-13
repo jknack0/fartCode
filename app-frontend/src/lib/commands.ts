@@ -26,6 +26,7 @@ import { useConversations } from "../store/conversations";
 import { useScripts, type ScriptType } from "../store/scripts";
 import { useTabs, type PaneId } from "../store/tabs";
 import { useUi } from "../store/ui";
+import { importGithubIssues } from "./github-sync";
 
 export const registry = createRegistry();
 
@@ -264,6 +265,19 @@ export function registerAllCommands(): void {
       } else {
         ui.setProjectChatOpen(true); // changes mode → chat mode
       }
+    },
+  });
+  registerCommand(registry, {
+    id: "import-github-issues",
+    label: "Import GitHub issues",
+    defaultKeys: [],
+    scope: "project-view",
+    run: () => {
+      const projectId = useSidebar.getState().selectedProjectId;
+      if (!projectId) return;
+      void importGithubIssues(projectId).catch((e) =>
+        useUi.getState().setProjectNotice(`github import failed: ${String(e)}`),
+      );
     },
   });
   registerCommand(registry, {

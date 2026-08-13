@@ -210,6 +210,9 @@ export interface ProjectSettingsDto {
   baseRemote?: string | null;
   pushRemote?: string | null;
   githubAccountId?: string | null;
+  /** Import the checkout's open GitHub issues onto the board on project add
+   * (#120). `false` = opt-out; `true`/null = on (the historical default). */
+  autoImport?: boolean | null;
   tmux?: boolean | null;
   autoRunSetupScriptOnTaskCreation?: boolean | null;
   autoRunRunScriptOnTaskCreation?: boolean | null;

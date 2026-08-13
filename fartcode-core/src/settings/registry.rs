@@ -328,6 +328,11 @@ pub struct BaseProjectSettings {
     pub base_remote: Option<String>,
     pub push_remote: Option<String>,
     pub github_account_id: Option<String>,
+    /// Import the checkout's open GitHub issues onto the board on project
+    /// add (#120). `None` = on (the historical behavior); `Some(false)` is
+    /// the opt-out. Base, not shareable: the import preference is this
+    /// machine's, not something a teammate's `.fartCode.json` should set.
+    pub auto_import: Option<bool>,
     pub tmux: Option<bool>,
     pub auto_run_setup_script_on_task_creation: Option<bool>,
     pub auto_run_run_script_on_task_creation: Option<bool>,
@@ -451,6 +456,11 @@ pub struct ProjectSettings {
     pub base_remote: Option<String>,
     pub push_remote: Option<String>,
     pub github_account_id: Option<String>,
+    /// Import the checkout's open GitHub issues onto the board on project
+    /// add (#120). `None` = on (the historical behavior); `Some(false)` is
+    /// the opt-out. Base, not shareable: the import preference is this
+    /// machine's, not something a teammate's `.fartCode.json` should set.
+    pub auto_import: Option<bool>,
     pub tmux: Option<bool>,
     pub auto_run_setup_script_on_task_creation: Option<bool>,
     pub auto_run_run_script_on_task_creation: Option<bool>,
@@ -485,6 +495,7 @@ impl ProjectSettings {
             base_remote: self.base_remote.clone(),
             push_remote: self.push_remote.clone(),
             github_account_id: self.github_account_id.clone(),
+            auto_import: self.auto_import,
             tmux: self.tmux,
             auto_run_setup_script_on_task_creation: self.auto_run_setup_script_on_task_creation,
             auto_run_run_script_on_task_creation: self.auto_run_run_script_on_task_creation,

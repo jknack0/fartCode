@@ -71,6 +71,15 @@
   margin: 12px 20px 0;
 }
 
+/* Quiet one-line status (GitHub import / auto-pull outcomes, #120): the
+   transient counterpart of .board-error, in the meta floor colour. */
+.board-notice {
+  margin: 12px 20px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--meta);
+}
+
 /* Inline "add issue" row above the frame: a quiet hairline input with a
    mono key footer (↵ add · esc cancel) — no buttons. */
 .board-new-card {

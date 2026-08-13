@@ -159,6 +159,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
   /** Park whose confirm the user dismissed — the park itself lives on. */
   const [dismissedPark, setDismissedPark] = useState<string | null>(null);
   const detailIssueId = useUi((s) => s.boardDetailIssueId);
+  const projectNotice = useUi((s) => s.projectNotice);
   const projectTasks = useSidebar((s) => s.tasksByProject[projectId]) ?? NO_TASKS;
   const agentByTask = useScripts((s) => s.agentByTask);
   const columns = useColumns((s) => s.byProject[projectId] ?? NO_COLUMNS);
@@ -937,6 +938,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
   return (
     <div className="board" ref={boardRef}>
       {shown && <p className="error board-error">{shown}</p>}
+      {projectNotice && <p className="board-notice">{projectNotice}</p>}
 
       {adding && (
         <div className="board-new-card">

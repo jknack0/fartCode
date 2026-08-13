@@ -214,6 +214,7 @@ impl DbSettingsStore {
             base_remote: base.base_remote,
             push_remote: base.push_remote,
             github_account_id: base.github_account_id,
+            auto_import: base.auto_import,
             tmux: base.tmux,
             auto_run_setup_script_on_task_creation: base.auto_run_setup_script_on_task_creation,
             auto_run_run_script_on_task_creation: base.auto_run_run_script_on_task_creation,

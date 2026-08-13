@@ -54,6 +54,12 @@ interface UiState {
   deleteProjectTarget: string | null;
   quickTaskTarget: QuickTaskTarget | null;
   onboardingOpen: boolean;
+  /** Transient project-scope status line (board): GitHub import / auto-pull
+   * outcomes (#120). Quiet, non-modal; the next write replaces it. */
+  projectNotice: string | null;
+  /** Current width of the right sheet (ChangesSidebar), shared so the diff
+   * view can reserve it instead of being covered. */
+  sheetWidth: number;
   /** Bumped when keybindings change so hint renderers re-read the registry
    * (registry lives outside zustand). */
   bindingsVersion: number;
@@ -77,6 +83,8 @@ interface UiState {
   setDeleteProjectTarget: (id: string | null) => void;
   setQuickTaskTarget: (target: QuickTaskTarget | null) => void;
   setOnboardingOpen: (open: boolean) => void;
+  setProjectNotice: (text: string | null) => void;
+  setSheetWidth: (width: number) => void;
   bumpBindings: () => void;
   /** Esc handling (modal scope): close the topmost modal. */
   closeTopModal: () => void;
@@ -120,6 +128,8 @@ export const useUi = create<UiState>((set, get) => ({
   deleteProjectTarget: null,
   quickTaskTarget: null,
   onboardingOpen: false,
+  projectNotice: null,
+  sheetWidth: 400,
   bindingsVersion: 0,
 
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
@@ -148,6 +158,8 @@ export const useUi = create<UiState>((set, get) => ({
   setDeleteProjectTarget: (deleteProjectTarget) => set({ deleteProjectTarget }),
   setQuickTaskTarget: (quickTaskTarget) => set({ quickTaskTarget }),
   setOnboardingOpen: (onboardingOpen) => set({ onboardingOpen }),
+  setProjectNotice: (projectNotice) => set({ projectNotice }),
+  setSheetWidth: (sheetWidth) => set({ sheetWidth }),
   bumpBindings: () => set((s) => ({ bindingsVersion: s.bindingsVersion + 1 })),
 
   closeTopModal: () => {

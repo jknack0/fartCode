@@ -1,7 +1,8 @@
 // Sidebar state (E1-04): projects → tasks tree, pinned section, and the
 // task-switch ordering contract (visible tree order, skipping collapsed).
 import { create } from "zustand";
-import { syncGithubIssues } from "../lib/github-sync";
+import { importGithubIssues } from "../lib/github-sync";
+import { useUi } from "./ui";
 import {
   CreateTaskOptions,
   FartcodeEvent,
@@ -15,6 +16,7 @@ import {
   newRemoteProject as apiNewRemoteProject,
   deleteProject as apiDeleteProject,
   deleteTask as apiDeleteTask,
+  getProjectSettings,
   listProjects,
   listTasks,
   onFartcodeEvent,
@@ -70,7 +72,22 @@ function autoPullProject(id: string) {
   const now = Date.now();
   if (now - (lastPullAt[id] ?? 0) < PULL_COOLDOWN_MS) return;
   lastPullAt[id] = now;
-  projectGitPull(id).catch((e) => console.warn("project pull failed:", e));
+  projectGitPull(id).catch((e) =>
+    useUi.getState().setProjectNotice(`project pull failed: ${String(e)}`),
+  );
+}
+
+/** GitHub import on project add, gated by the `autoImport` project setting
+ * (#120): `false` opts out; `true`/unset keeps the historical auto-import.
+ * Reports through the board's quiet status line. */
+async function autoImportGithubIssues(projectId: string): Promise<void> {
+  try {
+    const settings = await getProjectSettings(projectId);
+    if (settings.autoImport === false) return;
+    await importGithubIssues(projectId);
+  } catch (e) {
+    useUi.getState().setProjectNotice(`github import failed: ${String(e)}`);
+  }
 }
 
 export const useSidebar = create<SidebarState>((set, get) => ({
@@ -195,9 +212,7 @@ export const useSidebar = create<SidebarState>((set, get) => ({
     }));
     // Import the checkout's open GitHub issues ONCE, here — the board no
     // longer syncs on mount (lib/github-sync.ts).
-    void syncGithubIssues(created.id).catch((e) =>
-      console.warn("github issue sync failed:", e),
-    );
+    void autoImportGithubIssues(created.id);
   },
 
   createRemoteProject: async (connectionId, remotePath) => {
@@ -209,9 +224,7 @@ export const useSidebar = create<SidebarState>((set, get) => ({
     }));
     // Import the checkout's open GitHub issues ONCE, here — the board no
     // longer syncs on mount (lib/github-sync.ts).
-    void syncGithubIssues(created.id).catch((e) =>
-      console.warn("github issue sync failed:", e),
-    );
+    void autoImportGithubIssues(created.id);
   },
 
   cloneProject: async (url) => {
@@ -223,9 +236,7 @@ export const useSidebar = create<SidebarState>((set, get) => ({
     }));
     // Import the checkout's open GitHub issues ONCE, here — the board no
     // longer syncs on mount (lib/github-sync.ts).
-    void syncGithubIssues(created.id).catch((e) =>
-      console.warn("github issue sync failed:", e),
-    );
+    void autoImportGithubIssues(created.id);
   },
 
   cloneRemoteProject: async (connectionId, url) => {
@@ -237,9 +248,7 @@ export const useSidebar = create<SidebarState>((set, get) => ({
     }));
     // Import the checkout's open GitHub issues ONCE, here — the board no
     // longer syncs on mount (lib/github-sync.ts).
-    void syncGithubIssues(created.id).catch((e) =>
-      console.warn("github issue sync failed:", e),
-    );
+    void autoImportGithubIssues(created.id);
   },
 
   newRemoteProject: async (connectionId, name) => {
@@ -251,9 +260,7 @@ export const useSidebar = create<SidebarState>((set, get) => ({
     }));
     // Import the checkout's open GitHub issues ONCE, here — the board no
     // longer syncs on mount (lib/github-sync.ts).
-    void syncGithubIssues(created.id).catch((e) =>
-      console.warn("github issue sync failed:", e),
-    );
+    void autoImportGithubIssues(created.id);
   },
 
   deleteProject: async (id) => {

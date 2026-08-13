@@ -52,6 +52,7 @@ export type CommandId =
   | "toggle-right-panel"
   | "toggle-changes"
   | "toggle-project-chat"
+  | "import-github-issues"
   | "previous-task"
   | "next-task"
   | "close-tab"

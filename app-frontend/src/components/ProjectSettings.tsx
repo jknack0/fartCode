@@ -398,6 +398,11 @@ export function ProjectSettingsPane({ projectId }: { projectId: string }) {
             onSave={(v) => void commit({ githubAccountId: v.trim() || null })}
           />
         </Row>
+        <Row
+          label="Import GitHub issues on open"
+          value={s.autoImport !== false ? "on" : "off"}
+          onClick={() => void commit({ autoImport: s.autoImport === false })}
+        />
       </div>
 
       <div className="fc-set-group">
