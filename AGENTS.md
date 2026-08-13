@@ -107,9 +107,11 @@ whole call path, not just the command body.
 
 ## Git strategy (decided)
 
-`git2` (libgit2 bindings, v0.21) for worktree lifecycle (`worktree()`, `worktrees()`,
-`find_worktree()`, `Worktree::prune()`). Shell out to the `git` CLI for ops git2
-doesn't cover. gix was evaluated and rejected: as of 0.86 it has no worktree
+`CliGit` (the `git` CLI via `Command` arg arrays, `fartcode-git/src/lib.rs`) is
+the sole `GitOps` implementation, worktree lifecycle included. `git2`/libgit2
+was removed 2026-08-12 — production never adopted `Git2Ops`; see the
+Superseded note in `decisions/0007-git2-worktree-ops.md`. Do not re-introduce
+git2. gix was evaluated and rejected: as of 0.86 it has no worktree
 add/list/prune.
 
 ## Frontend decisions (decided)
