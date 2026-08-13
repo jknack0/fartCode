@@ -1,4 +1,27 @@
 # MEMORY.md — fartCode
+## #140 OS notifications for agent-needs-you LANDED (2026-08-12, f3982fa)
+
+Wired the three "agent needs you" events to OS notifications behind the
+registry's existing `notifications.os_notifications` setting (default true):
+`acp:permission_request` (permission-prompt), `task:status_changed` → review
+(needs-you), `step:settled` (settle). Frontend `lib/notifications.ts`
+subscribes via the existing wiring helpers, fires only when
+`!document.hasFocus()` (app in background) and the toggle is on.
+`@tauri-apps/plugin-notification` (crate + npm + `notification:default`
+capability). New generic `get_app_setting`/`set_app_setting` commands
+(registry-validated — unknown keys rejected; SYNC_OK in the #80 guard);
+the SettingsModal App pane gained an on/off row that writes `notifications`
+and feeds the wiring directly.
+
+Bites:
+- needs-you (`task:status_changed` → review) has no production writer today
+  (status frozen at in_progress — runState.ts / Nav.tsx comments); wiring is
+  correct and fires once a writer lands, but on the seeded board the live
+  "needs you" signal is `step:settled` (hold) / the In-Review flip.
+- `get_app_setting`/`set_app_setting` stay SYNC_OK: one short SQLite
+  statement, no subprocess/network.
+
+Next: none queued.
 ## #98 Agent CLI install confirm + live progress LANDED (2026-08-12, 5569108)
 
 Install/update gated by a confirm sheet (AgentsList) naming the exact
