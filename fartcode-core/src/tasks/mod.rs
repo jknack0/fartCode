@@ -182,6 +182,43 @@ impl DbTaskStore {
             .map_err(|_| Error::Internal("db connection mutex poisoned".into()))?;
         f(&conn)
     }
+
+    /// Single-guard read-modify-write (the `IssueStore::mutate` twin): the
+    /// fetch, `f`, and the re-fetch all run under ONE connection guard, so
+    /// a concurrent writer cannot interleave (the old fetch → re-lock →
+    /// write template lost whatever landed in its unlock window) and the
+    /// re-read cannot find the row vanished. `f` returns the events for
+    /// the change it made; they are emitted after the guard drops.
+    fn mutate(
+        &self,
+        id: &str,
+        f: impl FnOnce(&rusqlite::Connection, &Task) -> Result<Vec<InternalEvent>, Error>,
+    ) -> Result<Task, Error> {
+        let (updated, events) = self.with_conn(|conn| {
+            let task = task_by_id(conn, id)?.ok_or_else(|| Error::TaskNotFound(id.into()))?;
+            let events = f(conn, &task)?;
+            let updated = task_by_id(conn, id)?
+                .ok_or_else(|| Error::Internal(format!("task vanished during mutate: {id}")))?;
+            Ok((updated, events))
+        })?;
+        for event in events {
+            self.event_bus.send(event);
+        }
+        Ok(updated)
+    }
+}
+
+/// [`TaskStore::get`] against a caller-held guard — the fetch/re-fetch
+/// building block of [`DbTaskStore::mutate`], which must keep ONE guard
+/// across both, so the lookup cannot take the lock itself.
+fn task_by_id(conn: &rusqlite::Connection, id: &str) -> Result<Option<Task>, Error> {
+    Ok(conn
+        .query_row(
+            &format!("SELECT {} FROM tasks WHERE id = ?1", model::TASK_COLUMNS),
+            [id],
+            model::task_from_row,
+        )
+        .optional()?)
 }
 
 impl TaskStore for DbTaskStore {
@@ -351,15 +388,7 @@ impl TaskStore for DbTaskStore {
     }
 
     fn get(&self, id: &str) -> Result<Option<Task>, Error> {
-        self.with_conn(|conn| {
-            Ok(conn
-                .query_row(
-                    &format!("SELECT {} FROM tasks WHERE id = ?1", model::TASK_COLUMNS),
-                    [id],
-                    model::task_from_row,
-                )
-                .optional()?)
-        })
+        self.with_conn(|conn| task_by_id(conn, id))
     }
 
     fn list_by_project(&self, project_id: &str) -> Result<Vec<Task>, Error> {
@@ -378,19 +407,22 @@ impl TaskStore for DbTaskStore {
     }
 
     fn update_status(&self, id: &str, status: TaskStatus) -> Result<Task, Error> {
-        let task = self
-            .get(id)?
-            .ok_or_else(|| Error::TaskNotFound(id.into()))?;
-        let old = task.status;
-        let changed = self.with_conn(|conn| {
-            lifecycle::apply_status_change(conn, id, old.as_str(), status.as_str())
-        })?;
-        if changed {
-            self.event_bus.send(InternalEvent::TaskStatusChanged {
+        // `Some(old)` iff the row was written (same-status is a no-op) —
+        // telemetry stays outside the guard `mutate` holds.
+        let mut old_status: Option<TaskStatus> = None;
+        let task = self.mutate(id, |conn, task| {
+            let old = task.status;
+            if !lifecycle::apply_status_change(conn, id, old.as_str(), status.as_str())? {
+                return Ok(Vec::new());
+            }
+            old_status = Some(old);
+            Ok(vec![InternalEvent::TaskStatusChanged {
                 id: id.into(),
                 old_status: old.as_str().into(),
                 new_status: status.as_str().into(),
-            });
+            }])
+        })?;
+        if let Some(old) = old_status {
             lifecycle::telemetry(
                 "task_status_changed",
                 &[
@@ -400,86 +432,76 @@ impl TaskStore for DbTaskStore {
                 ],
             );
         }
-        self.get(id)?.ok_or_else(|| Error::TaskNotFound(id.into()))
+        Ok(task)
     }
 
     fn rename(&self, id: &str, name: &str) -> Result<Task, Error> {
-        let task = self
-            .get(id)?
-            .ok_or_else(|| Error::TaskNotFound(id.into()))?;
-        self.with_conn(|conn| {
+        self.mutate(id, |conn, task| {
             conn.execute(
                 "UPDATE tasks SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
                 rusqlite::params![name, id],
             )?;
-            Ok(())
-        })?;
-        self.event_bus.send(InternalEvent::TaskRenamed {
-            id: id.into(),
-            project_id: task.project_id.clone(),
-            name: name.into(),
-        });
-        self.get(id)?.ok_or_else(|| Error::TaskNotFound(id.into()))
+            Ok(vec![InternalEvent::TaskRenamed {
+                id: id.into(),
+                project_id: task.project_id.clone(),
+                name: name.into(),
+            }])
+        })
     }
 
     fn set_pinned(&self, id: &str, pinned: bool) -> Result<Task, Error> {
-        self.get(id)?
-            .ok_or_else(|| Error::TaskNotFound(id.into()))?;
-        self.with_conn(|conn| {
+        self.mutate(id, |conn, _task| {
             conn.execute(
                 "UPDATE tasks SET is_pinned = ?1, updated_at = datetime('now') WHERE id = ?2",
                 rusqlite::params![pinned as i64, id],
             )?;
-            Ok(())
-        })?;
-        self.get(id)?.ok_or_else(|| Error::TaskNotFound(id.into()))
+            Ok(Vec::new())
+        })
     }
 
     fn archive(&self, id: &str) -> Result<Task, Error> {
-        self.get(id)?
-            .ok_or_else(|| Error::TaskNotFound(id.into()))?;
-        self.with_conn(|conn| {
+        let task = self.mutate(id, |conn, _task| {
             conn.execute(
                 "UPDATE tasks SET archived_at = datetime('now'), updated_at = datetime('now') WHERE id = ?1",
                 [id],
             )?;
-            Ok(())
+            Ok(vec![InternalEvent::TaskArchived { id: id.into() }])
         })?;
-        self.event_bus
-            .send(InternalEvent::TaskArchived { id: id.into() });
         lifecycle::telemetry("task_archived", &[("task_id", id.into())]);
-        self.get(id)?.ok_or_else(|| Error::TaskNotFound(id.into()))
+        Ok(task)
     }
 
     fn restore(&self, id: &str) -> Result<Task, Error> {
-        self.get(id)?
-            .ok_or_else(|| Error::TaskNotFound(id.into()))?;
-        self.with_conn(|conn| {
+        let task = self.mutate(id, |conn, _task| {
             conn.execute(
                 "UPDATE tasks SET archived_at = NULL, updated_at = datetime('now') WHERE id = ?1",
                 [id],
             )?;
-            Ok(())
+            Ok(vec![InternalEvent::TaskRestored { id: id.into() }])
         })?;
-        self.event_bus
-            .send(InternalEvent::TaskRestored { id: id.into() });
         lifecycle::telemetry("task_restored", &[("task_id", id.into())]);
-        self.get(id)?.ok_or_else(|| Error::TaskNotFound(id.into()))
+        Ok(task)
     }
 
     fn delete(&self, id: &str) -> Result<(), Error> {
-        // Reference `deleteTask` early-return: a vanished row is a clean
-        // no-op (double-delete / delete-during-provision safety).
-        if self.get(id)?.is_none() {
-            return Ok(());
-        }
-        // Capture the workspace row before the task row vanishes —
-        // `workspaces` has no FK to `tasks`, so bare DELETE leaks the row.
-        // Only clean the row when no sibling tasks still reference it; a
-        // `project-root` workspace outlives every task (reference
-        // deleteWorkspaceIfUnused guard).
-        let workspace: Option<(String, Option<String>)> = self.with_conn(|conn| {
-            Ok(conn
+        // Atomic boundary mirroring `create()`: one guard + one tx across
+        // the workspace snapshot, task DELETE, sibling COUNT, and workspace
+        // cleanup — the COUNT → workspace-DELETE TOCTOU is closed because
+        // the guard spans it all. Scoped so guard + tx drop before the
+        // post-commit event (mutex is not reentrant).
+        {
+            let mut conn = self
+                .db
+                .conn()
+                .lock()
+                .map_err(|_| Error::Internal("db connection mutex poisoned".into()))?;
+            let tx = conn.transaction()?;
+            // The workspace row, captured before the task row vanishes —
+            // `workspaces` has no FK to `tasks`, so bare DELETE leaks the
+            // row. Doubles as the reference `deleteTask` early-return: a
+            // vanished task is a clean no-op (double-delete /
+            // delete-during-provision safety).
+            let workspace: Option<(String, Option<String>)> = tx
                 .query_row(
                     "SELECT workspace_id, \
                             (SELECT kind FROM workspaces WHERE id = tasks.workspace_id) \
@@ -487,41 +509,35 @@ impl TaskStore for DbTaskStore {
                     [id],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
-                .optional()?)
-        })?;
-        self.with_conn(|conn| {
-            conn.execute("DELETE FROM tasks WHERE id = ?1", [id])?;
-            Ok(())
-        })?;
-        // Tear down the workspace row when no sibling tasks remain.
-        if let Some((wid, kind)) = workspace {
-            if kind.as_deref() == Some("project-root") {
-                // Shared by every no-worktree task — never delete.
-            } else {
-                let siblings: i32 = self.with_conn(|conn| {
-                    Ok(conn.query_row(
-                        "SELECT COUNT(*) FROM tasks WHERE workspace_id = ?1",
-                        [&wid],
-                        |row| row.get(0),
-                    )?)
-                })?;
+                .optional()?;
+            let Some((wid, kind)) = workspace else {
+                return Ok(());
+            };
+            tx.execute("DELETE FROM tasks WHERE id = ?1", [id])?;
+            // Tear down the workspace row when no sibling tasks remain; a
+            // `project-root` workspace outlives every task (reference
+            // deleteWorkspaceIfUnused guard).
+            if kind.as_deref() != Some("project-root") {
+                let siblings: i32 = tx.query_row(
+                    "SELECT COUNT(*) FROM tasks WHERE workspace_id = ?1",
+                    [&wid],
+                    |row| row.get(0),
+                )?;
                 if siblings == 0 {
-                    self.with_conn(|conn| {
-                        conn.execute("DELETE FROM workspaces WHERE id = ?1", [&wid])?;
-                        // The workspace's derived file index orphans too
-                        // (reference workspaceFileIndexService.deleteIndex).
-                        conn.execute(
-                            "DELETE FROM workspace_file_index WHERE workspace_id = ?1",
-                            [&wid],
-                        )?;
-                        conn.execute(
-                            "DELETE FROM workspace_file_index_meta WHERE workspace_id = ?1",
-                            [&wid],
-                        )?;
-                        Ok(())
-                    })?;
+                    tx.execute("DELETE FROM workspaces WHERE id = ?1", [&wid])?;
+                    // The workspace's derived file index orphans too
+                    // (reference workspaceFileIndexService.deleteIndex).
+                    tx.execute(
+                        "DELETE FROM workspace_file_index WHERE workspace_id = ?1",
+                        [&wid],
+                    )?;
+                    tx.execute(
+                        "DELETE FROM workspace_file_index_meta WHERE workspace_id = ?1",
+                        [&wid],
+                    )?;
                 }
             }
+            tx.commit()?;
         }
         self.event_bus
             .send(InternalEvent::TaskDeleted { id: id.into() });

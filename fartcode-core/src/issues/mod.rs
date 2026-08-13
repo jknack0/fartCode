@@ -343,6 +343,28 @@ fn renumber_column(
     Ok(())
 }
 
+/// [`IssueStore::get`] against a caller-held guard — the fetch/re-fetch
+/// building block of [`IssueStore::mutate`], which must keep ONE guard
+/// across both, so the lookup cannot take the lock itself.
+fn issue_by_id(conn: &rusqlite::Connection, id: &str) -> Result<Option<Issue>, Error> {
+    let mut issue: Issue = match conn
+        .query_row(
+            &format!(
+                "SELECT {COLUMNS}, {blocked} FROM issues WHERE id = ?1",
+                blocked = blocked_sql()
+            ),
+            [id],
+            issue_from_row,
+        )
+        .optional()?
+    {
+        Some(issue) => issue,
+        None => return Ok(None),
+    };
+    attach_blockers(conn, std::slice::from_mut(&mut issue))?;
+    Ok(Some(issue))
+}
+
 fn issue_from_row(row: &rusqlite::Row) -> rusqlite::Result<Issue> {
     let lane: String = row.get(5)?;
     let acceptance_cell: Option<String> = row.get(4)?;
@@ -479,6 +501,37 @@ impl IssueStore {
             .map_err(|e| Error::Internal(format!("db mutex poisoned: {e}")))
     }
 
+    /// Single-guard read-modify-write — the store's write discipline. The
+    /// fetch, `f`, and the re-fetch all run under ONE connection guard, so
+    /// a concurrent writer cannot interleave (the old fetch → re-lock →
+    /// write template lost whatever landed in its unlock window) and the
+    /// re-read cannot find the row vanished. `f` returns the
+    /// change-specific events; they are emitted after the guard drops,
+    /// FOLLOWED by the coarse `IssueUpdated` every mutation fires
+    /// (specific fact first — see `enter_column`).
+    fn mutate(
+        &self,
+        id: &str,
+        f: impl FnOnce(&rusqlite::Connection, &Issue) -> Result<Vec<InternalEvent>, Error>,
+    ) -> Result<Issue, Error> {
+        let (updated, events) = {
+            let conn = self.conn()?;
+            let issue = issue_by_id(&conn, id)?.ok_or_else(|| Error::IssueNotFound(id.into()))?;
+            let events = f(&conn, &issue)?;
+            let updated = issue_by_id(&conn, id)?
+                .ok_or_else(|| Error::Internal(format!("issue vanished during mutate: {id}")))?;
+            (updated, events)
+        };
+        for event in events {
+            self.event_bus.send(event);
+        }
+        self.event_bus.send(InternalEvent::IssueUpdated {
+            id: id.into(),
+            project_id: updated.project_id.clone(),
+        });
+        Ok(updated)
+    }
+
     /// The shared handle, for siblings that need a companion store on the
     /// same database (e.g. resolving board columns).
     pub fn db(&self) -> Arc<dyn Db> {
@@ -588,22 +641,7 @@ impl IssueStore {
 
     pub fn get(&self, id: &str) -> Result<Option<Issue>, Error> {
         let conn = self.conn()?;
-        let mut issue: Issue = match conn
-            .query_row(
-                &format!(
-                    "SELECT {COLUMNS}, {blocked} FROM issues WHERE id = ?1",
-                    blocked = blocked_sql()
-                ),
-                [id],
-                issue_from_row,
-            )
-            .optional()?
-        {
-            Some(issue) => issue,
-            None => return Ok(None),
-        };
-        attach_blockers(&conn, std::slice::from_mut(&mut issue))?;
-        Ok(Some(issue))
+        issue_by_id(&conn, id)
     }
 
     /// All issues for a project, ordered by COLUMN position then card
@@ -627,44 +665,43 @@ impl IssueStore {
         Ok(issues)
     }
 
-    /// Applies a field patch. Emits `IssueUpdated`.
+    /// Applies a field patch. Emits `IssueUpdated`. The merge reads the
+    /// row under the same guard as the full-row write-back, so a patch
+    /// can no longer resurrect fields a concurrent writer just changed.
     pub fn update(&self, id: &str, patch: IssuePatch) -> Result<Issue, Error> {
-        let mut issue = self
-            .get(id)?
-            .ok_or_else(|| Error::IssueNotFound(id.into()))?;
-        if let Some(title) = patch.title {
-            let title = title.trim().to_string();
-            if title.is_empty() {
-                return Err(Error::InvalidIssueInput("title is empty".into()));
+        self.mutate(id, move |conn, current| {
+            let mut issue = current.clone();
+            if let Some(title) = patch.title {
+                let title = title.trim().to_string();
+                if title.is_empty() {
+                    return Err(Error::InvalidIssueInput("title is empty".into()));
+                }
+                issue.title = title;
             }
-            issue.title = title;
-        }
-        if let Some(body) = patch.body {
-            issue.body = body;
-        }
-        if let Some(items) = patch.acceptance {
-            issue.acceptance = items;
-        }
-        if let Some(provider) = patch.provider {
-            issue.provider = provider;
-        }
-        if let Some(model) = patch.model {
-            issue.model = model;
-        }
-        if let Some(prd_path) = patch.prd_path {
-            issue.prd_path = prd_path;
-        }
-        if let Some(prd_section) = patch.prd_section {
-            issue.prd_section = prd_section;
-        }
-        if let Some(dossier_path) = patch.dossier_path {
-            issue.dossier_path = dossier_path;
-        }
-        let acceptance = serialize_versioned(&AcceptanceCriteria {
-            items: issue.acceptance.clone(),
-        })?;
-        {
-            let conn = self.conn()?;
+            if let Some(body) = patch.body {
+                issue.body = body;
+            }
+            if let Some(items) = patch.acceptance {
+                issue.acceptance = items;
+            }
+            if let Some(provider) = patch.provider {
+                issue.provider = provider;
+            }
+            if let Some(model) = patch.model {
+                issue.model = model;
+            }
+            if let Some(prd_path) = patch.prd_path {
+                issue.prd_path = prd_path;
+            }
+            if let Some(prd_section) = patch.prd_section {
+                issue.prd_section = prd_section;
+            }
+            if let Some(dossier_path) = patch.dossier_path {
+                issue.dossier_path = dossier_path;
+            }
+            let acceptance = serialize_versioned(&AcceptanceCriteria {
+                items: issue.acceptance.clone(),
+            })?;
             conn.execute(
                 "UPDATE issues SET title = ?2, body = ?3, acceptance = ?4,
                      provider = ?5, model = ?6, prd_path = ?7, prd_section = ?8,
@@ -682,13 +719,8 @@ impl IssueStore {
                     issue.dossier_path,
                 ],
             )?;
-        }
-        self.event_bus.send(InternalEvent::IssueUpdated {
-            id: id.into(),
-            project_id: issue.project_id.clone(),
-        });
-        self.get(id)?
-            .ok_or_else(|| Error::Internal(format!("issue vanished after update: {id}")))
+            Ok(Vec::new())
+        })
     }
 
     /// Moves an issue to a lane — the LEGACY, lane-addressed move
@@ -701,6 +733,10 @@ impl IssueStore {
     /// target column. Any transition is allowed — blocked-dispatch
     /// confirmation is a UI concern (ADR-0032). Emits `IssueUpdated`.
     pub fn move_to(&self, id: &str, lane: Lane, position: Option<i64>) -> Result<Issue, Error> {
+        // The branch fetch only routes; each branch re-reads the row under
+        // its own single write guard (`mutate` here, `enter_column`'s
+        // below — the mutex is not reentrant, so the cross-lane branch
+        // cannot run inside a guard of its own).
         let issue = self
             .get(id)?
             .ok_or_else(|| Error::IssueNotFound(id.into()))?;
@@ -710,27 +746,20 @@ impl IssueStore {
         // renumber the column it is displayed in, with `position` as the
         // destination index AFTER the card is lifted out.
         if issue.lane == lane {
-            {
-                let conn = self.conn()?;
+            return self.mutate(id, |conn, issue| {
                 let column_id = issue.column_id.clone().ok_or_else(|| {
                     Error::Internal(format!(
                         "issue {id} has no column — out of contract since the \
                          E18-07 flip (migration 0008 backfills every row)"
                     ))
                 })?;
-                renumber_column(&conn, &issue.project_id, &column_id, Some(id), position)?;
+                renumber_column(conn, &issue.project_id, &column_id, Some(id), position)?;
                 conn.execute(
                     "UPDATE issues SET updated_at = datetime('now') WHERE id = ?1",
                     rusqlite::params![id],
                 )?;
-            }
-            self.event_bus.send(InternalEvent::IssueUpdated {
-                id: id.into(),
-                project_id: issue.project_id.clone(),
+                Ok(Vec::new())
             });
-            return self
-                .get(id)?
-                .ok_or_else(|| Error::Internal(format!("issue vanished after move: {id}")));
         }
         let seeded_column: Option<String> = {
             let conn = self.conn()?;
@@ -764,11 +793,7 @@ impl IssueStore {
         column_id: &str,
         position: Option<i64>,
     ) -> Result<Issue, Error> {
-        let issue = self
-            .get(id)?
-            .ok_or_else(|| Error::IssueNotFound(id.into()))?;
-        {
-            let conn = self.conn()?;
+        self.mutate(id, |conn, issue| {
             let (column_project, seed_lane): (String, Option<String>) = conn
                 .query_row(
                     "SELECT project_id, seed_lane FROM board_columns WHERE id = ?1",
@@ -806,32 +831,29 @@ impl IssueStore {
             // renumbering is what makes a drop land where it was dropped
             // instead of tying with whatever already held that slot.
             // `None` appends.
-            renumber_column(&conn, &issue.project_id, column_id, Some(id), position)?;
-            if let Some(previous) = previous_column {
+            renumber_column(conn, &issue.project_id, column_id, Some(id), position)?;
+            if let Some(previous) = &previous_column {
                 if previous != column_id {
-                    renumber_column(&conn, &issue.project_id, &previous, None, None)?;
+                    renumber_column(conn, &issue.project_id, previous, None, None)?;
                 }
             }
-        }
-        // E19-01: the MOVE, with both endpoints, for consumers that need
-        // to know what changed rather than merely that something did. Only
-        // the emitter holds the "from" — a later reader sees just the
-        // current column. Emitted before `IssueUpdated` so a subscriber
-        // handling both sees the specific fact first.
-        if issue.column_id.as_deref() != Some(column_id) {
-            self.event_bus.send(InternalEvent::IssueColumnChanged {
-                id: id.into(),
-                project_id: issue.project_id.clone(),
-                from: issue.column_id.clone(),
-                to: column_id.to_string(),
-            });
-        }
-        self.event_bus.send(InternalEvent::IssueUpdated {
-            id: id.into(),
-            project_id: issue.project_id.clone(),
-        });
-        self.get(id)?
-            .ok_or_else(|| Error::Internal(format!("issue vanished after enter: {id}")))
+            // E19-01: the MOVE, with both endpoints, for consumers that
+            // need to know what changed rather than merely that something
+            // did. Only the emitter holds the "from" — a later reader sees
+            // just the current column. `mutate` emits it before
+            // `IssueUpdated` so a subscriber handling both sees the
+            // specific fact first.
+            Ok(if previous_column.as_deref() != Some(column_id) {
+                vec![InternalEvent::IssueColumnChanged {
+                    id: id.into(),
+                    project_id: issue.project_id.clone(),
+                    from: previous_column,
+                    to: column_id.to_string(),
+                }]
+            } else {
+                Vec::new()
+            })
+        })
     }
 
     /// Deletes an issue; its dependency edges cascade (both directions).
@@ -853,11 +875,7 @@ impl IssueStore {
     /// Sets/clears the dispatch link (E17-03). `Some(task_id)` requires the
     /// task to exist. Emits `IssueUpdated`.
     pub fn set_linked_task(&self, id: &str, task_id: Option<&str>) -> Result<Issue, Error> {
-        let issue = self
-            .get(id)?
-            .ok_or_else(|| Error::IssueNotFound(id.into()))?;
-        {
-            let conn = self.conn()?;
+        self.mutate(id, |conn, _issue| {
             if let Some(task_id) = task_id {
                 let task_exists: bool = conn.query_row(
                     "SELECT EXISTS(SELECT 1 FROM tasks WHERE id = ?1)",
@@ -873,33 +891,23 @@ impl IssueStore {
                   WHERE id = ?1",
                 rusqlite::params![id, task_id],
             )?;
-        }
-        self.event_bus.send(InternalEvent::IssueUpdated {
-            id: id.into(),
-            project_id: issue.project_id.clone(),
-        });
-        self.get(id)?
-            .ok_or_else(|| Error::Internal(format!("issue vanished after link: {id}")))
+            Ok(Vec::new())
+        })
     }
 
     /// Adds a blocked-by edge (`issue_id` is blocked by `blocked_by_id`).
     /// Rejects self-edges, cross-project edges, and cycles. Duplicate edges
     /// are idempotent. Emits `IssueUpdated` for the dependent.
     pub fn add_dependency(&self, issue_id: &str, blocked_by_id: &str) -> Result<Issue, Error> {
-        let issue = self
-            .get(issue_id)?
-            .ok_or_else(|| Error::IssueNotFound(issue_id.into()))?;
-        let blocker = self
-            .get(blocked_by_id)?
-            .ok_or_else(|| Error::IssueNotFound(blocked_by_id.into()))?;
-        if issue.project_id != blocker.project_id {
-            return Err(Error::InvalidIssueInput(format!(
-                "blocked-by edges must stay within a project: {issue_id} is in {}, {blocked_by_id} is in {}",
-                issue.project_id, blocker.project_id
-            )));
-        }
-        {
-            let conn = self.conn()?;
+        self.mutate(issue_id, |conn, issue| {
+            let blocker = issue_by_id(conn, blocked_by_id)?
+                .ok_or_else(|| Error::IssueNotFound(blocked_by_id.into()))?;
+            if issue.project_id != blocker.project_id {
+                return Err(Error::InvalidIssueInput(format!(
+                    "blocked-by edges must stay within a project: {issue_id} is in {}, {blocked_by_id} is in {}",
+                    issue.project_id, blocker.project_id
+                )));
+            }
             let mut stmt =
                 conn.prepare("SELECT issue_id, blocked_by_id FROM issue_dependencies")?;
             let edges: HashMap<String, Vec<String>> = stmt
@@ -921,23 +929,14 @@ impl IssueStore {
                  VALUES (?1, ?2)",
                 rusqlite::params![issue_id, blocked_by_id],
             )?;
-        }
-        self.event_bus.send(InternalEvent::IssueUpdated {
-            id: issue_id.into(),
-            project_id: issue.project_id.clone(),
-        });
-        self.get(issue_id)?
-            .ok_or_else(|| Error::Internal(format!("issue vanished after link: {issue_id}")))
+            Ok(Vec::new())
+        })
     }
 
     /// Removes a blocked-by edge. Errors when the edge does not exist.
     /// Emits `IssueUpdated` for the dependent.
     pub fn remove_dependency(&self, issue_id: &str, blocked_by_id: &str) -> Result<Issue, Error> {
-        let issue = self
-            .get(issue_id)?
-            .ok_or_else(|| Error::IssueNotFound(issue_id.into()))?;
-        {
-            let conn = self.conn()?;
+        self.mutate(issue_id, |conn, _issue| {
             let n = conn.execute(
                 "DELETE FROM issue_dependencies WHERE issue_id = ?1 AND blocked_by_id = ?2",
                 rusqlite::params![issue_id, blocked_by_id],
@@ -947,13 +946,8 @@ impl IssueStore {
                     "no blocked-by edge from {issue_id} to {blocked_by_id}"
                 )));
             }
-        }
-        self.event_bus.send(InternalEvent::IssueUpdated {
-            id: issue_id.into(),
-            project_id: issue.project_id.clone(),
-        });
-        self.get(issue_id)?
-            .ok_or_else(|| Error::Internal(format!("issue vanished after unlink: {issue_id}")))
+            Ok(Vec::new())
+        })
     }
 }
 
