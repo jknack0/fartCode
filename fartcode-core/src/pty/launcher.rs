@@ -25,8 +25,8 @@ use crate::projects::ProjectStore;
 use crate::tasks::TaskStore;
 use crate::terminals::lifecycle::task_env;
 use crate::terminals::pty::{EnvPolicy, PtyHandle, PtyManager, PtySize, RemotePtyLookup};
+use crate::workspaces::WorkspaceStore;
 use crate::Error;
-use rusqlite::OptionalExtension;
 
 use super::env_allowlist;
 use super::{
@@ -626,7 +626,10 @@ pub struct Rehydrator {
     conversations: Arc<dyn ConversationStore>,
     tasks: Arc<dyn TaskStore>,
     projects: Arc<dyn ProjectStore>,
-    db: Arc<dyn Db>,
+    /// Narrow workspace-row access — the launcher never touches another
+    /// domain's table directly (the constructor still takes the shared DB
+    /// handle; it is wrapped here).
+    workspaces: WorkspaceStore,
     /// Trust-state fallback for auto-approve (the conversation's own toggle
     /// wins; see `AgentLauncher::rehydrate`).
     default_auto_approve: bool,
@@ -674,7 +677,7 @@ impl Rehydrator {
             conversations,
             tasks,
             projects,
-            db,
+            workspaces: WorkspaceStore::new(db),
             default_auto_approve,
             remote_pty,
         }
@@ -704,25 +707,17 @@ impl Rehydrator {
                         summary.skipped += 1; // byoi/project-root: no worktree to resume in
                         continue;
                     };
-                    let workspace: Option<(String, String)> = self
-                        .db
-                        .conn()
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .query_row(
-                            "SELECT path, COALESCE(location, 'local') FROM workspaces WHERE id = ?1",
-                            [workspace_id],
-                            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-                        )
-                        .optional()
-                        .map_err(Error::from)?;
-                    let (worktree_path, location) = workspace.unwrap_or_default();
+                    let workspace = self.workspaces.get(workspace_id)?;
+                    let worktree_path = workspace
+                        .as_ref()
+                        .and_then(|w| w.path.clone())
+                        .unwrap_or_default();
                     // E12-05 AC13: a remote worktree is not on this disk, so
                     // the local existence check would skip every remote
                     // session forever. Remote rows are gated on the SSH route
                     // instead — and a build without one skips them rather
                     // than resuming locally against a path we do not have.
-                    let is_remote = location == "remote";
+                    let is_remote = workspace.as_ref().is_some_and(|w| w.is_remote());
                     if worktree_path.is_empty()
                         || (!is_remote && !Path::new(&worktree_path).is_dir())
                     {

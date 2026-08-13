@@ -227,6 +227,12 @@ impl TaskCreationService {
         }
     }
 
+    /// Workspace-row access (one `Arc` clone — `new()`'s signature is wired
+    /// in `App`, so the store is built per use rather than held).
+    fn workspaces(&self) -> crate::workspaces::WorkspaceStore {
+        crate::workspaces::WorkspaceStore::new(self.db.clone())
+    }
+
     /// Dialog "start source = branch": list refs the picker offers
     /// (reference `git branch` list in the create-task dialog).
     pub fn list_branches(&self, project_id: &str) -> Result<Vec<BranchRef>, Error> {
@@ -282,16 +288,7 @@ impl TaskCreationService {
             // as TaskNotFound at provision time. A proper `REFERENCES workspaces(id)`
             // needs an append-only migration (schema is hash-verified) — TODO with
             // the E2-05 schema work.
-            let exists: bool = self.with_conn(|conn| {
-                Ok(conn
-                    .query_row(
-                        "SELECT 1 FROM workspaces WHERE id = ?1",
-                        [workspace_id],
-                        |_| Ok(()),
-                    )
-                    .optional()?
-                    .is_some())
-            })?;
+            let exists = self.workspaces().get(workspace_id)?.is_some();
             if !exists {
                 return Err(Error::InvalidTaskInput(format!(
                     "workspace not found: {workspace_id}"
@@ -421,15 +418,10 @@ impl TaskCreationService {
         // The workspace row's `kind` discriminates without touching the
         // config: byoi/project-root rows (incl. repository-instance reuse of
         // the repo workspace, which has no config) never need a worktree.
-        let row_kind: String = self.with_conn(|conn| {
-            conn.query_row(
-                "SELECT kind FROM workspaces WHERE id = ?1",
-                [&workspace_id],
-                |row| row.get(0),
-            )
-            .optional()?
-            .ok_or_else(|| Error::TaskNotFound(format!("workspace {workspace_id}")))
-        })?;
+        let row_kind = self
+            .workspaces()
+            .kind(&workspace_id)?
+            .ok_or_else(|| Error::TaskNotFound(format!("workspace {workspace_id}")))?;
 
         let (path, warning) = match row_kind.as_str() {
             "byoi" => (None, None),
@@ -465,13 +457,8 @@ impl TaskCreationService {
                         let git = self.default_git_setup(&project, &task)?;
                         let target = WorkspaceTarget::NewWorktree;
                         let config = build_workspace_config(&git, &target);
-                        self.with_conn(|conn| {
-                            conn.execute(
-                                "UPDATE workspaces SET config = ?1, updated_at = datetime('now') WHERE id = ?2",
-                                rusqlite::params![config.to_string(), workspace_id],
-                            )?;
-                            Ok(())
-                        })?;
+                        self.workspaces()
+                            .set_config(&workspace_id, &config.to_string())?;
                         (git, target)
                     }
                 };
@@ -609,28 +596,23 @@ impl TaskCreationService {
     /// config (pre-E2-04 store.create / the repository workspace) fall back
     /// to their `kind` column.
     fn workspace_intent(&self, workspace_id: &str) -> Result<(GitSetup, WorkspaceTarget), Error> {
-        let (kind, config): (String, Option<String>) = self.with_conn(|conn| {
-            conn.query_row(
-                "SELECT kind, config FROM workspaces WHERE id = ?1",
-                [workspace_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?
-            .ok_or_else(|| Error::TaskNotFound(format!("workspace {workspace_id}")))
-        })?;
-        let Some(config) = config else {
+        let row = self
+            .workspaces()
+            .get(workspace_id)?
+            .ok_or_else(|| Error::TaskNotFound(format!("workspace {workspace_id}")))?;
+        let Some(config) = row.config else {
             // Legacy row: infer the target from its kind. The repository
             // workspace (kind 'project-root', no config) is a no-op reuse;
             // byoi rows are Phase-0 stubs; a worktree-kind row without config
             // cannot be provisioned (no branch known).
-            return match kind.as_str() {
-                "byoi" => Ok((
+            return match row.kind.as_deref() {
+                Some("byoi") => Ok((
                     GitSetup::None,
                     WorkspaceTarget::Byoi {
                         remote_workspace_id: None,
                     },
                 )),
-                "project-root" => Ok((
+                Some("project-root") => Ok((
                     GitSetup::None,
                     WorkspaceTarget::RepositoryInstance {
                         workspace_id: workspace_id.into(),

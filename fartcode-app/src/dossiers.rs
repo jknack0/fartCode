@@ -33,6 +33,7 @@ use fartcode_core::issues::columns::ColumnKind;
 use fartcode_core::issues::{Issue, IssuePatch};
 use fartcode_core::projects::ProjectStore;
 use fartcode_core::tasks::TaskStore;
+use fartcode_core::workspaces::WorkspaceStore;
 
 use crate::app::App;
 
@@ -79,24 +80,10 @@ pub(crate) fn consented(app: &App, project_id: &str) -> bool {
 /// which reindexes the same worktree copy of the same dossier. One
 /// resolver, so writer and indexer can never disagree.
 pub(crate) fn task_worktree(app: &App, task_id: &str) -> Option<PathBuf> {
-    let conn = app.db.conn().lock().ok()?;
-    let path: Option<String> = conn
-        .query_row(
-            "SELECT w.path FROM tasks t
-               JOIN workspaces w ON w.id = t.workspace_id
-              WHERE t.id = ?1",
-            [task_id],
-            |row| row.get::<_, Option<String>>(0),
-        )
-        .optional()
+    WorkspaceStore::new(app.db.clone())
+        .path_for_task(task_id)
         .ok()?
-        .flatten();
-    drop(conn);
-    let path = PathBuf::from(path?);
-    if path.as_os_str().is_empty() || !path.is_dir() {
-        return None;
-    }
-    Some(path)
+        .filter(|p| p.is_dir())
 }
 
 /// Births the feature dossier alongside the freshly provisioned worktree

@@ -375,14 +375,11 @@ pub fn record_provisioned_machine(
         .conn()
         .lock()
         .map_err(|_| Error::Internal("db connection mutex poisoned".into()))?;
-    let config: Option<String> = conn
-        .query_row(
-            "SELECT config FROM workspaces WHERE id = ?1",
-            [workspace_id],
-            |r| r.get(0),
-        )
-        .optional()?
-        .ok_or_else(|| Error::TaskNotFound(format!("workspace {workspace_id}")))?;
+    // Read + write under ONE guard (no window for a concurrent config
+    // write) — hence the connection-level accessor, not the store.
+    let config = crate::workspaces::get_row(&conn, workspace_id)?
+        .ok_or_else(|| Error::TaskNotFound(format!("workspace {workspace_id}")))?
+        .config;
 
     let mut value: serde_json::Value = config
         .as_deref()

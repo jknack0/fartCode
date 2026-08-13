@@ -22,7 +22,7 @@
 //! dependency edge.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use agent_client_protocol_schema::v1::SessionId;
@@ -33,6 +33,7 @@ use fartcode_core::db::Db;
 use fartcode_core::provider_accounts::ProviderAccountStore;
 use fartcode_core::pty::launcher::find_on_path;
 use fartcode_core::tasks::TaskStore;
+use fartcode_core::workspaces::WorkspaceStore;
 use parking_lot::Mutex;
 use rusqlite::OptionalExtension;
 use serde::Serialize;
@@ -354,21 +355,13 @@ impl AcpRuntime {
             .map_err(core_err)?
             .ok_or_else(|| Error::InvalidState(format!("task {task_id} not found")))?;
         if let Some(workspace_id) = &task.workspace_id {
-            let path: Option<String> = self
-                .db
-                .conn()
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .query_row(
-                    "SELECT path FROM workspaces WHERE id = ?1",
-                    [workspace_id],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()
-                .map_err(|e| Error::InvalidState(e.to_string()))?;
+            let path = WorkspaceStore::new(self.db.clone())
+                .get(workspace_id)
+                .map_err(|e| Error::InvalidState(e.to_string()))?
+                .and_then(|row| row.local_path());
             if let Some(path) = path {
-                if Path::new(&path).is_dir() {
-                    return Ok(PathBuf::from(path));
+                if path.is_dir() {
+                    return Ok(path);
                 }
                 tracing::warn!(workspace = %workspace_id, "worktree missing on disk; falling back to project root");
             }

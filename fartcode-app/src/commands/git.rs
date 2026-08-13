@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use fartcode_core::projects::ProjectStore;
+use fartcode_core::workspaces::WorkspaceStore;
 use fartcode_git::diff::{DiffSide, FileDiff};
 use fartcode_git::status::StatusSnapshot;
 use rusqlite::OptionalExtension;
@@ -27,26 +28,14 @@ use crate::commands::off_main_thread;
 /// Resolves a workspace's materialized worktree path. Shared by the git
 /// commands and the workspace-file commands (E4-05).
 pub(crate) fn workspace_path(app: &App, workspace_id: &str) -> Result<PathBuf, String> {
-    let conn = app
-        .db
-        .conn()
-        .lock()
-        .map_err(|_| "db connection mutex poisoned".to_string())?;
-    let path: Option<Option<String>> = conn
-        .query_row(
-            "SELECT path FROM workspaces WHERE id = ?1",
-            [workspace_id],
-            |row| row.get(0),
-        )
-        .optional()
+    let row = WorkspaceStore::new(app.db.clone())
+        .get(workspace_id)
         .map_err(|e| e.to_string())?;
-    match path {
+    match row {
         None => Err(format!("workspace not found: {workspace_id}")),
-        Some(None) => Err(format!("workspace has no local path: {workspace_id}")),
-        Some(Some(p)) if p.is_empty() => {
-            Err(format!("workspace has no local path: {workspace_id}"))
-        }
-        Some(Some(p)) => Ok(PathBuf::from(p)),
+        Some(row) => row
+            .local_path()
+            .ok_or_else(|| format!("workspace has no local path: {workspace_id}")),
     }
 }
 

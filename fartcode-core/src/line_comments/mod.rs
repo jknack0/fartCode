@@ -295,20 +295,7 @@ impl LineCommentStore {
     /// tool validates anchors against it). `None` when the task has no
     /// workspace row or it isn't on disk yet.
     fn task_workspace_path(&self, task_id: &str) -> Result<Option<std::path::PathBuf>, Error> {
-        let conn = self.conn()?;
-        let path: Option<String> = conn
-            .query_row(
-                "SELECT w.path FROM tasks t
-                   JOIN workspaces w ON w.id = t.workspace_id
-                  WHERE t.id = ?1",
-                [task_id],
-                |row| row.get::<_, Option<String>>(0),
-            )
-            .optional()?
-            .flatten();
-        Ok(path
-            .map(std::path::PathBuf::from)
-            .filter(|p| !p.as_os_str().is_empty()))
+        crate::workspaces::WorkspaceStore::new(self.db.clone()).path_for_task(task_id)
     }
 
     /// Agent-authored comment (§14 tool surface): validated against the

@@ -31,5 +31,6 @@ pub mod ssh_connections;
 pub mod tasks;
 pub mod terminals;
 pub mod view_state;
+pub mod workspaces;
 
 pub use error::Error;

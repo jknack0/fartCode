@@ -273,22 +273,10 @@ pub fn create_task_from_comment_core<R: tauri::Runtime>(
 /// line). `None` when the task has no local workspace path or git can't
 /// answer — the prompt omits the line in that case.
 fn reviewed_workspace_branch(app: &App, task_id: &str) -> Option<String> {
-    let path: String = {
-        let conn = app.db.conn().lock().ok()?;
-        conn.query_row(
-            "SELECT w.path FROM tasks t
-               JOIN workspaces w ON w.id = t.workspace_id
-              WHERE t.id = ?1",
-            [task_id],
-            |row| row.get::<_, Option<String>>(0),
-        )
-        .ok()
-        .flatten()
-    }?;
-    fartcode_git::CliGit
-        .current_branch(std::path::Path::new(&path))
-        .ok()
-        .flatten()
+    let path = fartcode_core::workspaces::WorkspaceStore::new(app.db.clone())
+        .path_for_task(task_id)
+        .ok()??;
+    fartcode_git::CliGit.current_branch(&path).ok().flatten()
 }
 
 fn truncate_for_title(s: &str) -> String {

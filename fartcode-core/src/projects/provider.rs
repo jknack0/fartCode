@@ -9,7 +9,6 @@
 
 use std::path::{Path, PathBuf};
 
-use rusqlite::OptionalExtension;
 use sha2::{Digest, Sha256};
 
 use crate::db::Db;
@@ -76,11 +75,7 @@ pub fn ensure_repository_workspace(
         .lock()
         .map_err(|_| Error::Internal("db connection mutex poisoned".into()))?;
     let tx = conn.transaction()?;
-    let existing: Option<String> = tx
-        .query_row("SELECT id FROM workspaces WHERE key = ?1", [&key], |row| {
-            row.get(0)
-        })
-        .optional()?;
+    let existing = crate::workspaces::id_by_key(&tx, &key)?;
     let workspace_id = match existing {
         Some(id) => id,
         None => {
@@ -88,18 +83,25 @@ pub fn ensure_repository_workspace(
             // A remote project's repository workspace lives on the host: the
             // row records that (and the connection), or a later rehydrate has
             // no way back to the machine the files are on (E12-06).
-            match project.ssh_connection_id.as_deref() {
-                Some(conn_id) => tx.execute(
-                    "INSERT INTO workspaces (id, key, type, kind, location, path, ssh_connection_id)
-                     VALUES (?1, ?2, 'project-ssh', 'project-root', 'remote', ?3, ?4)",
-                    rusqlite::params![id, key, project.path.to_string_lossy(), conn_id],
-                )?,
-                None => tx.execute(
-                    "INSERT INTO workspaces (id, key, type, kind, location, path)
-                     VALUES (?1, ?2, 'local', 'project-root', 'local', ?3)",
-                    rusqlite::params![id, key, project.path.to_string_lossy()],
-                )?,
-            };
+            let path = project.path.to_string_lossy();
+            let ssh = project.ssh_connection_id.as_deref();
+            crate::workspaces::insert_row(
+                &tx,
+                &crate::workspaces::NewWorkspace {
+                    id: &id,
+                    key: Some(&key),
+                    r#type: if ssh.is_some() {
+                        "project-ssh"
+                    } else {
+                        "local"
+                    },
+                    kind: "project-root",
+                    location: if ssh.is_some() { "remote" } else { "local" },
+                    path: Some(&path),
+                    ssh_connection_id: ssh,
+                    config: None,
+                },
+            )?;
             id
         }
     };

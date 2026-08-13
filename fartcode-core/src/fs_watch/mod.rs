@@ -31,12 +31,11 @@ pub mod layout;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, PoisonError};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::Mutex;
-use rusqlite::OptionalExtension;
 
 use crate::db::Db;
 use crate::events::{EventBus, InternalEvent};
@@ -362,35 +361,16 @@ fn dispatch(paths: &[PathBuf], resync: bool, layouts: &[WorkspaceLayout], bus: &
     }
 }
 
-/// A task/workspace pair the app layer should register at boot or on
-/// provision.
-#[derive(Debug, Clone)]
-pub struct WatchTarget {
-    pub task_id: String,
-    pub project_id: String,
-    pub workspace_id: String,
-    pub worktree: PathBuf,
-}
+// The task→workspace watch-target queries live with the workspaces domain
+// (the one home for `FROM workspaces` SQL); these delegates keep the
+// watcher's registration surface in one module for the app layer.
+pub use crate::workspaces::WatchTarget;
 
 /// Boot-time targets: every non-archived task whose workspace has a local
 /// path. Stale rows (paths gone from disk) fail registration individually
 /// and are skipped by the caller.
 pub fn boot_targets(db: &dyn Db) -> Result<Vec<WatchTarget>, Error> {
-    let conn = db.conn().lock().unwrap_or_else(PoisonError::into_inner);
-    let mut stmt = conn.prepare(
-        "SELECT t.id, t.project_id, t.workspace_id, w.path
-         FROM tasks t JOIN workspaces w ON w.id = t.workspace_id
-         WHERE t.archived_at IS NULL AND w.path IS NOT NULL",
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok(WatchTarget {
-            task_id: row.get(0)?,
-            project_id: row.get(1)?,
-            workspace_id: row.get(2)?,
-            worktree: PathBuf::from(row.get::<_, String>(3)?),
-        })
-    })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    crate::workspaces::watch_targets(db)
 }
 
 /// Target for a just-provisioned task (`TaskProvisioned` handler). `None`
@@ -400,23 +380,7 @@ pub fn target_for(
     task_id: &str,
     workspace_id: &str,
 ) -> Result<Option<WatchTarget>, Error> {
-    let conn = db.conn().lock().unwrap_or_else(PoisonError::into_inner);
-    conn.query_row(
-        "SELECT t.project_id, w.path
-         FROM tasks t JOIN workspaces w ON w.id = ?2
-         WHERE t.id = ?1",
-        [task_id, workspace_id],
-        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
-    )
-    .optional()?
-    .map_or(Ok(None), |(project_id, path)| {
-        Ok(path.map(|p| WatchTarget {
-            task_id: task_id.into(),
-            project_id,
-            workspace_id: workspace_id.into(),
-            worktree: PathBuf::from(p),
-        }))
-    })
+    crate::workspaces::watch_target_for(db, task_id, workspace_id)
 }
 
 #[cfg(test)]

@@ -300,7 +300,7 @@ impl DbProjectStore {
                     rows.collect::<Result<Vec<_>, _>>().map_err(Error::from)?;
                 tx.execute("DELETE FROM projects WHERE id = ?1", [id])?;
                 for wid in &workspace_ids {
-                    tx.execute("DELETE FROM workspaces WHERE id = ?1", [wid])?;
+                    crate::workspaces::delete_row(&tx, wid)?;
                 }
             }
             tx.commit()?;
@@ -342,15 +342,8 @@ impl DbProjectStore {
     /// whose (canonicalized) path lies inside `pool`? Component-safe
     /// `starts_with` — never a string compare.
     fn pool_has_foreign_worktrees(&self, project_id: &str, pool: &Path) -> Result<bool, Error> {
-        let paths: Vec<String> = self.with_conn(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT w.path FROM workspaces w
-                 JOIN tasks t ON t.workspace_id = w.id
-                 WHERE t.project_id != ?1 AND w.kind = 'worktree' AND w.path IS NOT NULL",
-            )?;
-            let rows = stmt.query_map([project_id], |row| row.get::<_, String>(0))?;
-            Ok(rows.collect::<Result<Vec<_>, _>>()?)
-        })?;
+        let paths =
+            crate::workspaces::worktree_paths_of_other_projects(self.db.as_ref(), project_id)?;
         Ok(paths.iter().any(|p| {
             let c = std::fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p));
             c.starts_with(pool)

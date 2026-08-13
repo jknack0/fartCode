@@ -78,8 +78,9 @@ fartcode-core/src/
 │   ├── model.rs            // Conversation struct, CRUD
 │   └── supervisor.rs       // LocalExecutionContext, session ids
 ├── workspaces/
-│   ├── mod.rs
-│   └── model.rs            // Workspace struct
+│   └── mod.rs              // WorkspaceRow/WorkspaceStore — the one home for
+│                           // workspaces-table SQL (location default lives in
+│                           // its single row mapper)
 ├── pty/
 │   ├── mod.rs
 │   └── env_allowlist.rs    // THE canonical env allowlist (§9)
@@ -95,7 +96,7 @@ fartcode-core/src/
 - `model.rs` in every domain exports the domain's struct + CRUD functions: `create`, `get`, `list`, `update`, `delete`.
 - `mod.rs` re-exports the public API of the domain.
 - Struct names are singular: `Project`, `Task`, `Conversation`, `Workspace`, `Terminal`.
-- Row types (for DB serialization) are suffixed `Row`: `TaskRow`, `ProjectRow`. These are private to the domain module.
+- Row types (for DB serialization) are suffixed `Row`: `TaskRow`, `ProjectRow`. These are private to the domain module. (Exception: `workspaces::WorkspaceRow` IS the domain's public read shape — the table is pure storage with no richer `Workspace` struct on top.)
 - DB column names use `snake_case` matching the SQL schema. Struct fields use `snake_case` matching the DB columns exactly — no `#[serde(rename)]` gymnastics.
 
 ---

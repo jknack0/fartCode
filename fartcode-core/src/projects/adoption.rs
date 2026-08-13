@@ -318,17 +318,7 @@ fn project_has_worktree_rows(db: &dyn Db, project_id: &str) -> Result<bool, Erro
 
 /// `(workspace_id, path)` of this project's worktree workspaces.
 fn worktree_rows(db: &dyn Db, project_id: &str) -> Result<Vec<(String, String)>, Error> {
-    with_conn(db, |conn| {
-        let mut stmt = conn.prepare(
-            "SELECT w.id, w.path FROM workspaces w
-             JOIN tasks t ON t.workspace_id = w.id
-             WHERE t.project_id = ?1 AND w.kind = 'worktree' AND w.path IS NOT NULL",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![project_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
-        Ok(rows.collect::<Result<Vec<_>, _>>()?)
-    })
+    crate::workspaces::worktree_rows_for_project(db, project_id)
 }
 
 /// App-level default worktree root. Resolved lazily (F9): a read failure
@@ -383,13 +373,7 @@ fn stamp(db: &dyn Db, project_id: &str, segment: &str) -> Result<(), Error> {
 }
 
 fn update_workspace_path(db: &dyn Db, workspace_id: &str, path: &Path) -> Result<(), Error> {
-    with_conn(db, |conn| {
-        conn.execute(
-            "UPDATE workspaces SET path = ?1, updated_at = datetime('now') WHERE id = ?2",
-            rusqlite::params![path.to_string_lossy(), workspace_id],
-        )?;
-        Ok(())
-    })
+    crate::workspaces::set_path(db, workspace_id, path)
 }
 
 fn with_conn<T>(
