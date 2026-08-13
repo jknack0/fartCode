@@ -205,7 +205,12 @@ pub fn tmux_sessions_matching<'a>(
 
 /// `list-sessions` output format. Shared by the local process path and the
 /// remote SSH path (E12-05 AC12) so both parse one shape.
-pub const TMUX_LIST_FORMAT: &str = "#{session_name}\t#{session_attached}";
+/// `|`, not `\t`: tmux ≥3.7 sanitizes control characters in `-F` output to
+/// `_`, which silently emptied every listing (sweep/list saw no sessions).
+/// fartCode session names are `fartCode-` + base64url, so `|` cannot occur
+/// in our names; the parser right-splits so foreign names containing `|`
+/// still yield their attach flag intact.
+pub const TMUX_LIST_FORMAT: &str = "#{session_name}|#{session_attached}";
 
 /// Parses `list-sessions -F TMUX_LIST_FORMAT` stdout into `(name, attached)`.
 /// Pure: malformed lines are dropped, so a tmux error message ("no server
@@ -214,7 +219,7 @@ pub fn parse_tmux_session_rows(stdout: &str) -> Vec<(String, bool)> {
     stdout
         .lines()
         .filter_map(|line| {
-            let (name, attached) = line.trim_end().split_once('\t')?;
+            let (name, attached) = line.trim_end().rsplit_once('|')?;
             Some((name.to_string(), attached == "1"))
         })
         .collect()
@@ -616,10 +621,16 @@ mod tests {
 
     #[test]
     fn parses_list_sessions_rows() {
-        let rows = parse_tmux_session_rows("a\t1\nb\t0\r\nrubbish\n");
+        // Foreign names may themselves contain `|` — the attach flag is the
+        // text after the LAST delimiter.
+        let rows = parse_tmux_session_rows("a|1\nb|0\r\nweird|name|1\nrubbish\n");
         assert_eq!(
             rows,
-            vec![("a".to_string(), true), ("b".to_string(), false)]
+            vec![
+                ("a".to_string(), true),
+                ("b".to_string(), false),
+                ("weird|name".to_string(), true),
+            ]
         );
     }
 
