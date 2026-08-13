@@ -22,6 +22,7 @@ use tauri::State;
 use fartcode_core::issues::{Issue, IssuePatch, Lane, NewIssue};
 use fartcode_core::projects::ProjectStore;
 
+use super::serde_util::double_option;
 use crate::app::App;
 
 /// Request body for [`issue_create`] (frontend sends one object).
@@ -39,18 +40,24 @@ pub struct CreateIssueRequest {
     pub prd_section: Option<String>,
 }
 
-/// Request body for [`issue_update`]. Missing = leave alone; explicit
-/// `null` on a nullable field clears it (serde: absent → `None`,
-/// `null` → `Some(None)`, value → `Some(Some(v))`).
+/// Request body for [`issue_update`]. Tri-state per clearable field:
+/// absent = leave alone, explicit `null` = clear, value = set (the shared
+/// `double_option` deserializer keeps `null` distinguishable from absent —
+/// a bare `Option<Option<T>>` collapses `null` into "keep").
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateIssueRequest {
     pub title: Option<String>,
+    #[serde(default, deserialize_with = "double_option")]
     pub body: Option<Option<String>>,
     pub acceptance: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "double_option")]
     pub provider: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
     pub model: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
     pub prd_path: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
     pub prd_section: Option<Option<String>>,
 }
 
@@ -400,6 +407,43 @@ mod tests {
             out.push(event);
         }
         out
+    }
+
+    /// The columns defect's twin (see `columns::tests`): without
+    /// `double_option`, the wire `null` collapsed to "absent" and the
+    /// frontend's documented "null clears" contract silently no-opped. The
+    /// request DTO must keep all three states distinguishable on every
+    /// clearable field.
+    #[test]
+    fn update_request_keeps_absent_null_and_value_distinct() {
+        // Absent → keep (None).
+        let absent: UpdateIssueRequest = serde_json::from_str("{}").unwrap();
+        assert_eq!(absent.body, None);
+        assert_eq!(absent.provider, None);
+        assert_eq!(absent.model, None);
+        assert_eq!(absent.prd_path, None);
+        assert_eq!(absent.prd_section, None);
+
+        // Explicit null → clear (Some(None)) — the reproduced case.
+        let cleared: UpdateIssueRequest = serde_json::from_str(
+            r#"{"body":null,"provider":null,"model":null,
+                "prdPath":null,"prdSection":null}"#,
+        )
+        .unwrap();
+        assert_eq!(cleared.body, Some(None));
+        assert_eq!(cleared.provider, Some(None));
+        assert_eq!(cleared.model, Some(None));
+        assert_eq!(cleared.prd_path, Some(None));
+        assert_eq!(cleared.prd_section, Some(None));
+
+        // Value → set (Some(Some(v))).
+        let set: UpdateIssueRequest =
+            serde_json::from_str(r#"{"body":"b","prdPath":"docs/prd.md"}"#).unwrap();
+        assert_eq!(set.body, Some(Some("b".into())));
+        assert_eq!(set.prd_path, Some(Some("docs/prd.md".into())));
+        // Untouched fields in the same payload stay "keep".
+        assert_eq!(set.provider, None);
+        assert_eq!(set.title, None);
     }
 
     /// Fail-closed ordering (#66 fix round, defect 2): a dispatch the

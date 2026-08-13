@@ -18,6 +18,7 @@ pub mod projects;
 pub mod provider_accounts;
 pub mod remote_projects;
 pub mod search;
+pub mod serde_util;
 pub mod settings;
 pub mod ssh_connections;
 pub mod steps;

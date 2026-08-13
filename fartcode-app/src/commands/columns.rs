@@ -5,29 +5,15 @@
 
 use std::sync::Arc;
 
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 use tauri::State;
 
 use fartcode_core::issues::columns::{
     BoardColumn, ColumnKind, ColumnPatch, NewColumn, OnEnter, OnSettle,
 };
 
+use super::serde_util::double_option;
 use crate::app::App;
-
-/// Tri-state patch-field deserializer: field absent → `None` (keep),
-/// explicit `null` → `Some(None)` (clear), value → `Some(Some(v))` (set).
-///
-/// Plain `Option<Option<T>>` cannot express this — serde collapses an
-/// explicit `null` into `None`, silently turning "clear" into "keep" (the
-/// codebase has no serde_with dependency, hence the hand-rolled helper).
-/// Always pair with `#[serde(default)]` so an absent field stays `None`.
-fn double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
-where
-    T: Deserialize<'de>,
-    D: Deserializer<'de>,
-{
-    Option::<T>::deserialize(deserializer).map(Some)
-}
 
 /// Request body for [`column_create`] (frontend sends one object). Enum
 /// fields travel as their stored strings (`shelf|agent_step|human_gate`,
