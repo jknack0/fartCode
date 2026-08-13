@@ -481,6 +481,9 @@
 
 .fc-agent-installing {
   color: #66666d;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .fc-agent-install {

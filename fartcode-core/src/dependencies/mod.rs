@@ -238,6 +238,35 @@ impl DependencyManager for GhReleaseManager {
     }
 }
 
+/// Manager display name for the confirm sheet ("npm", "brew", "curl", …).
+fn manager_name(install_type: InstallType) -> &'static str {
+    match install_type {
+        InstallType::Npm => "npm",
+        InstallType::Pip => "pip",
+        InstallType::Cargo => "cargo",
+        InstallType::Brew => "brew",
+        InstallType::Go => "go",
+        InstallType::Curl => "curl",
+        InstallType::GhRelease => "gh-release",
+        InstallType::Other => "shell",
+    }
+}
+
+/// The exact command the runner executes, as the user should see it before
+/// consenting. Shell-backed plans (`sh -c '<one-liner>'`) show the embedded
+/// one-liner — that IS the remote code the user is agreeing to run; argv
+/// plans show the joined argv.
+fn display_command(install_type: InstallType, argv: &[String]) -> String {
+    if matches!(
+        install_type,
+        InstallType::Curl | InstallType::GhRelease | InstallType::Other
+    ) {
+        argv.get(2).cloned().unwrap_or_else(|| argv.join(" "))
+    } else {
+        argv.join(" ")
+    }
+}
+
 fn manager_for(install_type: InstallType) -> Box<dyn DependencyManager> {
     match install_type {
         InstallType::Npm => Box::new(NpmManager),
@@ -294,6 +323,28 @@ impl HostDependencyStore {
             }
         }
         self.detect(provider_id)
+    }
+
+    /// (manager, exact command) for the confirm sheet before an install.
+    pub fn install_command(&self, provider_id: &str) -> Option<(String, String)> {
+        let dep = host_dependency(provider_id)?;
+        let plan = dep.install_plan.as_ref()?;
+        let argv = manager_for(plan.install_type).install(plan)?;
+        Some((
+            manager_name(plan.install_type).into(),
+            display_command(plan.install_type, &argv),
+        ))
+    }
+
+    /// (manager, exact command) for the confirm sheet before an update.
+    pub fn update_command(&self, provider_id: &str) -> Option<(String, String)> {
+        let dep = host_dependency(provider_id)?;
+        let plan = dep.install_plan.as_ref()?;
+        let argv = manager_for(plan.install_type).update(plan)?;
+        Some((
+            manager_name(plan.install_type).into(),
+            display_command(plan.install_type, &argv),
+        ))
     }
 
     /// Reference install instructions for a not-installed dependency.
