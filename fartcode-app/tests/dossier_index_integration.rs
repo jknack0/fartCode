@@ -572,6 +572,62 @@ fn the_spawned_indexer_drops_the_rows_when_a_card_is_deleted() {
 }
 
 // ---------------------------------------------------------------------------
+// 5b. #142: a renamed task must be findable under its NEW title
+// ---------------------------------------------------------------------------
+
+/// The rename path is `search::update_title`'s ONLY caller (a plain upsert
+/// would wipe the task's project link columns). Pin it end to end: boot
+/// backfill indexes the old name, the `TaskRenamed` event retitles the row,
+/// and the old title stops matching.
+#[test]
+fn the_spawned_indexer_retitles_a_renamed_task() {
+    let fx = fixture();
+    let task = fx
+        .app
+        .tasks
+        .create(fartcode_core::tasks::CreateTaskOptions::new(
+            fx.project_id.clone(),
+            "old task name",
+        ))
+        .unwrap();
+
+    // The boot backfill is synchronous: the task is indexed NOW, under its
+    // original name.
+    fartcode_app_lib::indexer::spawn_search_indexer(fx.app.clone());
+    assert!(
+        search::query(&fx.app.db, "old task name", 10)
+            .unwrap()
+            .iter()
+            .any(|h| h.item_type == "task"),
+        "boot backfill never indexed the task"
+    );
+
+    // Renaming may fire in the tiny window before the spawned subscriber
+    // has subscribed (a broadcast with no receivers drops the event), so
+    // rename until it lands — rename is idempotent and always emits
+    // `TaskRenamed`.
+    await_until(
+        || {
+            let _ = fx.app.tasks.rename(&task.id, "new task name");
+            search::query(&fx.app.db, "new task name", 10)
+                .unwrap()
+                .iter()
+                .any(|h| h.item_type == "task")
+        },
+        "the spawned subscriber never retitled the renamed task",
+    );
+
+    // The row's title column was replaced — the old title is gone, not
+    // merely joined by the new one.
+    assert!(
+        search::query(&fx.app.db, "old task name", 10)
+            .unwrap()
+            .is_empty(),
+        "the renamed task is still findable under its old title"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 6. Nothing to index is not an error
 // ---------------------------------------------------------------------------
 
