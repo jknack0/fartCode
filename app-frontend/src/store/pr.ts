@@ -10,6 +10,8 @@ import {
   prSectionSync,
   type PrSectionDto,
 } from "../lib/tauri";
+import { createKeyedCache } from "../lib/createKeyedStore";
+import { wireEvents } from "../lib/wireEvents";
 
 export interface WorkspacePr {
   section: PrSectionDto | null;
@@ -27,41 +29,30 @@ interface PrState {
   sync: (workspaceId: string) => Promise<void>;
 }
 
-const inflight = new Set<string>();
 const pendingRefetch = new Map<string, number>();
 const EMPTY: WorkspacePr = { section: null, loading: false, error: null };
 
 export const usePr = create<PrState>((set, get) => {
-  const patch = (workspaceId: string, part: Partial<WorkspacePr>) =>
-    set((s) => ({
-      byWorkspace: {
-        ...s.byWorkspace,
-        [workspaceId]: { ...(s.byWorkspace[workspaceId] ?? EMPTY), ...part },
-      },
-    }));
+  const cache = createKeyedCache<WorkspacePr, PrSectionDto>({
+    empty: EMPTY,
+    read: () => get().byWorkspace,
+    write: (byWorkspace) => set({ byWorkspace }),
+    success: (section) => ({ section, loading: false, error: null }),
+    failure: (error) => ({ loading: false, error }),
+  });
 
-  const fetchSection = async (workspaceId: string, awaitedSync: boolean) => {
-    if (inflight.has(workspaceId)) return;
-    inflight.add(workspaceId);
-    try {
-      const section = awaitedSync
-        ? await prSectionSync(workspaceId)
-        : await prSectionGet(workspaceId);
-      patch(workspaceId, { section, loading: false, error: null });
-    } catch (e) {
-      patch(workspaceId, { loading: false, error: String(e) });
-    } finally {
-      inflight.delete(workspaceId);
-    }
-  };
+  const fetchSection = (workspaceId: string, awaitedSync: boolean) =>
+    cache.run(workspaceId, () =>
+      awaitedSync ? prSectionSync(workspaceId) : prSectionGet(workspaceId),
+    );
 
   return {
     byWorkspace: {},
 
     ensure: async (workspaceId) => {
       const entry = get().byWorkspace[workspaceId];
-      if (entry?.section || inflight.has(workspaceId)) return;
-      patch(workspaceId, { loading: true });
+      if (entry?.section || cache.inflight(workspaceId)) return;
+      cache.patch(workspaceId, { loading: true });
       await fetchSection(workspaceId, false);
     },
 
@@ -70,7 +61,7 @@ export const usePr = create<PrState>((set, get) => {
     },
 
     sync: async (workspaceId) => {
-      patch(workspaceId, { loading: true });
+      cache.patch(workspaceId, { loading: true });
       await fetchSection(workspaceId, true);
     },
   };
@@ -85,9 +76,7 @@ if (typeof window !== "undefined") window.__prStore = usePr;
 
 /** Coalesced event refresh for tracked workspaces only. */
 export function wirePrEvents(): () => void {
-  let unlisten: (() => void) | null = null;
-  let disposed = false;
-  void onFartcodeEvent((event) => {
+  const unwire = wireEvents(onFartcodeEvent, (event) => {
     let workspaceId: string | null = null;
     let immediate = false;
     if (event.type === "pr:updated") {
@@ -109,13 +98,9 @@ export function wirePrEvents(): () => void {
         immediate ? 50 : 750,
       ),
     );
-  }).then((off) => {
-    if (disposed) off();
-    else unlisten = off;
   });
   return () => {
-    disposed = true;
-    unlisten?.();
+    unwire();
     for (const timer of pendingRefetch.values()) clearTimeout(timer);
     pendingRefetch.clear();
   };

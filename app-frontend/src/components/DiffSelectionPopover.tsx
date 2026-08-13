@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { MergeView } from "@codemirror/merge";
 import { getDiffView } from "../lib/diff-views";
+import { useAsyncSubmit } from "../lib/useAsyncSubmit";
 import { useDiffs, type DiffParams, type DiffSelection } from "../store/diffs";
 import { useLineComments } from "../store/line-comments";
 import { useSidebar } from "../store/sidebar";
@@ -32,8 +33,7 @@ export default function DiffSelectionPopover({
   const projectId = useSidebar((s) => s.selectedProjectId);
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [savingNote, setSavingNote] = useState(false);
+  const { busy: savingNote, error, setError, run } = useAsyncSubmit();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // A collapsed/changed selection resets the popover around the new one.
@@ -68,9 +68,7 @@ export default function DiffSelectionPopover({
   const addNote = async () => {
     const text = prompt.trim();
     if (!text || savingNote) return;
-    setSavingNote(true);
-    setError(null);
-    try {
+    await run(async () => {
       const firstLine = selection.text.split("\n")[0] ?? null;
       await useLineComments.getState().addNote({
         taskId,
@@ -83,17 +81,13 @@ export default function DiffSelectionPopover({
       });
       useDiffs.getState().setSelection(tabId, null);
       setPrompt("");
-      setSavingNote(false);
       // Surface the thread for this file/side so the note is visible.
       window.dispatchEvent(
         new CustomEvent("fartCode:show-comments", {
           detail: { taskId, filePath: params.path, side: sourceSide },
         }),
       );
-    } catch (e) {
-      setError(String(e));
-      setSavingNote(false);
-    }
+    });
   };
 
   // §14 "Create Task": open the quick-task dialog pre-filled; the dialog

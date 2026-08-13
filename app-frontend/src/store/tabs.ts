@@ -22,6 +22,7 @@ import {
 } from "../lib/tauri";
 import { killTerminal } from "../lib/terminals";
 import { isTabKind, type Tab } from "../lib/tab-registry";
+import { wireEvents } from "../lib/wireEvents";
 
 export type PaneId = "left" | "right";
 
@@ -443,11 +444,7 @@ if (typeof window !== "undefined") window.__tabsStore = useTabs;
 /** Drop local tab state when the backend deletes a task (mirrors the
  * backend's `task:<id>:tabs` view-state cleanup). */
 export function wireTabsEvents(): () => void {
-  let unlisten: (() => void) | undefined;
-  void onFartcodeEvent((e) => {
+  return wireEvents(onFartcodeEvent, (e) => {
     if (e.type === "task:deleted") useTabs.getState().dropTask(e.taskId);
-  }).then((un) => {
-    unlisten = un;
   });
-  return () => unlisten?.();
 }

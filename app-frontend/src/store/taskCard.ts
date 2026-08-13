@@ -21,6 +21,7 @@ import {
   type FartcodeEvent,
   type IssueDto,
 } from "../lib/tauri";
+import { wireEvents } from "../lib/wireEvents";
 
 /** Which pipeline overlay the task header is showing. `move` is the
  * key-first column picker; `confirm` names the spend of a parked step
@@ -45,10 +46,10 @@ interface TaskCardState {
 // and scripts stores use the same pattern — the app shell stays untouched).
 let wired = false;
 
-function wireEvents(): void {
+function wireCardEvents(): void {
   if (wired) return;
   wired = true;
-  void onFartcodeEvent((event: FartcodeEvent) => {
+  wireEvents(onFartcodeEvent, (event: FartcodeEvent) => {
     if (event.type === "project:deleted") {
       useTaskCard.setState((s) => {
         const issuesByProject = { ...s.issuesByProject };
@@ -103,14 +104,14 @@ export const useTaskCard = create<TaskCardState>((set, get) => ({
   error: null,
 
   load: async (projectId) => {
-    wireEvents();
+    wireCardEvents();
     const s = get();
     if (s.loading[projectId] || s.loaded[projectId]) return;
     await fetchInto(projectId);
   },
 
   reload: async (projectId) => {
-    wireEvents();
+    wireCardEvents();
     await fetchInto(projectId);
   },
 

@@ -17,6 +17,7 @@ import {
   type FartcodeEvent,
 } from "../lib/tauri";
 import { sortColumns } from "../lib/columnConfig";
+import { wireEvents } from "../lib/wireEvents";
 
 interface ColumnsState {
   /** Columns in board order (position), by project id. */
@@ -39,7 +40,7 @@ let evictWired = false;
 function wireEviction(): void {
   if (evictWired) return;
   evictWired = true;
-  void onFartcodeEvent((event: FartcodeEvent) => {
+  wireEvents(onFartcodeEvent, (event: FartcodeEvent) => {
     if (event.type !== "project:deleted") return;
     useColumns.setState((s) => {
       const byProject = { ...s.byProject };

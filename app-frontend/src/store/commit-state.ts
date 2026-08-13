@@ -18,6 +18,7 @@ import {
   type GitPublishOutcomeDto,
   type GitPushOutcomeDto,
 } from "../lib/tauri";
+import { createKeyedCache } from "../lib/createKeyedStore";
 
 export interface WorkspaceCommitState {
   state: GitCommitStateDto | null;
@@ -39,37 +40,26 @@ interface CommitStateStore {
   addRemote: (workspaceId: string, name: string, url: string) => Promise<void>;
 }
 
-const inflight = new Set<string>();
 const EMPTY: WorkspaceCommitState = { state: null, error: null };
 
 export const useCommitState = create<CommitStateStore>((set, get) => {
-  const patch = (workspaceId: string, part: Partial<WorkspaceCommitState>) =>
-    set((s) => ({
-      byWorkspace: {
-        ...s.byWorkspace,
-        [workspaceId]: { ...(s.byWorkspace[workspaceId] ?? EMPTY), ...part },
-      },
-    }));
+  const cache = createKeyedCache<WorkspaceCommitState, GitCommitStateDto>({
+    empty: EMPTY,
+    read: () => get().byWorkspace,
+    write: (byWorkspace) => set({ byWorkspace }),
+    success: (state) => ({ state, error: null }),
+    failure: (error) => ({ error }),
+  });
 
-  const fetchState = async (workspaceId: string) => {
-    if (inflight.has(workspaceId)) return;
-    inflight.add(workspaceId);
-    try {
-      const state = await gitCommitState(workspaceId);
-      patch(workspaceId, { state, error: null });
-    } catch (e) {
-      patch(workspaceId, { error: String(e) });
-    } finally {
-      inflight.delete(workspaceId);
-    }
-  };
+  const fetchState = (workspaceId: string) =>
+    cache.run(workspaceId, () => gitCommitState(workspaceId));
 
   return {
     byWorkspace: {},
 
     ensure: async (workspaceId) => {
       const entry = get().byWorkspace[workspaceId];
-      if (entry?.state || inflight.has(workspaceId)) return;
+      if (entry?.state || cache.inflight(workspaceId)) return;
       await fetchState(workspaceId);
     },
 

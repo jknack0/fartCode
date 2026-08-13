@@ -14,6 +14,7 @@ import {
   type PrCheckDto,
   type PrDto,
 } from "../lib/tauri";
+import { useAsyncSubmit } from "../lib/useAsyncSubmit";
 import { usePr } from "../store/pr";
 
 type CheckKind = "failed" | "running" | "passed" | "queued" | "other";
@@ -426,8 +427,7 @@ function PanelFooter({
 // CLI or paste a PAT. Tokens only ever go to the OS keyring.
 function TokenGate({ workspaceId }: { workspaceId: string }) {
   const [status, setStatus] = useState<GithubTokenStatusDto | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, setError, run } = useAsyncSubmit();
   const [pasting, setPasting] = useState(false);
   const [tokenInput, setTokenInput] = useState("");
 
@@ -454,18 +454,9 @@ function TokenGate({ workspaceId }: { workspaceId: string }) {
         <button
           className="primary"
           disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            setError(null);
-            try {
-              await githubTokenImport();
-              refresh();
-            } catch (e) {
-              setError(String(e));
-            } finally {
-              setBusy(false);
-            }
-          }}
+          onClick={() =>
+            void run(() => githubTokenImport(), { onSuccess: () => void refresh() })
+          }
         >
           {busy ? "Importing…" : "Import from gh CLI"}
         </button>
@@ -484,20 +475,15 @@ function TokenGate({ workspaceId }: { workspaceId: string }) {
           <button
             className="primary"
             disabled={!tokenInput.trim() || busy}
-            onClick={async () => {
-              setBusy(true);
-              setError(null);
-              try {
-                await githubTokenSet(tokenInput.trim());
-                setTokenInput("");
-                setPasting(false);
-                refresh();
-              } catch (e) {
-                setError(String(e));
-              } finally {
-                setBusy(false);
-              }
-            }}
+            onClick={() =>
+              void run(() => githubTokenSet(tokenInput.trim()), {
+                onSuccess: () => {
+                  setTokenInput("");
+                  setPasting(false);
+                  void refresh();
+                },
+              })
+            }
           >
             Save
           </button>

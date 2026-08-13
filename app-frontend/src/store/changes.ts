@@ -13,6 +13,8 @@ import {
   onFartcodeEvent,
   type GitStatusSnapshot,
 } from "../lib/tauri";
+import { createKeyedCache } from "../lib/createKeyedStore";
+import { wireEvents } from "../lib/wireEvents";
 
 export interface WorkspaceChanges {
   snapshot: GitStatusSnapshot | null;
@@ -32,42 +34,30 @@ interface ChangesState {
   discard: (workspaceId: string, paths: string[]) => Promise<void>;
 }
 
-/** Workspaces with a fetch currently in flight (ensure/refetch dedupe). */
-const inflight = new Set<string>();
 /** Per-workspace debounce timer for event-driven refetches (DOM handles). */
 const pendingRefetch = new Map<string, number>();
 
 const EMPTY: WorkspaceChanges = { snapshot: null, loading: false, error: null };
 
 export const useChanges = create<ChangesState>((set, get) => {
-  const patch = (workspaceId: string, part: Partial<WorkspaceChanges>) =>
-    set((s) => ({
-      byWorkspace: {
-        ...s.byWorkspace,
-        [workspaceId]: { ...(s.byWorkspace[workspaceId] ?? EMPTY), ...part },
-      },
-    }));
+  const cache = createKeyedCache<WorkspaceChanges, GitStatusSnapshot>({
+    empty: EMPTY,
+    read: () => get().byWorkspace,
+    write: (byWorkspace) => set({ byWorkspace }),
+    success: (snapshot) => ({ snapshot, loading: false, error: null }),
+    failure: (error) => ({ loading: false, error }),
+  });
 
-  const fetchSnapshot = async (workspaceId: string) => {
-    if (inflight.has(workspaceId)) return;
-    inflight.add(workspaceId);
-    try {
-      const snapshot = await gitStatus(workspaceId);
-      patch(workspaceId, { snapshot, loading: false, error: null });
-    } catch (e) {
-      patch(workspaceId, { loading: false, error: String(e) });
-    } finally {
-      inflight.delete(workspaceId);
-    }
-  };
+  const fetchSnapshot = (workspaceId: string) =>
+    cache.run(workspaceId, () => gitStatus(workspaceId));
 
   return {
     byWorkspace: {},
 
     ensure: async (workspaceId) => {
       const entry = get().byWorkspace[workspaceId];
-      if (entry?.snapshot || inflight.has(workspaceId)) return;
-      patch(workspaceId, { loading: true });
+      if (entry?.snapshot || cache.inflight(workspaceId)) return;
+      cache.patch(workspaceId, { loading: true });
       await fetchSnapshot(workspaceId);
     },
 
@@ -110,9 +100,7 @@ if (typeof window !== "undefined") window.__changesStore = useChanges;
  * workspaces the UI already tracks are refreshed (nothing is fetched for a
  * workspace no panel has opened). */
 export function wireChangesEvents(): () => void {
-  let unlisten: (() => void) | null = null;
-  let disposed = false;
-  void onFartcodeEvent((event) => {
+  const unwire = wireEvents(onFartcodeEvent, (event) => {
     const workspaceId =
       event.type === "git:changed" || event.type === "files:changed"
         ? event.workspaceId
@@ -131,13 +119,9 @@ export function wireChangesEvents(): () => void {
         }
       }, 150),
     );
-  }).then((off) => {
-    if (disposed) off();
-    else unlisten = off;
   });
   return () => {
-    disposed = true;
-    unlisten?.();
+    unwire();
     for (const timer of pendingRefetch.values()) clearTimeout(timer);
     pendingRefetch.clear();
   };

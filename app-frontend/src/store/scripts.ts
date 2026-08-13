@@ -19,6 +19,7 @@ import {
   terminalListForTask,
   terminalOpenLifecycle,
 } from "../lib/tauri";
+import { wireEvents } from "../lib/wireEvents";
 
 export type ScriptType = "setup" | "run" | "teardown";
 export const SCRIPT_TYPES: readonly ScriptType[] = ["setup", "run", "teardown"];
@@ -87,7 +88,7 @@ const exitedTerminals = new Set<string>();
 function wireExitEvents(): void {
   if (exitWired) return;
   exitWired = true;
-  void onTerminalExited(({ terminalId, exitCode }) => {
+  wireEvents(onTerminalExited, ({ terminalId, exitCode }) => {
     exitedTerminals.add(terminalId);
     let setupSucceededTask: string | null = null;
     useScripts.setState((s) => {

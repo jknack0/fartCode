@@ -14,6 +14,8 @@ import {
   type FileDiffDto,
 } from "../lib/tauri";
 import { diffViewWorktreeDoc, getDiffView } from "../lib/diff-views";
+import { createKeyedCache } from "../lib/createKeyedStore";
+import { wireEvents } from "../lib/wireEvents";
 
 export interface DiffParams {
   workspaceId: string;
@@ -72,32 +74,21 @@ interface DiffsState {
 }
 
 const EMPTY: DiffEntry = { payload: null, loading: false, error: null };
-const inflight = new Set<string>();
 const pendingRefresh = new Map<string, number>();
 
 export const useDiffs = create<DiffsState>((set, get) => {
-  const patch = (tabId: string, part: Partial<DiffEntry>) =>
-    set((s) => ({
-      byTab: { ...s.byTab, [tabId]: { ...(s.byTab[tabId] ?? EMPTY), ...part } },
-    }));
+  const cache = createKeyedCache<DiffEntry, FileDiffDto>({
+    empty: EMPTY,
+    read: () => get().byTab,
+    write: (byTab) => set({ byTab }),
+    success: (payload) => ({ payload, loading: false, error: null }),
+    failure: (error) => ({ loading: false, error }),
+  });
 
-  const fetchPayload = async (tabId: string, params: DiffParams) => {
-    if (inflight.has(tabId)) return;
-    inflight.add(tabId);
-    try {
-      const payload = await gitFileDiff(
-        params.workspaceId,
-        params.path,
-        params.side,
-        params.origPath,
-      );
-      patch(tabId, { payload, loading: false, error: null });
-    } catch (e) {
-      patch(tabId, { loading: false, error: String(e) });
-    } finally {
-      inflight.delete(tabId);
-    }
-  };
+  const fetchPayload = (tabId: string, params: DiffParams) =>
+    cache.run(tabId, () =>
+      gitFileDiff(params.workspaceId, params.path, params.side, params.origPath),
+    );
 
   return {
     paramsByTab: {},
@@ -139,8 +130,8 @@ export const useDiffs = create<DiffsState>((set, get) => {
 
     ensure: async (tabId, params) => {
       const entry = get().byTab[tabId];
-      if (entry?.payload || inflight.has(tabId)) return;
-      patch(tabId, { loading: true });
+      if (entry?.payload || cache.inflight(tabId)) return;
+      cache.patch(tabId, { loading: true });
       await fetchPayload(tabId, params);
     },
 
@@ -226,9 +217,7 @@ export const useDiffs = create<DiffsState>((set, get) => {
 
 /** Coalesced refresh of open diff tabs when their workspace changes. */
 export function wireDiffsEvents(): () => void {
-  let unlisten: (() => void) | null = null;
-  let disposed = false;
-  void onFartcodeEvent((event) => {
+  const unwire = wireEvents(onFartcodeEvent, (event) => {
     const workspaceId =
       event.type === "git:changed" || event.type === "files:changed"
         ? event.workspaceId
@@ -247,13 +236,9 @@ export function wireDiffsEvents(): () => void {
         for (const id of tabIds) void useDiffs.getState().refresh(id);
       }, 150),
     );
-  }).then((off) => {
-    if (disposed) off();
-    else unlisten = off;
   });
   return () => {
-    disposed = true;
-    unlisten?.();
+    unwire();
     for (const timer of pendingRefresh.values()) clearTimeout(timer);
     pendingRefresh.clear();
   };

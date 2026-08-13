@@ -25,6 +25,7 @@ import {
   type LiveModels,
   type PendingPermission,
 } from "../lib/tauri";
+import { wireEvents } from "../lib/wireEvents";
 
 /** A surfaced permission prompt awaiting a user decision. */
 export interface PermissionPrompt {
@@ -221,48 +222,46 @@ function applySnapshot(conversationId: string, models: LiveModels): void {
  * wireTabsEvents. Returns the combined unsubscribe.
  */
 export function wireConversationEvents(): () => void {
-  const unsubs: Array<() => void> = [];
-  let disposed = false;
+  const unwires = [
+    wireEvents(onAcpTranscript, ({ conversationId, models }) =>
+      applySnapshot(conversationId, models),
+    ),
 
-  void onAcpTranscript(({ conversationId, models }) => {
-    if (!disposed) applySnapshot(conversationId, models);
-  }).then((un) => unsubs.push(un));
-
-  void onAcpUpdate(({ conversationId }) => {
-    if (disposed) return;
-    useConversations.setState((s) => ({
-      updateCounts: {
-        ...s.updateCounts,
-        [conversationId]: (s.updateCounts[conversationId] ?? 0) + 1,
-      },
-    }));
-  }).then((un) => unsubs.push(un));
-
-  void onAcpPermissionRequest(({ conversationId, requestId, pending }) => {
-    if (disposed) return;
-    useConversations.setState((s) => {
-      const existing = s.permissions[conversationId] ?? [];
-      if (existing.some((p) => p.requestId === requestId)) return s;
-      return {
-        permissions: {
-          ...s.permissions,
-          [conversationId]: [...existing, { conversationId, requestId, pending }],
+    wireEvents(onAcpUpdate, ({ conversationId }) =>
+      useConversations.setState((s) => ({
+        updateCounts: {
+          ...s.updateCounts,
+          [conversationId]: (s.updateCounts[conversationId] ?? 0) + 1,
         },
-      };
-    });
-  }).then((un) => unsubs.push(un));
+      })),
+    ),
 
-  // Task deletion drops the task's conversation state (the backend stops
-  // the sessions during delete_task teardown).
-  void onFartcodeEvent((event) => {
-    if (event.type === "task:deleted") {
-      useConversations.getState().dropTask(event.taskId);
-    }
-  }).then((un) => unsubs.push(un));
+    wireEvents(
+      onAcpPermissionRequest,
+      ({ conversationId, requestId, pending }) =>
+        useConversations.setState((s) => {
+          const existing = s.permissions[conversationId] ?? [];
+          if (existing.some((p) => p.requestId === requestId)) return s;
+          return {
+            permissions: {
+              ...s.permissions,
+              [conversationId]: [...existing, { conversationId, requestId, pending }],
+            },
+          };
+        }),
+    ),
+
+    // Task deletion drops the task's conversation state (the backend stops
+    // the sessions during delete_task teardown).
+    wireEvents(onFartcodeEvent, (event) => {
+      if (event.type === "task:deleted") {
+        useConversations.getState().dropTask(event.taskId);
+      }
+    }),
+  ];
 
   return () => {
-    disposed = true;
-    for (const un of unsubs) un();
+    for (const unwire of unwires) unwire();
   };
 }
 

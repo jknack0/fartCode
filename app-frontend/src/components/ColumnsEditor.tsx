@@ -27,6 +27,7 @@ import {
   groupByColumn,
   sortColumns,
 } from "../lib/columnConfig";
+import { useAsyncSubmit } from "../lib/useAsyncSubmit";
 import { useColumns } from "../store/columns";
 import { defaultAgentName, useDependencies } from "../store/dependencies";
 
@@ -513,16 +514,16 @@ export function ColumnsPane({ projectId }: { projectId: string }) {
   const deps = useDependencies((st) => st.deps);
   const loadDeps = useDependencies((st) => st.load);
   const [issues, setIssues] = useState<IssueDto[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [openField, setOpenField] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   // Drop target + which edge the indicator (and the insert) lands on.
   const [over, setOver] = useState<{ id: string; before: boolean } | null>(null);
-  // One in-flight guard for every mutation: while a write+reload round-trip
-  // is pending the store is stale, so a second click would compute its patch
-  // (or its reorder list) from pre-mutation state. No queue — just ignore.
-  const [busy, setBusy] = useState(false);
+  // One in-flight guard (`busy`) for every mutation: while a write+reload
+  // round-trip is pending the store is stale, so a second click would compute
+  // its patch (or its reorder list) from pre-mutation state. No queue — just
+  // ignore. `setError` co-owns the error line with the occupancy refetches.
+  const { busy, error, setError, run } = useAsyncSubmit();
 
   const columns = useMemo(() => sortColumns(columnsRaw ?? []), [columnsRaw]);
   const defaultAgent = defaultAgentName(deps);
@@ -582,22 +583,12 @@ export function ColumnsPane({ projectId }: { projectId: string }) {
       .catch((e) => setError(String(e)));
 
   /** Every successful mutation reloads the store so an open board follows. */
-  const mutate = async (fn: () => Promise<unknown>): Promise<boolean> => {
-    if (busy) return false;
-    setBusy(true);
-    setError(null);
-    try {
+  const mutate = (fn: () => Promise<unknown>): Promise<boolean> =>
+    run(async () => {
       await fn();
       await useColumns.getState().reload(projectId);
       await refetchIssues();
-      return true;
-    } catch (e) {
-      setError(String(e));
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
 
   const patchFor = (columnId: string) => (p: Parameters<typeof columnUpdate>[1]) => {
     if (busy) return;
@@ -606,27 +597,17 @@ export function ColumnsPane({ projectId }: { projectId: string }) {
   };
 
   const addColumn = async () => {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    try {
+    await run(async () => {
       const created = await columnCreate({ projectId, name: "New column", kind: "shelf" });
       await useColumns.getState().reload(projectId);
       await refetchIssues();
       setExpandedId(created.id);
       setOpenField("name");
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
+    });
   };
 
   const deleteColumn = async (columnId: string) => {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    try {
+    await run(async () => {
       // Re-check occupancy on FRESH data before touching the backend — the
       // step engine may have moved a card here since the button rendered.
       // If now occupied, abort: the refreshed issues re-render the disabled
@@ -640,11 +621,7 @@ export function ColumnsPane({ projectId }: { projectId: string }) {
       // Collapse the deleted row only — the user may have expanded another
       // row mid-flight (never compare against the click-time snapshot).
       setExpandedId((cur) => (cur === columnId ? null : cur));
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
+    });
   };
 
   const dropOn = (target: BoardColumnDto, e: React.DragEvent) => {

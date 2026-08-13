@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useChanges } from "../store/changes";
 import { useCommitState } from "../store/commit-state";
 import { hint } from "../lib/useCommands";
+import { useAsyncSubmit } from "../lib/useAsyncSubmit";
 import { useUi } from "../store/ui";
 
 export default function GitFooter({ workspaceId }: { workspaceId: string }) {
@@ -14,8 +15,7 @@ export default function GitFooter({ workspaceId }: { workspaceId: string }) {
   // Re-render when bindings change so the palette chord in the hint stays live.
   useUi((s) => s.bindingsVersion);
 
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, run } = useAsyncSubmit();
   const [remoteName, setRemoteName] = useState("origin");
   const [remoteUrl, setRemoteUrl] = useState("");
   const st = stateEntry?.state ?? null;
@@ -23,17 +23,15 @@ export default function GitFooter({ workspaceId }: { workspaceId: string }) {
   const addDisabled = busy || remoteName.trim() === "" || remoteUrl.trim() === "";
   const addRemote = async () => {
     if (addDisabled) return;
-    setError(null);
-    setBusy(true);
-    try {
-      await useCommitState.getState().addRemote(workspaceId, remoteName, remoteUrl);
-      setRemoteUrl("");
-      void useChanges.getState().refetch(workspaceId);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
+    await run(
+      () => useCommitState.getState().addRemote(workspaceId, remoteName, remoteUrl),
+      {
+        onSuccess: () => {
+          setRemoteUrl("");
+          void useChanges.getState().refetch(workspaceId);
+        },
+      },
+    );
   };
 
   const paletteKey = hint("open-command-palette") || "⌘K";

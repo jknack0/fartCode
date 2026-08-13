@@ -16,6 +16,7 @@ import {
   type ProposalDto,
 } from "../../lib/tauri";
 import { landingColumn } from "../../lib/columnConfig";
+import { useAsyncSubmit } from "../../lib/useAsyncSubmit";
 import { useColumns } from "../../store/columns";
 
 type CardState =
@@ -41,8 +42,7 @@ export default function ProposalCard({
   const [focused, setFocused] = useState(0);
   const [editing, setEditing] = useState<number | null>(null);
   const [editText, setEditText] = useState("");
-  const [applyError, setApplyError] = useState<string | null>(null);
-  const [applying, setApplying] = useState(false);
+  const { busy: applying, error: applyError, run } = useAsyncSubmit();
   const cardRef = useRef<HTMLDivElement>(null);
   // Ref mirror of `editing`: blur-commit races Escape-cancel through stale
   // closures otherwise (cancel clears the ref, so the late blur no-ops).
@@ -139,12 +139,10 @@ export default function ProposalCard({
         ...iss,
         blockedBy: iss.blockedBy.filter((t) => !droppedTitles.has(t)),
       }));
-    setApplying(true);
-    setApplyError(null);
-    issueApplyProposal(projectId, { ...proposal, issues })
-      .then((created) => setState({ kind: "applied", count: created.length }))
-      .catch((e) => setApplyError(String(e)))
-      .finally(() => setApplying(false));
+    void run(async () => {
+      const created = await issueApplyProposal(projectId, { ...proposal, issues });
+      setState({ kind: "applied", count: created.length });
+    });
   };
 
   /** Right-aligned mono note: blockers as 1-based row numbers (titles from

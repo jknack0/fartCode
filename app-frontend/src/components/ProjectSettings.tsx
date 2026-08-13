@@ -19,6 +19,7 @@ import {
   setDefaultAgent,
   updateProjectSettings,
 } from "../lib/tauri";
+import { wireEvents } from "../lib/wireEvents";
 import { defaultAgentName, useDependencies } from "../store/dependencies";
 import SettingsModal from "./SettingsModal";
 
@@ -181,22 +182,15 @@ export function ProjectSettingsPane({ projectId }: { projectId: string }) {
   // `setting:changed` (key `defaultAgent`) — refetch so `isDefault` flips
   // even when the setting was changed elsewhere. Cache-served: is_default
   // is recomputed from settings on every list call.
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let disposed = false;
-    void onFartcodeEvent((ev) => {
-      if (ev.type === "setting:changed" && ev.key === "defaultAgent") {
-        void loadDeps(false);
-      }
-    }).then((u) => {
-      if (disposed) u();
-      else unlisten = u;
-    });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [loadDeps]);
+  useEffect(
+    () =>
+      wireEvents(onFartcodeEvent, (ev) => {
+        if (ev.type === "setting:changed" && ev.key === "defaultAgent") {
+          void loadDeps(false);
+        }
+      }),
+    [loadDeps],
+  );
 
   const refresh = useCallback(async () => {
     const [settings, provenance] = await Promise.all([

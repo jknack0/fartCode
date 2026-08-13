@@ -8,6 +8,7 @@ import { create } from "zustand";
 import type { EditorView } from "@codemirror/view";
 import { readWorkspaceFile, writeWorkspaceFile } from "../lib/tauri";
 import { parseEditorTabId } from "../lib/editor-tabs";
+import { createKeyedCache } from "../lib/createKeyedStore";
 
 export interface EditorEntry {
   /** Document as loaded from disk (the editor owns live text). */
@@ -42,13 +43,15 @@ interface EditorsState {
 }
 
 const EMPTY: EditorEntry = { content: null, loading: false, error: null };
-const inflight = new Set<string>();
 
 export const useEditors = create<EditorsState>((set, get) => {
-  const patch = (tabId: string, part: Partial<EditorEntry>) =>
-    set((s) => ({
-      byTab: { ...s.byTab, [tabId]: { ...(s.byTab[tabId] ?? EMPTY), ...part } },
-    }));
+  const cache = createKeyedCache<EditorEntry, string>({
+    empty: EMPTY,
+    read: () => get().byTab,
+    write: (byTab) => set({ byTab }),
+    success: (content) => ({ content, loading: false }),
+    failure: (error) => ({ loading: false, error }),
+  });
 
   return {
     byTab: {},
@@ -80,17 +83,11 @@ export const useEditors = create<EditorsState>((set, get) => {
     ensure: async (tabId) => {
       const params = parseEditorTabId(tabId);
       if (!params || get().byTab[tabId]?.content !== undefined && get().byTab[tabId]?.content !== null) return;
-      if (inflight.has(tabId)) return;
-      inflight.add(tabId);
-      patch(tabId, { loading: true, error: null });
-      try {
-        const content = await readWorkspaceFile(params.workspaceId, params.path);
-        patch(tabId, { content, loading: false });
-      } catch (e) {
-        patch(tabId, { loading: false, error: String(e) });
-      } finally {
-        inflight.delete(tabId);
-      }
+      if (cache.inflight(tabId)) return;
+      cache.patch(tabId, { loading: true, error: null });
+      await cache.run(tabId, () =>
+        readWorkspaceFile(params.workspaceId, params.path),
+      );
     },
 
     markDirty: (tabId) =>
@@ -114,7 +111,7 @@ export const useEditors = create<EditorsState>((set, get) => {
         await writeWorkspaceFile(params.workspaceId, params.path, doc);
         // Disk now matches the editor — the post-save files:changed echo
         // must not clobber the live view (the component checks dirty).
-        patch(tabId, { content: doc });
+        cache.patch(tabId, { content: doc });
         set((s) => {
           const dirtyByTab = { ...s.dirtyByTab };
           delete dirtyByTab[tabId];

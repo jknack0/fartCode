@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { issueList, issueUpdate, type IssueDto } from "../../lib/tauri";
 import { renderMarkdown } from "../../lib/markdown";
 import { parseTicketEdit, type TicketEdit } from "../../lib/ticketEdit";
+import { useAsyncSubmit } from "../../lib/useAsyncSubmit";
 
 type CardState =
   | { kind: "loading" }
@@ -25,8 +26,7 @@ export default function TicketEditCard({
   projectId: string;
 }) {
   const [state, setState] = useState<CardState>({ kind: "loading" });
-  const [error, setError] = useState<string | null>(null);
-  const [applying, setApplying] = useState(false);
+  const { busy: applying, error, run } = useAsyncSubmit();
 
   useEffect(() => {
     const edit = parseTicketEdit(raw);
@@ -63,17 +63,13 @@ export default function TicketEditCard({
   const { edit, issue } = state;
 
   const apply = () => {
-    if (applying) return;
-    setApplying(true);
-    setError(null);
     const patch: Parameters<typeof issueUpdate>[1] = {};
     if (edit.title !== null) patch.title = edit.title;
     if (edit.body !== null) patch.body = edit.body;
     if (edit.acceptance !== null) patch.acceptance = edit.acceptance;
-    issueUpdate(edit.issueId, patch)
-      .then(() => setState({ kind: "applied" }))
-      .catch((e) => setError(String(e)))
-      .finally(() => setApplying(false));
+    void run(() => issueUpdate(edit.issueId, patch), {
+      onSuccess: () => setState({ kind: "applied" }),
+    });
   };
 
   const dismiss = () => setState({ kind: "dismissed" });

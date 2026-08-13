@@ -11,6 +11,7 @@ import {
   resolveLineComment,
   type LineCommentDto,
 } from "../lib/tauri";
+import { wireEvents } from "../lib/wireEvents";
 
 interface LineCommentsState {
   byTask: Record<string, LineCommentDto[]>;
@@ -122,9 +123,7 @@ if (typeof window !== "undefined") window.__lineCommentsStore = useLineComments;
 /** Bus wiring: created → insert, resolved → flip flag. Installed once in
  * App alongside the other store wirings. */
 export function wireLineCommentEvents(): () => void {
-  let unlisten: (() => void) | null = null;
-  let disposed = false;
-  void onFartcodeEvent((event) => {
+  return wireEvents(onFartcodeEvent, (event) => {
     const s = useLineComments.getState();
     if (event.type === "comment:created") {
       // The adding side already patched its own list; other open diffs of
@@ -145,12 +144,5 @@ export function wireLineCommentEvents(): () => void {
         }
       }
     }
-  }).then((off) => {
-    if (disposed) off();
-    else unlisten = off;
   });
-  return () => {
-    disposed = true;
-    unlisten?.();
-  };
 }
