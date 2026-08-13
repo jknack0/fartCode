@@ -400,7 +400,10 @@ mod tests {
     /// so login (OAuth) accounts must scrub it from inherited env.
     #[test]
     fn remove_strips_env_vars_under_inherit_policy() {
-        let _guard = EnvGuard::set("FARTCODE_PTY_LEAK_PROBE", "secret-value");
+        // Distinct key from env_policy_controls_inheritance: both tests run
+        // in parallel and std::env::set_var is process-global — a shared key
+        // races (the Inherit test occasionally saw the other's restore).
+        let _guard = EnvGuard::set("FARTCODE_PTY_REMOVE_PROBE", "secret-value");
         let tmp = tempfile::tempdir().unwrap();
         let mgr = PortablePtyManager;
 
@@ -409,13 +412,13 @@ mod tests {
                 "/bin/bash",
                 &[
                     "-c".to_string(),
-                    "echo -n \"$FARTCODE_PTY_LEAK_PROBE\" > probe.txt".to_string(),
+                    "echo -n \"$FARTCODE_PTY_REMOVE_PROBE\" > probe.txt".to_string(),
                 ],
                 tmp.path(),
                 &[],
                 PtySize::default(),
                 EnvPolicy::Inherit,
-                &["FARTCODE_PTY_LEAK_PROBE".to_string()],
+                &["FARTCODE_PTY_REMOVE_PROBE".to_string()],
             )
             .unwrap();
         let _ = h.wait_exit(Duration::from_secs(10));
