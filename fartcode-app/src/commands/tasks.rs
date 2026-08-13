@@ -150,7 +150,10 @@ pub fn maybe_summarize_task_name(app: &Arc<App>, task_id: &str, name: &str) {
         let title = summarize_via_claude(&task_id, &prompt)
             .or_else(|| summarize_via_ollama(&task_id, &prompt));
         let Some(title) = title else {
-            tracing::debug!(task_id, "no summarizer produced a title — name stays verbatim");
+            tracing::debug!(
+                task_id,
+                "no summarizer produced a title — name stays verbatim"
+            );
             return;
         };
         if let Err(e) = app.tasks.rename(&task_id, &title) {
@@ -220,7 +223,6 @@ fn summarize_via_ollama(task_id: &str, prompt: &str) -> Option<String> {
         }
     }
 }
-
 
 /// 7b "A failed setup blocks agent start": blocks until the auto-run setup
 /// terminal exits, then launches the default agent ONLY on exit 0 — a
@@ -524,11 +526,20 @@ mod tests {
     #[test]
     fn first_line_title_strips_model_wrappers() {
         // gemma3:270m wraps titles in markdown bold despite instructions.
-        assert_eq!(first_line_title(b"**Reconnect Buffer Queue**\n"), "Reconnect Buffer Queue");
+        assert_eq!(
+            first_line_title(b"**Reconnect Buffer Queue**\n"),
+            "Reconnect Buffer Queue"
+        );
         // claude occasionally quotes and adds a period.
-        assert_eq!(first_line_title(b"\"Fix save button.\"\n"), "Fix save button");
+        assert_eq!(
+            first_line_title(b"\"Fix save button.\"\n"),
+            "Fix save button"
+        );
         // Leading blank lines / spinner-adjacent whitespace skipped.
-        assert_eq!(first_line_title(b"\n  \n  Fix settings save\n"), "Fix settings save");
+        assert_eq!(
+            first_line_title(b"\n  \n  Fix settings save\n"),
+            "Fix settings save"
+        );
         // Empty output stays empty (caller treats as no-title).
         assert_eq!(first_line_title(b""), "");
         // 80-char cap.
