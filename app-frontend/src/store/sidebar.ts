@@ -43,6 +43,8 @@ interface SidebarState {
   toggleCollapsed: (id: string) => void;
   createTask: (projectId: string, opts?: CreateTaskOptions) => Promise<void>;
   markTitlePending: (taskId: string) => void;
+  /** Reveal a skeleton-held task whose rename is not coming (see impl). */
+  clearTitlePending: (taskId: string) => void;
   createProject: (path: string) => Promise<void>;
   /** Remote project picker (E12-04): an existing repo on an SSH host. */
   createRemoteProject: (connectionId: string, remotePath: string) => Promise<void>;
@@ -201,6 +203,20 @@ export const useSidebar = create<SidebarState>((set, get) => ({
         return { ...s, pendingTitle };
       });
     }, 10_000);
+  },
+
+  /** The skeleton's early exit: an issue-provisioned task KEEPS the issue
+   * title as its name — the LLM summarize hook only runs on the create_task
+   * command path — so no task:renamed is coming and the 10s cap above would
+   * hide the row while its agent visibly starts. The step wire calls this
+   * when step:launch names the task (the earliest proof it is not a
+   * pasted-prompt task). */
+  clearTitlePending: (taskId: string) => {
+    set((s) => {
+      if (!s.pendingTitle[taskId]) return s;
+      const { [taskId]: _dropped, ...pendingTitle } = s.pendingTitle;
+      return { ...s, pendingTitle };
+    });
   },
 
   createProject: async (path) => {

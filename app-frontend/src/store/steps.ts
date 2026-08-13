@@ -312,6 +312,11 @@ export function wireStepEvents(): () => void {
       // A launch supersedes every derived state the card carried.
       steps.clearIssue(event.issueId);
       steps.noteLaunch(event.issueId, event.taskId);
+      // Reveal the provisioned task NOW: it keeps the issue title as its
+      // name, no task:renamed is coming, and the sidebar's pasted-prompt
+      // skeleton (long names) would otherwise hide the row for its whole
+      // 10s cap — which read as "not in Running until the agent ran".
+      useSidebar.getState().clearTitlePending(event.taskId);
       // The dispatch stays visible ("starting") until the directive
       // finishes — prompt pasted, reattached/focused, or refused.
       void runLaunchDirective({

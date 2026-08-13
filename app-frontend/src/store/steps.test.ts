@@ -211,6 +211,17 @@ describe("wireStepEvents", () => {
     expect(terminalWrite).toHaveBeenCalledTimes(1);
   });
 
+  it("reveals a skeleton-held provisioned task the moment its launch lands", async () => {
+    // A long issue title marked the task pending at task:created; the
+    // rename will never come on this path — step:launch must reveal it.
+    useSidebar.setState({ pendingTitle: { "task-1": true } });
+
+    emit(LAUNCH);
+    await flush();
+
+    expect(useSidebar.getState().pendingTitle["task-1"]).toBeUndefined();
+  });
+
   it("marks the card starting while the directive runs and clears it after", async () => {
     let resolveOpen!: (id: string) => void;
     vi.mocked(terminalOpenAgent).mockReturnValue(
