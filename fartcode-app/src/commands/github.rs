@@ -16,7 +16,8 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::app::App;
-use crate::commands::git::{off_main_thread, project_push_remote, workspace_path};
+use crate::commands::git::{project_push_remote, workspace_path};
+use crate::commands::off_main_thread;
 
 /// Payload for the Pull Requests tab: distinguishes "no token", "not a
 /// GitHub repo / detached HEAD", "no PR for the branch", and "render".

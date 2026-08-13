@@ -17,7 +17,7 @@ use tauri::State;
 use fartcode_telemetry::memory::{MemoryValue, DEFAULT_WINDOW_DAYS};
 
 use crate::app::App;
-use crate::commands::git::off_main_thread;
+use crate::commands::off_main_thread;
 
 /// The four local memory-value signals for one project.
 ///

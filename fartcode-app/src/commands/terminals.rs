@@ -5,7 +5,7 @@
 //! **Threading (#80):** the commands that spawn a PTY, scan PATH or shell
 //! out to tmux (`terminal_open`, `terminal_open_agent`, `terminal_close`,
 //! `terminal_surviving`) are `async fn` whose whole body runs inside
-//! `tauri::async_runtime::spawn_blocking` — a non-async command body is
+//! [`off_main_thread`] (`spawn_blocking` + join) — a non-async command body is
 //! inlined into the invoke handler and would run on the macOS main thread,
 //! stalling the run loop. The bodies live in the `*_blocking` fns (same
 //! code, same order of side effects) so tests can drive them directly and
@@ -20,6 +20,7 @@ use rusqlite::OptionalExtension;
 use tauri::State;
 
 use crate::app::App;
+use crate::commands::off_main_thread;
 use crate::terminals::{TerminalManager, TerminalSpec};
 
 /// Resolves the task's terminal context: owning project (id + path, for
@@ -97,11 +98,7 @@ pub async fn terminal_open(
     let app = app.inner().clone();
     // Off the IPC thread: a PTY fork/exec always, plus `tmux -V` and
     // `tmux list-sessions` when the project runs tmux.
-    tauri::async_runtime::spawn_blocking(move || {
-        terminal_open_blocking(&terminals, &app, &task_id, rows, cols)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    off_main_thread(move || terminal_open_blocking(&terminals, &app, &task_id, rows, cols)).await
 }
 
 /// `terminal_open`'s body, off the IPC thread. Generic over the Tauri
@@ -183,11 +180,10 @@ pub async fn terminal_open_agent(
     let app = app.inner().clone();
     // Off the IPC thread: `find_on_path` walks PATH plus the common bin
     // dirs per candidate binary, then forks a PTY.
-    tauri::async_runtime::spawn_blocking(move || {
+    off_main_thread(move || {
         terminal_open_agent_blocking(&terminals, &app, &task_id, &agent, rows, cols)
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// `terminal_open_agent`'s body, off the IPC thread. Generic over the Tauri
@@ -287,9 +283,7 @@ pub async fn terminal_close(
     let terminals = terminals.inner().clone();
     // Off the IPC thread: a tmux-backed entry shells out to
     // `tmux kill-session` and waits on it.
-    tauri::async_runtime::spawn_blocking(move || terminal_close_blocking(&terminals, &terminal_id))
-        .await
-        .map_err(|e| e.to_string())?
+    off_main_thread(move || terminal_close_blocking(&terminals, &terminal_id)).await
 }
 
 /// `terminal_close`'s body, off the IPC thread.
@@ -314,11 +308,7 @@ pub async fn terminal_surviving(
     let app = app.inner().clone();
     // Off the IPC thread: with tmux on this runs `tmux list-sessions`
     // (plus the one-time `tmux -V` probe).
-    tauri::async_runtime::spawn_blocking(move || {
-        terminal_surviving_blocking(&terminals, &app, &task_id)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    off_main_thread(move || terminal_surviving_blocking(&terminals, &app, &task_id)).await
 }
 
 /// `terminal_surviving`'s body, off the IPC thread. Generic over the Tauri

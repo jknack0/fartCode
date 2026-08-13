@@ -22,6 +22,7 @@ use rusqlite::OptionalExtension;
 use tauri::State;
 
 use crate::app::App;
+use crate::commands::off_main_thread;
 
 /// Resolves a workspace's materialized worktree path. Shared by the git
 /// commands and the workspace-file commands (E4-05).
@@ -47,25 +48,6 @@ pub(crate) fn workspace_path(app: &App, workspace_id: &str) -> Result<PathBuf, S
         }
         Some(Some(p)) => Ok(PathBuf::from(p)),
     }
-}
-
-/// Runs `work` on the blocking pool and awaits it, so the calling command
-/// never occupies the IPC (main) thread while git, SQLite, or the
-/// filesystem is busy (#80).
-///
-/// The closure owns everything it touches — commands clone the `Arc<App>`
-/// out of `State` first, since `State<'_, _>` borrows the invoke scope and
-/// cannot cross a thread boundary. A join failure (panic inside the
-/// closure) becomes a plain command error rather than a lost invoke that
-/// leaves the UI waiting forever.
-pub(crate) async fn off_main_thread<T, F>(work: F) -> Result<T, String>
-where
-    F: FnOnce() -> Result<T, String> + Send + 'static,
-    T: Send + 'static,
-{
-    tauri::async_runtime::spawn_blocking(work)
-        .await
-        .map_err(|e| format!("git task did not complete: {e}"))?
 }
 
 /// Status snapshot (staged/unstaged/conflicts) for a workspace's worktree.
@@ -888,30 +870,5 @@ mod tests {
             f.err("git_status", json!({ "workspaceId": "w_nopath" })),
             "workspace has no local path: w_nopath"
         );
-    }
-
-    #[test]
-    fn off_main_thread_leaves_the_caller_and_propagates_both_outcomes() {
-        let caller = std::thread::current().id();
-        let ran_on = tauri::async_runtime::block_on(off_main_thread(move || {
-            Ok::<ThreadId, String>(std::thread::current().id())
-        }))
-        .unwrap();
-        assert_ne!(caller, ran_on, "closure ran on the calling thread");
-
-        let err = tauri::async_runtime::block_on(off_main_thread(|| {
-            Err::<(), String>("verbatim failure".into())
-        }))
-        .unwrap_err();
-        assert_eq!(err, "verbatim failure");
-
-        // A panic must become an error, not a promise the UI waits on forever.
-        let err = tauri::async_runtime::block_on(off_main_thread(|| {
-            panic!("boom");
-            #[allow(unreachable_code)]
-            Ok::<(), String>(())
-        }))
-        .unwrap_err();
-        assert!(err.starts_with("git task did not complete"), "got: {err}");
     }
 }

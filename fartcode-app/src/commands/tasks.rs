@@ -8,10 +8,10 @@
 //! commands here that touch git, the network, PTY spawns or tmux
 //! (`create_task`, `list_project_branches`, `provision_task`,
 //! `delete_task`) are therefore `async fn` whose whole body runs inside
-//! `tauri::async_runtime::spawn_blocking`. The bodies live in the
+//! [`off_main_thread`] (`spawn_blocking` + join). The bodies live in the
 //! `*_blocking` fns below (same code, same order of side effects) so tests
 //! can drive them directly, and so no DB guard is ever held across an
-//! await: everything between `spawn_blocking` and the join is synchronous.
+//! await: everything inside the closure is synchronous.
 
 use fartcode_core::projects::ProjectStore;
 use fartcode_core::settings::DEFAULT_AGENT;
@@ -29,6 +29,7 @@ use tauri::State;
 
 use crate::app::App;
 use crate::commands::lifecycle::run_auto_lifecycle_scripts;
+use crate::commands::off_main_thread;
 use crate::terminals::{TerminalManager, TerminalSpec};
 
 /// Creates a task AND provisions its workspace (worktree + branch) in one
@@ -51,7 +52,7 @@ pub async fn create_task(
     let terminals = terminals.inner().clone();
     // Off the IPC (macOS main) thread: the body fetches, spawns git, walks
     // the fs and forks PTYs — unbounded work behind an un-timed `git fetch`.
-    tauri::async_runtime::spawn_blocking(move || {
+    off_main_thread(move || {
         create_task_blocking(
             &app,
             &terminals,
@@ -62,7 +63,6 @@ pub async fn create_task(
         )
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// `create_task`'s body, off the IPC thread. Generic over the Tauri runtime
@@ -376,9 +376,7 @@ pub async fn list_project_branches(
 ) -> Result<Vec<fartcode_core::git::BranchRef>, String> {
     let app = app.inner().clone();
     // Off the IPC thread: `git branch -a` is a subprocess.
-    tauri::async_runtime::spawn_blocking(move || list_project_branches_blocking(&app, &project_id))
-        .await
-        .map_err(|e| e.to_string())?
+    off_main_thread(move || list_project_branches_blocking(&app, &project_id)).await
 }
 
 /// `list_project_branches`'s body, off the IPC thread.
@@ -399,9 +397,7 @@ pub async fn provision_task(app: State<'_, Arc<App>>, task_id: String) -> Result
     let app = app.inner().clone();
     // Off the IPC thread: cold provision runs `git fetch` (un-timed) plus
     // worktree list/prune/add; even the idempotent reuse path shells out.
-    tauri::async_runtime::spawn_blocking(move || provision_task_blocking(&app, &task_id))
-        .await
-        .map_err(|e| e.to_string())?
+    off_main_thread(move || provision_task_blocking(&app, &task_id)).await
 }
 
 /// `provision_task`'s body, off the IPC thread.
@@ -474,7 +470,7 @@ pub async fn delete_task(
     // Off the IPC thread: teardown spin-waits up to 5s PER session leaf,
     // kills tmux sessions, removes the worktree and prunes — tens of
     // seconds in the worst case, and the exact freeze users reported.
-    tauri::async_runtime::spawn_blocking(move || {
+    off_main_thread(move || {
         delete_task_blocking(
             &app,
             &terminals,
@@ -486,7 +482,6 @@ pub async fn delete_task(
         )
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// `delete_task`'s body, off the IPC thread. The order of side effects is

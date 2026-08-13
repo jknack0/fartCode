@@ -17,7 +17,7 @@
 //! fork (`provider_auth_login`). A non-async `#[tauri::command]` runs its
 //! body inline on the IPC thread — the macOS main thread — which stalls the
 //! NSRunLoop and freezes the window. Each therefore hands its body to
-//! `spawn_blocking` and awaits the join handle; merely marking them `async`
+//! [`off_main_thread`] (`spawn_blocking` + join); merely marking them `async`
 //! would only move the block onto a tokio worker. The wire contract
 //! (argument names, serialized results, error strings, side-effect
 //! ordering, the keyring rollback path) is unchanged.
@@ -33,6 +33,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::app::App;
+use crate::commands::off_main_thread;
 use crate::commands::terminals::resolve_task_context;
 use crate::terminals::{TerminalManager, TerminalSpec};
 
@@ -91,11 +92,10 @@ pub async fn add_provider_account(
     // `State` cannot cross into the blocking closure; the managed value is
     // an `Arc<App>`, so clone the handle and move that.
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    off_main_thread(move || {
         add_provider_account_blocking(&app, provider_id, account_id, secret, label, auth_method)
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Body of [`add_provider_account`], run on the blocking pool — the former
@@ -159,9 +159,7 @@ pub async fn list_provider_accounts(
     provider_id: Option<String>,
 ) -> Result<Vec<ProviderAccountDto>, String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || list_provider_accounts_blocking(&app, provider_id))
-        .await
-        .map_err(|e| e.to_string())?
+    off_main_thread(move || list_provider_accounts_blocking(&app, provider_id)).await
 }
 
 /// Body of [`list_provider_accounts`], run on the blocking pool — one
@@ -180,9 +178,7 @@ fn list_provider_accounts_blocking(
 #[tauri::command]
 pub async fn remove_provider_account(app: State<'_, Arc<App>>, id: String) -> Result<(), String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || remove_provider_account_blocking(&app, &id))
-        .await
-        .map_err(|e| e.to_string())?
+    off_main_thread(move || remove_provider_account_blocking(&app, &id)).await
 }
 
 /// Body of [`remove_provider_account`], run on the blocking pool.
@@ -232,9 +228,7 @@ pub struct AuthStatusDto {
 
 #[tauri::command]
 pub async fn provider_auth_status(provider_id: String) -> Result<AuthStatusDto, String> {
-    tauri::async_runtime::spawn_blocking(move || provider_auth_status_blocking(provider_id))
-        .await
-        .map_err(|e| e.to_string())?
+    off_main_thread(move || provider_auth_status_blocking(provider_id)).await
 }
 
 /// Body of [`provider_auth_status`], run on the blocking pool: a PATH scan
@@ -292,11 +286,10 @@ pub(crate) async fn provider_auth_login_off_thread<R: tauri::Runtime>(
     rows: u16,
     cols: u16,
 ) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    off_main_thread(move || {
         provider_auth_login_blocking(&app, &terminals, provider_id, task_id, rows, cols)
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Body of [`provider_auth_login`], run on the blocking pool: PATH scan,

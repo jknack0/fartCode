@@ -19,6 +19,7 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::App;
+use crate::commands::off_main_thread;
 use crate::step_engine::{EnterOutcome, ParkedStepDto};
 
 /// The engine's move: enter a column, then run/queue/nothing per the
@@ -31,13 +32,12 @@ pub async fn issue_enter_column(
     position: Option<i64>,
 ) -> Result<EnterOutcome, String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    off_main_thread(move || {
         // Command path: the returned launch is DELIVERED — the frontend
         // opens the session from this outcome.
         crate::step_engine::enter_column_from_command(&app, &issue_id, &column_id, position)
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Fires the parked (queue-mode) step for an issue. Single-shot; typed
@@ -49,9 +49,7 @@ pub async fn step_confirm(
     issue_id: String,
 ) -> Result<EnterOutcome, String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || crate::step_engine::confirm_step(&app, &issue_id))
-        .await
-        .map_err(|e| e.to_string())?
+    off_main_thread(move || crate::step_engine::confirm_step(&app, &issue_id)).await
 }
 
 /// The project's current parks (E18-09 rehydration): parks live only in
@@ -67,9 +65,7 @@ pub async fn step_parked_list(
     project_id: String,
 ) -> Result<Vec<ParkedStepDto>, String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || crate::step_engine::parked_list(&app, &project_id))
-        .await
-        .map_err(|e| e.to_string())?
+    off_main_thread(move || crate::step_engine::parked_list(&app, &project_id)).await
 }
 
 /// The card's spend ledger (#82): every launch (with provider/model,
@@ -84,11 +80,7 @@ pub async fn step_ledger_list(
     issue_id: String,
 ) -> Result<Vec<fartcode_core::issues::ledger::LedgerEntry>, String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        app.ledger.list_for_issue(&issue_id).map_err(String::from)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    off_main_thread(move || app.ledger.list_for_issue(&issue_id).map_err(String::from)).await
 }
 
 #[cfg(test)]

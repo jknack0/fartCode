@@ -37,7 +37,7 @@ use fartcode_core::issues::Issue;
 use fartcode_core::projects::ProjectStore;
 
 use crate::app::App;
-use crate::commands::git::off_main_thread;
+use crate::commands::off_main_thread;
 
 /// The card detail's Dossier group (§8f).
 #[derive(Debug, Clone, serde::Serialize)]

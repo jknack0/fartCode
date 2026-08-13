@@ -9,7 +9,7 @@
 //! (beachball, not spinner). The two commands here that can reach the
 //! network or a git/gh subprocess — [`issue_dispatch`] and
 //! [`project_github_issues`] — are therefore `async` AND push their whole
-//! body onto the blocking pool via `spawn_blocking`; `async` alone would
+//! body onto the blocking pool via [`off_main_thread`]; `async` alone would
 //! only move the stall onto a tokio worker. The remaining commands are
 //! single indexed SQLite statements against the in-process connection and
 //! stay synchronous on purpose.
@@ -24,6 +24,7 @@ use fartcode_core::projects::ProjectStore;
 
 use super::serde_util::double_option;
 use crate::app::App;
+use crate::commands::off_main_thread;
 
 /// Request body for [`issue_create`] (frontend sends one object).
 #[derive(Debug, Clone, Deserialize)]
@@ -217,9 +218,7 @@ pub async fn issue_dispatch(
     issue_id: String,
 ) -> Result<crate::dispatch::DispatchOutcome, String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || issue_dispatch_blocking(&app, &issue_id))
-        .await
-        .map_err(|e| e.to_string())?
+    off_main_thread(move || issue_dispatch_blocking(&app, &issue_id)).await
 }
 
 /// [`issue_dispatch`]'s body, verbatim — a plain function so the blocking
@@ -256,9 +255,7 @@ pub async fn project_github_issues(
     project_id: String,
 ) -> Result<Vec<fartcode_git::issues::GitHubIssue>, String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || project_github_issues_blocking(&app, &project_id))
-        .await
-        .map_err(|e| e.to_string())?
+    off_main_thread(move || project_github_issues_blocking(&app, &project_id)).await
 }
 
 /// [`project_github_issues`]'s body, verbatim (see [`issue_dispatch_blocking`]).

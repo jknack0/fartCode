@@ -7,9 +7,9 @@
 //! repainting (a beachball, not a spinner). `create_project` (5-6 git
 //! subprocesses + a `.fartCode.json` read + a `.git/info/exclude` write)
 //! and `delete_project` (a recursive `remove_dir_all` of the whole worktree
-//! pool + DB cascade) therefore hand their bodies to `spawn_blocking` and
-//! await the join handle. Making them merely `async` would not help — the
-//! body would just block a tokio worker instead of the main thread.
+//! pool + DB cascade) therefore hand their bodies to [`off_main_thread`]
+//! (`spawn_blocking` + join). Making them merely `async` would not help —
+//! the body would just block a tokio worker instead of the main thread.
 //!
 //! The wire contract is unchanged: same argument names, same serialized
 //! result, same error strings, same event ordering. `list_projects` stays
@@ -22,6 +22,7 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::App;
+use crate::commands::off_main_thread;
 use crate::terminals::TerminalManager;
 
 #[tauri::command]
@@ -37,9 +38,7 @@ pub async fn create_project(app: State<'_, Arc<App>>, path: String) -> Result<Pr
     // `State` cannot cross into the blocking closure; the managed value is
     // an `Arc<App>`, so clone the handle and move that.
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || create_project_blocking(&app, &path))
-        .await
-        .map_err(|e| e.to_string())?
+    off_main_thread(move || create_project_blocking(&app, &path)).await
 }
 
 /// Body of [`create_project`], run on the blocking pool. Identical to the
@@ -62,11 +61,7 @@ pub async fn delete_project(
     let app = app.inner().clone();
     let terminals = terminals.inner().clone();
     let acp = acp.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        delete_project_blocking(&app, &terminals, &acp, &id)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    off_main_thread(move || delete_project_blocking(&app, &terminals, &acp, &id)).await
 }
 
 /// Body of [`delete_project`], run on the blocking pool.

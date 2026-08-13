@@ -6,7 +6,8 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::App;
-use crate::commands::git::{off_main_thread, workspace_path};
+use crate::commands::git::workspace_path;
+use crate::commands::off_main_thread;
 
 /// Writes `content` to `<worktree>/<path>` for an existing workspace.
 /// Containment (no absolute, no `..`, no symlink escapes) is enforced in

@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::app::App;
+use crate::commands::off_main_thread;
 
 /// A saved profile as the UI sees it — no secret material.
 #[derive(Debug, Clone, Serialize)]
@@ -106,14 +107,13 @@ pub async fn ssh_connection_list(
     app: State<'_, Arc<App>>,
 ) -> Result<Vec<SshConnectionDto>, String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    off_main_thread(move || {
         app.ssh_connections
             .list()
             .map(|list| list.iter().map(SshConnectionDto::from).collect())
             .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Creates or updates a profile. A blank secret keeps the stored one.
@@ -123,7 +123,7 @@ pub async fn ssh_connection_save(
     input: SshConnectionInput,
 ) -> Result<SshConnectionDto, String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    off_main_thread(move || {
         let auth_type = SshAuthType::parse(&input.auth_type);
         let secret = blank_to_none(input.secret.clone());
         let meta = input.meta();
@@ -166,7 +166,6 @@ pub async fn ssh_connection_save(
             .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Deletes a profile. Refuses while a project or workspace still points at
@@ -177,7 +176,7 @@ pub async fn ssh_connection_delete(
     connection_id: String,
 ) -> Result<(), String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    off_main_thread(move || {
         let used = app
             .ssh_connections
             .reference_count(&connection_id)
@@ -193,5 +192,4 @@ pub async fn ssh_connection_delete(
             .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
 }

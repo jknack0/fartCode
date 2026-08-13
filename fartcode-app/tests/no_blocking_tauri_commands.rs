@@ -20,7 +20,8 @@
 //!    a justification. A NEW command defaults to failing — the author has to
 //!    make a deliberate, reviewable choice.
 //! 2. Every command in [`MUST_OFFLOAD`] (#80's confirmed offender table) is
-//!    `async` AND hands its blocking body to `spawn_blocking`. `async` alone
+//!    `async` AND hands its blocking body to `off_main_thread` (the sanctioned
+//!    helper in `src/commands/mod.rs`) or raw `spawn_blocking`. `async` alone
 //!    only moves the block onto an async-runtime worker; the work must leave
 //!    the thread.
 //! 3. No `SYNC_OK` command's body contains an obvious blocking call
@@ -226,7 +227,7 @@ fn no_tauri_command_blocks_the_main_thread() {
                 .unwrap_or("");
             if !func.is_async {
                 violations.push(must_offload_message(&entry.name, &site, why, false));
-            // `off_main_thread` (commands/git.rs) is a thin await over
+            // `off_main_thread` (commands/mod.rs) is a thin await over
             // `spawn_blocking` with its own test proving the closure leaves
             // the caller — count it as the offload it is. Any future helper
             // of that shape must be added here, not worked around.
@@ -290,16 +291,15 @@ fn unclassified_message(name: &str, site: &str) -> String {
          \n\
          (a) It touches a subprocess, the network, a sleep, a process spawn, or\n\
          \x20    unbounded filesystem work — make it async and push the blocking body\n\
-         \x20    off the thread:\n\
+         \x20    off the thread with `crate::commands::off_main_thread`:\n\
          \n\
          \x20        #[tauri::command]\n\
          \x20        pub async fn {name}(app: State<'_, Arc<App>>, ..) -> Result<T, String> {{\n\
          \x20            let app = app.inner().clone();\n\
-         \x20            tauri::async_runtime::spawn_blocking(move || {{\n\
+         \x20            off_main_thread(move || {{\n\
          \x20                /* the blocking body, verbatim */\n\
          \x20            }})\n\
          \x20            .await\n\
-         \x20            .map_err(|e| e.to_string())?\n\
          \x20        }}\n\
          \n\
          (b) It is genuinely cheap and bounded (pure fn, in-memory, one short SQLite\n\
@@ -333,16 +333,16 @@ fn must_offload_message(name: &str, site: &str, why: &str, is_async: bool) -> St
          \n\
          Blocking work on this path (#80): {why}\n\
          \n\
-         Required shape — async + tauri::async_runtime::spawn_blocking:\n\
+         Required shape — async + `crate::commands::off_main_thread` (a thin\n\
+         await over spawn_blocking):\n\
          \n\
          \x20    #[tauri::command]\n\
          \x20    pub async fn {name}(app: State<'_, Arc<App>>, ..) -> Result<T, String> {{\n\
          \x20        let app = app.inner().clone();\n\
-         \x20        tauri::async_runtime::spawn_blocking(move || {{\n\
+         \x20        off_main_thread(move || {{\n\
          \x20            /* the blocking body, verbatim */\n\
          \x20        }})\n\
          \x20        .await\n\
-         \x20        .map_err(|e| e.to_string())?\n\
          \x20    }}\n\
          \n\
          This command is in MUST_OFFLOAD in {GUARD}; it may not be moved to SYNC_OK.\n\
@@ -357,7 +357,7 @@ fn marker_message(name: &str, site: &str, marker: &str, what: &str) -> String {
          it {what} on the macOS main thread. See #80.\n\
          \n\
          Make it `async` and wrap the blocking body in\n\
-         `tauri::async_runtime::spawn_blocking(..).await`, then delete its SYNC_OK entry.\n\
+         `crate::commands::off_main_thread(..).await`, then delete its SYNC_OK entry.\n\
          \n\
          {AWAIT_RULE}"
     )

@@ -14,7 +14,7 @@
 //! backend-side, and the task view surfaces it as a tab on open.
 //!
 //! **Threading (#80):** `terminal_open_lifecycle` is `async fn` and runs
-//! `spawn_lifecycle_script` inside `tauri::async_runtime::spawn_blocking` —
+//! `spawn_lifecycle_script` inside [`off_main_thread`] —
 //! a non-async command body is inlined into the invoke handler and would
 //! read settings and fork a PTY on the macOS main thread, stalling the run
 //! loop. `spawn_lifecycle_script` itself stays synchronous: the auto-run
@@ -29,6 +29,7 @@ use fartcode_core::terminals::lifecycle::{task_env, LifecycleScriptType};
 use tauri::State;
 
 use crate::app::App;
+use crate::commands::off_main_thread;
 use crate::commands::terminals::resolve_task_context;
 use crate::terminals::{TerminalManager, TerminalSpec};
 
@@ -228,11 +229,10 @@ pub async fn terminal_open_lifecycle(
     let app = app.inner().clone();
     // Off the IPC thread: the spawn reads the project's `.fartCode.json`
     // settings and forks a PTY running `sh -c '<script>'`.
-    tauri::async_runtime::spawn_blocking(move || {
+    off_main_thread(move || {
         terminal_open_lifecycle_blocking(&terminals, &app, &task_id, &script_type, rows, cols)
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// `terminal_open_lifecycle`'s body, off the IPC thread. Generic over the

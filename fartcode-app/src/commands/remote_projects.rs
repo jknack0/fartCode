@@ -4,8 +4,8 @@
 //!
 //! **UI thread (#80):** every command here is `async`, so Tauri drives it on
 //! the async runtime rather than inlining it into the IPC (main) thread. The
-//! one blocking body — local `git clone` — goes to `spawn_blocking`, the same
-//! shape `create_project` uses.
+//! one blocking body — local `git clone` — goes to [`off_main_thread`], the
+//! same shape `create_project` uses.
 //!
 //! **Connection lifecycle (E12-06):** commands here borrow the POOLED client
 //! from `RemotePtyRegistry` — states, backoff and rehydrate live there, and
@@ -20,6 +20,7 @@ use fartcode_ssh::host::{remote_projects_dir, SshRemoteHost};
 use tauri::State;
 
 use crate::app::App;
+use crate::commands::off_main_thread;
 
 /// Resolves a stored profile and hands back the POOLED connection for it
 /// (E12-06 AC2/AC3). Same session the terminals, agents and tmux views use:
@@ -129,14 +130,13 @@ pub async fn new_remote_project(
 pub async fn clone_project(app: State<'_, Arc<App>>, url: String) -> Result<ProjectDto, String> {
     let app = app.inner().clone();
     // git clone is a blocking subprocess: keep it off the IPC thread (#80).
-    tauri::async_runtime::spawn_blocking(move || {
+    off_main_thread(move || {
         app.projects
             .create_clone(&url)
             .map(|p| ProjectDto::from(&p))
             .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Opens (or re-opens) a connection and holds it in the shared registry
@@ -145,14 +145,13 @@ pub async fn clone_project(app: State<'_, Arc<App>>, url: String) -> Result<Proj
 #[tauri::command]
 pub async fn ssh_connect(app: State<'_, Arc<App>>, connection_id: String) -> Result<bool, String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    off_main_thread(move || {
         app.remote_pty
             .connect(&connection_id)
             .map(|()| true)
             .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Drops a connection at the user's request (E12-05 AC13). The intent is
@@ -167,12 +166,11 @@ pub async fn ssh_disconnect(
     // E12-09: a disconnected connection cannot carry tunnels — tear them
     // down with it instead of leaving listeners that spray doomed dials.
     app.port_forwards.stop_for_connection(&connection_id);
-    tauri::async_runtime::spawn_blocking(move || {
+    off_main_thread(move || {
         app.remote_pty.disconnect(&connection_id);
-        false
+        Ok(false)
     })
     .await
-    .map_err(|e| e.to_string())
 }
 
 /// Whether this build can provision BYOI remote tasks (E12-10 gate). The UI
@@ -200,14 +198,15 @@ pub async fn ssh_connection_state(
     connection_id: String,
 ) -> Result<SshConnectionStatus, String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || SshConnectionStatus {
-        state: app.remote_pty.state(&connection_id),
-        connected: app.remote_pty.is_connected(&connection_id),
-        degraded: app.remote_pty.is_degraded(&connection_id),
-        connection_id,
+    off_main_thread(move || {
+        Ok(SshConnectionStatus {
+            state: app.remote_pty.state(&connection_id),
+            connected: app.remote_pty.is_connected(&connection_id),
+            degraded: app.remote_pty.is_degraded(&connection_id),
+            connection_id,
+        })
     })
     .await
-    .map_err(|e| e.to_string())
 }
 
 /// Lifecycle state of every connection this process has touched — what the
@@ -217,8 +216,9 @@ pub async fn ssh_connection_states(
     app: State<'_, Arc<App>>,
 ) -> Result<Vec<SshConnectionStatus>, String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        app.remote_pty
+    off_main_thread(move || {
+        Ok(app
+            .remote_pty
             .states()
             .into_iter()
             .map(|(connection_id, state)| SshConnectionStatus {
@@ -227,8 +227,7 @@ pub async fn ssh_connection_states(
                 connection_id,
                 state,
             })
-            .collect()
+            .collect())
     })
     .await
-    .map_err(|e| e.to_string())
 }

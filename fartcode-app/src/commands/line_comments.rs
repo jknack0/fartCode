@@ -10,7 +10,7 @@
 //! `#[tauri::command]` runs that inline on the IPC thread, which on macOS
 //! is the main thread, so the NSRunLoop stalls and the window stops
 //! repainting. It is therefore `async` **and** hands the work to
-//! `spawn_blocking` (merely `async` would block a tokio worker instead).
+//! [`off_main_thread`] (merely `async` would block a tokio worker instead).
 //! The wire contract — argument names, serialized result, error strings,
 //! side-effect ordering — is unchanged. The CRUD commands stay synchronous:
 //! each is a single indexed DB statement.
@@ -26,6 +26,7 @@ use tauri::State;
 
 use crate::app::App;
 use crate::commands::lifecycle::run_auto_lifecycle_scripts;
+use crate::commands::off_main_thread;
 use crate::commands::tasks::create_task_params;
 use crate::terminals::TerminalManager;
 
@@ -183,7 +184,7 @@ pub(crate) async fn create_task_from_comment_off_thread<R: tauri::Runtime>(
     selected_code: String,
     enclosing_function: Option<String>,
 ) -> Result<CreateTaskFromCommentResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    off_main_thread(move || {
         create_task_from_comment_core(
             &app,
             &terminals,
@@ -195,7 +196,6 @@ pub(crate) async fn create_task_from_comment_off_thread<R: tauri::Runtime>(
         )
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Command core (testable without a Tauri `State`): prompt construction +

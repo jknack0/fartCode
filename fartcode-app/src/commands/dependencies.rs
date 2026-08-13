@@ -3,7 +3,7 @@
 //! the registry tail (`+ N more in the registry · N acp`).
 //!
 //! Install/update run the blocking `ProcessInstallRunner` on the blocking
-//! pool (`spawn_blocking`) — an npm/curl install must never stall the main
+//! pool ([`off_main_thread`]) — an npm/curl install must never stall the main
 //! thread. The runner buffers child output and flushes once at the end, so
 //! there is NO incremental progress to report — the `installing · 62%` row
 //! state has no backend feed until a PTY-backed runner lands (E2-06 seam);
@@ -16,6 +16,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::app::App;
+use crate::commands::off_main_thread;
 
 /// One agent CLI row (7d). `latest` is only set when it is cheaply known —
 /// the network update check is a Phase-0 stub, so it is currently always
@@ -90,9 +91,7 @@ pub async fn host_dependency_list(
     refresh: bool,
 ) -> Result<Vec<HostDependencyDto>, String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || list_blocking(&app, refresh))
-        .await
-        .map_err(|e| e.to_string())?
+    off_main_thread(move || list_blocking(&app, refresh)).await
 }
 
 fn provider_dto(app: &App, provider_id: &str) -> Result<HostDependencyDto, String> {
@@ -117,7 +116,7 @@ pub async fn host_dependency_install(
     provider_id: String,
 ) -> Result<HostDependencyDto, String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    off_main_thread(move || {
         let mut sink = |chunk: &str| {
             tracing::info!(provider_id = %provider_id, output = %chunk, "dependency install output");
         };
@@ -127,7 +126,6 @@ pub async fn host_dependency_install(
         provider_dto(&app, &provider_id)
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Updates the provider's CLI (per-manager update command; curl installers
@@ -138,7 +136,7 @@ pub async fn host_dependency_update(
     provider_id: String,
 ) -> Result<HostDependencyDto, String> {
     let app = app.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    off_main_thread(move || {
         let mut sink = |chunk: &str| {
             tracing::info!(provider_id = %provider_id, output = %chunk, "dependency update output");
         };
@@ -148,7 +146,6 @@ pub async fn host_dependency_update(
         provider_dto(&app, &provider_id)
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Registry counts for the 7d tail line. Counted from the provider
