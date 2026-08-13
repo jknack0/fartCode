@@ -1,21 +1,41 @@
 //! Workspace file writes (E4-05, #45; E5 will add reads/tree listing here).
 //!
 //! The diff editor's ⌘S path writes the worktree side of an unstaged diff
-//! back to disk. Containment is enforced two ways (AGENTS.md realpath
-//! rule): lexical — no absolute paths, no `..` components, which also
-//! covers files that don't exist yet and can't be canonicalized — and
-//! canonical — the resolved target must stay under the canonical worktree
-//! root, which covers symlink escapes.
+//! back to disk. Containment (AGENTS.md realpath rule) has one owner:
+//! [`resolve_contained`] — lexical + canonical, documented there — which
+//! the line-comment anchor guardrail also calls through.
 
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
 use crate::Error;
 
-/// Writes `content` to `<worktree>/<rel_path>`, creating the file when it
-/// doesn't exist (parent must). Fails with [`Error::PathEscape`] for any
-/// path that would land outside the worktree.
-pub fn write_file(worktree: &Path, rel_path: &str, content: &str) -> Result<(), Error> {
+/// How [`resolve_contained`] treats a target that doesn't exist yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolveMode {
+    /// The target must canonicalize — a missing file surfaces the
+    /// underlying io error.
+    MustExist,
+    /// The target may not exist yet (write path): the nearest existing
+    /// ancestor is canonicalized and the missing tail re-appended, so a
+    /// symlinked ancestor is still caught.
+    ForWrite,
+}
+
+/// Resolves `<worktree>/<rel_path>` and proves the result stays inside the
+/// worktree — the single owner of the containment rule (AGENTS.md realpath
+/// rule) for every worktree-relative path the frontend or an agent hands
+/// us. Two checks: lexical — non-empty, not absolute, no `..`, which also
+/// covers targets that can't be canonicalized yet — and canonical — the
+/// filesystem-resolved target must stay under the canonical worktree root,
+/// which covers symlink escapes. `.` components (`./x`) are accepted:
+/// they can't escape, and user-visible paths keep working however the
+/// caller spells them.
+pub fn resolve_contained(
+    worktree: &Path,
+    rel_path: &str,
+    mode: ResolveMode,
+) -> Result<PathBuf, Error> {
     let rel = Path::new(rel_path);
     let lexical = !rel_path.is_empty()
         && rel
@@ -26,10 +46,22 @@ pub fn write_file(worktree: &Path, rel_path: &str, content: &str) -> Result<(), 
     }
 
     let canonical_worktree = worktree.canonicalize()?;
-    let resolved = resolve_for_write(&canonical_worktree.join(rel))?;
+    let target = canonical_worktree.join(rel);
+    let resolved = match mode {
+        ResolveMode::MustExist => target.canonicalize()?,
+        ResolveMode::ForWrite => resolve_for_write(&target)?,
+    };
     if !resolved.starts_with(&canonical_worktree) {
         return Err(Error::PathEscape(rel_path.into()));
     }
+    Ok(resolved)
+}
+
+/// Writes `content` to `<worktree>/<rel_path>`, creating the file when it
+/// doesn't exist (parent must). Fails with [`Error::PathEscape`] for any
+/// path that would land outside the worktree.
+pub fn write_file(worktree: &Path, rel_path: &str, content: &str) -> Result<(), Error> {
+    let resolved = resolve_contained(worktree, rel_path, ResolveMode::ForWrite)?;
     std::fs::write(&resolved, content)?;
     Ok(())
 }
@@ -65,23 +97,10 @@ fn resolve_for_write(target: &Path) -> Result<PathBuf, Error> {
 }
 
 /// Reads `<worktree>/<rel_path>` as UTF-8 (E5-02 editor open path).
-/// Same two-way containment as [`write_file`]; the canonical target must
-/// exist and stay under the canonical worktree root (symlinked files
-/// pointing outside are rejected).
+/// Same containment as [`write_file`] via [`resolve_contained`]; the
+/// target must exist (symlinked files pointing outside are rejected).
 pub fn read_file(worktree: &Path, rel_path: &str) -> Result<String, Error> {
-    let rel = Path::new(rel_path);
-    let lexical = !rel_path.is_empty()
-        && rel
-            .components()
-            .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
-    if !lexical {
-        return Err(Error::PathEscape(rel_path.into()));
-    }
-    let canonical_worktree = worktree.canonicalize()?;
-    let resolved = canonical_worktree.join(rel).canonicalize()?;
-    if !resolved.starts_with(&canonical_worktree) {
-        return Err(Error::PathEscape(rel_path.into()));
-    }
+    let resolved = resolve_contained(worktree, rel_path, ResolveMode::MustExist)?;
     Ok(std::fs::read_to_string(&resolved)?)
 }
 
@@ -107,25 +126,16 @@ const HIDDEN_DIRS: &[&str] = &[
 ];
 
 /// Lists `<worktree>/<rel_path>` (empty `rel_path` = the worktree root).
-/// Same two-way containment as [`write_file`]: lexical (no absolute paths,
-/// no `..`) and canonical (the resolved dir must stay under the canonical
-/// worktree root — symlinked dirs pointing outside are rejected). Hidden
-/// dirs are filtered; entries sort dirs-first, then case-insensitive by
-/// name. Symlink entries are listed as files (never followed).
+/// Same containment as [`write_file`] via [`resolve_contained`] — the
+/// resolved dir must exist (symlinked dirs pointing outside are rejected).
+/// Hidden dirs are filtered; entries sort dirs-first, then
+/// case-insensitive by name. Symlink entries are listed as files (never
+/// followed).
 pub fn list_dir(worktree: &Path, rel_path: &str) -> Result<Vec<DirEntry>, Error> {
-    let rel = Path::new(rel_path);
-    let lexical = rel
-        .components()
-        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
-    if !lexical {
-        return Err(Error::PathEscape(rel_path.into()));
-    }
-
-    let canonical_worktree = worktree.canonicalize()?;
-    let dir = canonical_worktree.join(rel).canonicalize()?;
-    if !dir.starts_with(&canonical_worktree) {
-        return Err(Error::PathEscape(rel_path.into()));
-    }
+    // The empty-string root spelling is this API's alone — the helper
+    // rejects empty paths, so map it to `.` before the shared check.
+    let rel = if rel_path.is_empty() { "." } else { rel_path };
+    let dir = resolve_contained(worktree, rel, ResolveMode::MustExist)?;
 
     let mut entries: Vec<DirEntry> = Vec::new();
     for entry in std::fs::read_dir(&dir)? {
@@ -150,6 +160,83 @@ pub fn list_dir(worktree: &Path, rel_path: &str) -> Result<Vec<DirEntry>, Error>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_contained_rejects_traversal_in_both_modes() {
+        let tmp = tempfile::tempdir().unwrap();
+        for bad in ["..", "../x", "/etc/passwd", "a/../../b.txt", ""] {
+            for mode in [ResolveMode::MustExist, ResolveMode::ForWrite] {
+                assert!(
+                    matches!(
+                        resolve_contained(tmp.path(), bad, mode),
+                        Err(Error::PathEscape(_))
+                    ),
+                    "{bad} must be rejected in {mode:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_contained_accepts_curdir_components() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        std::fs::write(tmp.path().join("sub/a.txt"), "").unwrap();
+
+        let plain = resolve_contained(tmp.path(), "sub/a.txt", ResolveMode::MustExist).unwrap();
+        for spelled in ["./sub/a.txt", "sub/./a.txt"] {
+            assert_eq!(
+                resolve_contained(tmp.path(), spelled, ResolveMode::MustExist).unwrap(),
+                plain,
+                "{spelled} must resolve like the plain spelling"
+            );
+        }
+        assert_eq!(
+            resolve_contained(tmp.path(), "./sub/new.txt", ResolveMode::ForWrite).unwrap(),
+            plain.parent().unwrap().join("new.txt")
+        );
+    }
+
+    #[test]
+    fn resolve_contained_rejects_symlink_escape() {
+        let tmp = tempfile::tempdir().unwrap();
+        let worktree = tmp.path().join("wt");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir(&worktree).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "s").unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.txt"), worktree.join("link.txt")).unwrap();
+        std::os::unix::fs::symlink(&outside, worktree.join("dir")).unwrap();
+
+        // A symlinked file (MustExist) and a missing file under a
+        // symlinked dir (ForWrite — nothing to canonicalize at the tail)
+        // both resolve outside and are rejected.
+        assert!(matches!(
+            resolve_contained(&worktree, "link.txt", ResolveMode::MustExist),
+            Err(Error::PathEscape(_))
+        ));
+        assert!(matches!(
+            resolve_contained(&worktree, "dir/new.txt", ResolveMode::ForWrite),
+            Err(Error::PathEscape(_))
+        ));
+    }
+
+    #[test]
+    fn resolve_contained_for_write_allows_missing_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let canonical = tmp.path().canonicalize().unwrap();
+
+        // ForWrite resolves a not-yet-existing target; MustExist surfaces
+        // the io error (not a containment failure).
+        assert_eq!(
+            resolve_contained(tmp.path(), "new.txt", ResolveMode::ForWrite).unwrap(),
+            canonical.join("new.txt")
+        );
+        assert!(matches!(
+            resolve_contained(tmp.path(), "new.txt", ResolveMode::MustExist),
+            Err(Error::Io(_))
+        ));
+    }
 
     #[test]
     fn reads_file_and_rejects_escapes() {

@@ -347,27 +347,22 @@ fn validate_comment_anchor(
     line_number: i64,
     line_end: Option<i64>,
 ) -> Result<(), Error> {
-    // Containment — mirrors files.rs: reject absolute paths and `..`
-    // components lexically (covers files that don't exist yet), then
-    // canonicalize and confirm the target stays under the worktree.
-    let rel = std::path::Path::new(rel_path);
-    let lexical = !rel_path.is_empty()
-        && rel
-            .components()
-            .all(|c| matches!(c, std::path::Component::Normal(_)));
-    if !lexical {
-        return Err(Error::PathEscape(rel_path.into()));
-    }
+    // Containment is owned by files::resolve_contained. The worktree is
+    // canonicalized first so a broken task workspace reads as a task-state
+    // problem, not a bad anchor path; the remaining io failure mode is the
+    // target itself not resolving.
     let canonical_worktree = worktree
         .canonicalize()
         .map_err(|e| Error::InvalidLineComment(format!("worktree not resolvable: {e}")))?;
-    let target = canonical_worktree.join(rel);
-    let resolved = target.canonicalize().map_err(|_| {
-        Error::InvalidLineComment(format!("file not found in workspace: {rel_path}"))
+    let resolved = crate::files::resolve_contained(
+        &canonical_worktree,
+        rel_path,
+        crate::files::ResolveMode::MustExist,
+    )
+    .map_err(|e| match e {
+        Error::PathEscape(_) => e,
+        _ => Error::InvalidLineComment(format!("file not found in workspace: {rel_path}")),
     })?;
-    if !resolved.starts_with(&canonical_worktree) {
-        return Err(Error::PathEscape(rel_path.into()));
-    }
 
     // Anchor range.
     if line_number < 1 {
@@ -785,6 +780,17 @@ TASK:\nFix the code based on the comment above. Write the corrected implementati
                 .unwrap_err();
             assert!(matches!(err, Error::PathEscape(_)), "{bad}: got {err:?}");
         }
+    }
+
+    #[test]
+    fn agent_comment_accepts_curdir_spelling() {
+        // Same CurDir policy as files::resolve_contained — `./x` can't
+        // escape and must not be rejected (the checks used to disagree).
+        let (store, _wt) = agent_fixture();
+        let c = store
+            .add_agent_comment(agent_opts("./src/main.rs", 1), "claude")
+            .unwrap();
+        assert_eq!(c.created_by, "agent:claude");
     }
 
     #[test]
