@@ -1,4 +1,24 @@
 # MEMORY.md — fartCode
+## #98 Agent CLI install confirm + live progress LANDED (2026-08-12, 5569108)
+
+Install/update gated by a confirm sheet (AgentsList) naming the exact
+command + manager BEFORE anything runs — `curl | bash` is RCE behind one
+click. DTO carries `installManager`/`installCommand`/`updateCommand` from
+new `HostDependencyStore::{install,update}_command` (single source = the
+manager builders; shell-backed plans show the embedded one-liner). Landed
+the E2-06 PTY seam: `fartcode_terminal::PtyInstallRunner` (portable-pty)
+streams child output live into the sink — `ProcessInstallRunner` stays for
+core tests/examples (sink is !Send, so its drain threads can't report
+live). Sink emits `dependency:output` (direct Tauri emit, NOT the
+InternalEvent bus — no golden-file churn), store tails it per providerId,
+row renders the last ANSI-stripped frame. Install button now hidden when
+`installCommand` is null (no installer, e.g. rovo) instead of erroring.
+
+Bites: PTY stdin is a tty — a sudo/password prompt would hang with no
+input surface (CI=1 + GIT_TERMINAL_PROMPT=0 mitigate; visible-PTY input is
+the E2 terminal UI, not landed).
+
+Next: none queued for this ticket.
 ## #97 Editor tabs LANDED (2026-08-11, 8e79c4a)
 
 E5-02. Backend: `fartcode_core::files::read_file` (write_file containment
