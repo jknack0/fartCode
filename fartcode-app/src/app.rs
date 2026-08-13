@@ -218,196 +218,120 @@ impl App {
     }
 }
 
-/// Serializes an internal event for the frontend channel (`fartcode:event`).
-/// Only the events the Phase-0 UI consumes are mapped; the rest are skipped.
-pub fn event_to_value(event: &InternalEvent) -> Option<serde_json::Value> {
-    use serde_json::json;
-    match event {
+/// The variant → `"domain:name"` wire-name table; `None` = backend-internal,
+/// skipped by the forwarder. Only the events the Phase-0 UI consumes are
+/// named. Adding a UI-visible event is one row here — the payload keys come
+/// from the enum's serde derive (camelCase fields, events.rs) — plus a
+/// snapshot entry in tests/snapshots/events.json.
+fn event_name(event: &InternalEvent) -> Option<&'static str> {
+    use InternalEvent as E;
+    Some(match event {
         // E12-06: connection lifecycle. `attempt`/`delayMs` ride only the
         // reconnecting frames, so the UI can render "retrying in 5s (3/5)"
         // without keeping its own ladder.
-        InternalEvent::SshConnectionStateChanged {
-            connection_id,
-            state,
-            attempt,
-            delay_ms,
-            error,
-        } => Some(json!({
-            "type": "ssh:state_changed",
-            "connectionId": connection_id,
-            "state": state,
-            "attempt": attempt,
-            "delayMs": delay_ms,
-            "error": error,
-        })),
-        InternalEvent::SshConnectionHealthChanged {
-            connection_id,
-            degraded,
-        } => Some(json!({
-            "type": "ssh:health_changed",
-            "connectionId": connection_id,
-            "degraded": degraded,
-        })),
+        E::SshConnectionStateChanged { .. } => "ssh:state_changed",
+        E::SshConnectionHealthChanged { .. } => "ssh:health_changed",
         // E12-10 / ADR-0044: a possibly-leaked (billed) machine must reach
         // the user, not just the log.
-        InternalEvent::ByoiTerminateWarning { task_id, message } => Some(json!({
-            "type": "task:terminate_warning",
-            "taskId": task_id,
-            "message": message,
-        })),
-        InternalEvent::ProjectAdded { id, name, path } => Some(json!({
-            "type": "project:added", "id": id, "name": name, "path": path,
-        })),
-        InternalEvent::ProjectDeleted { id } => {
-            Some(json!({ "type": "project:deleted", "id": id }))
-        }
-        InternalEvent::TaskCreated {
-            id,
-            project_id,
-            name,
-        } => Some(json!({
-            "type": "task:created", "id": id, "projectId": project_id, "name": name,
-        })),
+        E::ByoiTerminateWarning { .. } => "task:terminate_warning",
+        E::ProjectAdded { .. } => "project:added",
+        E::ProjectDeleted { .. } => "project:deleted",
+        E::TaskCreated { .. } => "task:created",
+        E::TaskRenamed { .. } => "task:renamed",
+        E::TaskDeleted { .. } => "task:deleted",
+        E::TaskStatusChanged { .. } => "task:status_changed",
+        // 7a archive (⌘⌫ "a archive instead") / ⌘K restore — consumers
+        // refetch the project task list (archivedAt filters the board).
+        E::TaskArchived { .. } => "task:archived",
+        E::TaskRestored { .. } => "task:restored",
+        E::ConversationCreated { .. } => "conversation:created",
+        E::ConversationRenamed { .. } => "conversation:renamed",
+        E::ConversationDeleted { .. } => "conversation:deleted",
+        E::GitChanged { .. } => "git:changed",
+        E::PrUpdated { .. } => "pr:updated",
+        E::FilesChanged { .. } => "files:changed",
+        E::CommentCreated { .. } => "comment:created",
+        E::CommentResolved { .. } => "comment:resolved",
+        // E17: project board — any issue change refetches the project's list
+        // (blocked status is derived, so one move can flip other badges).
+        E::IssueCreated { .. } => "issue:created",
+        E::IssueUpdated { .. } => "issue:updated",
+        E::IssueDeleted { .. } => "issue:deleted",
+        // E18-04/05 step engine: launch is a directive (open/focus the
+        // task's agent terminal); the rest are state notifications for the
+        // queue-confirm overlay and derived step-done styling.
+        E::StepLaunch { .. } => "step:launch",
+        E::StepQueued { .. } => "step:queued",
+        E::StepQueueCleared { .. } => "step:queue_cleared",
+        E::StepSettled { .. } => "step:settled",
+        E::StepChainHeld { .. } => "step:chain_held",
+        // App settings (set_default_agent): consumers refetch the changed
+        // key (the ProjectSettings "Default agent · model" row).
+        E::SettingChanged { .. } => "setting:changed",
+        _ => return None,
+    })
+}
+
+/// Serializes an internal event for the frontend channel (`fartcode:event`).
+/// Only the events the Phase-0 UI consumes are mapped; the rest are skipped.
+///
+/// The envelope is `{"type": event_name(..), ..payload}`, payload keys taken
+/// from the enum's own serde derive — except the hand-written arms below,
+/// which exist ONLY to stay byte-identical with the shipped wire format.
+/// Every envelope is pinned byte-for-byte by tests/event_wire_contract.rs.
+pub fn event_to_value(event: &InternalEvent) -> Option<serde_json::Value> {
+    use serde_json::json;
+
+    let name = event_name(event)?;
+
+    let payload = match event {
+        // HAND-WRITTEN EXCEPTIONS — shapes the serde derive would not
+        // produce. Shipped drift, not design: task:created emits the task id
+        // as "id" (derive path) while the arms below emit "taskId", and the
+        // frontend's hand-typed FartcodeEvent encodes exactly this split.
+        // TODO(audits/2026-08-12-architecture-deep-dive.md T1): emit "taskId"
+        // everywhere in ONE coordinated backend+frontend change, regenerate
+        // tests/snapshots/events.json, and delete these arms.
+        InternalEvent::TaskDeleted { id }
+        | InternalEvent::TaskArchived { id }
+        | InternalEvent::TaskRestored { id } => json!({ "taskId": id }),
+        // task:renamed shipped on the "taskId" side of the split (50d1f6e),
+        // unlike its sibling task:created — the derive would say "id".
         InternalEvent::TaskRenamed {
             id,
             project_id,
             name,
-        } => Some(json!({
-            "type": "task:renamed", "taskId": id, "projectId": project_id, "name": name,
-        })),
-        InternalEvent::TaskDeleted { id } => Some(json!({ "type": "task:deleted", "taskId": id })),
+        } => json!({ "taskId": id, "projectId": project_id, "name": name }),
+        // Also renames `new_status` → "status" and drops `old_status`.
         InternalEvent::TaskStatusChanged { id, new_status, .. } => {
-            Some(json!({ "type": "task:status_changed", "taskId": id, "status": new_status }))
+            json!({ "taskId": id, "status": new_status })
         }
-        // 7a archive (⌘⌫ "a archive instead") / ⌘K restore — consumers
-        // refetch the project task list (archivedAt filters the board).
-        InternalEvent::TaskArchived { id } => {
-            Some(json!({ "type": "task:archived", "taskId": id }))
-        }
-        InternalEvent::TaskRestored { id } => {
-            Some(json!({ "type": "task:restored", "taskId": id }))
-        }
+        // Drops `provider` from the wire (the UI never consumed it).
         InternalEvent::ConversationCreated {
             id, task_id, title, ..
-        } => Some(json!({
-            "type": "conversation:created", "id": id, "taskId": task_id, "title": title,
-        })),
-        InternalEvent::ConversationRenamed { id, title } => Some(json!({
-            "type": "conversation:renamed", "id": id, "title": title,
-        })),
-        InternalEvent::ConversationDeleted { id } => {
-            Some(json!({ "type": "conversation:deleted", "id": id }))
-        }
-        InternalEvent::GitChanged {
-            project_id,
-            workspace_id,
-        } => Some(json!({
-            "type": "git:changed", "projectId": project_id, "workspaceId": workspace_id,
-        })),
-        InternalEvent::PrUpdated {
-            workspace_id,
-            pr_url,
-        } => Some(json!({
-            "type": "pr:updated", "workspaceId": workspace_id, "prUrl": pr_url,
-        })),
-        InternalEvent::FilesChanged {
-            workspace_id,
-            paths,
-        } => Some(json!({
-            "type": "files:changed", "workspaceId": workspace_id, "paths": paths,
-        })),
-        InternalEvent::CommentCreated {
-            id,
-            task_id,
-            file_path,
-            line_number,
-        } => Some(json!({
-            "type": "comment:created", "id": id, "taskId": task_id,
-            "filePath": file_path, "lineNumber": line_number,
-        })),
-        InternalEvent::CommentResolved { id } => {
-            Some(json!({ "type": "comment:resolved", "id": id }))
-        }
-        // E17: project board — any issue change refetches the project's list
-        // (blocked status is derived, so one move can flip other badges).
-        InternalEvent::IssueCreated {
-            id,
-            project_id,
-            title,
-        } => Some(json!({
-            "type": "issue:created", "id": id, "projectId": project_id, "title": title,
-        })),
-        InternalEvent::IssueUpdated { id, project_id } => Some(json!({
-            "type": "issue:updated", "id": id, "projectId": project_id,
-        })),
-        InternalEvent::IssueDeleted { id, project_id } => Some(json!({
-            "type": "issue:deleted", "id": id, "projectId": project_id,
-        })),
-        // E18-04/05 step engine: launch is a directive (open/focus the
-        // task's agent terminal); the rest are state notifications for the
-        // queue-confirm overlay and derived step-done styling.
-        InternalEvent::StepLaunch {
-            issue_id,
-            project_id,
-            column_id,
-            task_id,
-            prompt,
-            provider,
-            model,
-            effort,
-            reattached,
-        } => Some(json!({
-            "type": "step:launch", "issueId": issue_id, "projectId": project_id,
-            "columnId": column_id, "taskId": task_id, "prompt": prompt,
-            "provider": provider, "model": model, "effort": effort,
-            "reattached": reattached,
-        })),
-        InternalEvent::StepQueued {
-            issue_id,
-            project_id,
-            column_id,
-            provider,
-            model,
-            effort,
-        } => Some(json!({
-            "type": "step:queued", "issueId": issue_id, "projectId": project_id,
-            "columnId": column_id, "provider": provider, "model": model,
-            "effort": effort,
-        })),
-        InternalEvent::StepQueueCleared {
-            issue_id,
-            project_id,
-            column_id,
-        } => Some(json!({
-            "type": "step:queue_cleared", "issueId": issue_id,
-            "projectId": project_id, "columnId": column_id,
-        })),
-        InternalEvent::StepSettled {
-            issue_id,
-            project_id,
-            column_id,
-            task_id,
-        } => Some(json!({
-            "type": "step:settled", "issueId": issue_id, "projectId": project_id,
-            "columnId": column_id, "taskId": task_id,
-        })),
-        InternalEvent::StepChainHeld {
-            issue_id,
-            project_id,
-            column_id,
-            target_column_id,
-            reason,
-        } => Some(json!({
-            "type": "step:chain_held", "issueId": issue_id, "projectId": project_id,
-            "columnId": column_id, "targetColumnId": target_column_id, "reason": reason,
-        })),
-        // App settings (set_default_agent): consumers refetch the changed
-        // key (the ProjectSettings "Default agent · model" row).
-        InternalEvent::SettingChanged { key } => Some(json!({
-            "type": "setting:changed", "key": key,
-        })),
-        _ => None,
-    }
+        } => json!({ "id": id, "taskId": task_id, "title": title }),
+
+        // Derive path: the enum serializes as {"type": tag, "payload": {..}}
+        // (events.rs) — the envelope takes the payload fields verbatim.
+        _ => match serde_json::to_value(event).ok()? {
+            serde_json::Value::Object(mut tagged) => {
+                tagged.remove("payload").unwrap_or_else(|| json!({}))
+            }
+            _ => json!({}),
+        },
+    };
+
+    let fields = match payload {
+        serde_json::Value::Object(fields) => fields,
+        _ => serde_json::Map::new(),
+    };
+    // "type" first, then payload fields in declaration order — serde_json's
+    // preserve_order feature is active (via tauri), so insertion order is
+    // the wire order the snapshot pins.
+    let mut envelope = serde_json::Map::with_capacity(fields.len() + 1);
+    envelope.insert("type".into(), name.into());
+    envelope.extend(fields);
+    Some(serde_json::Value::Object(envelope))
 }
 
 /// Spawns the event-forwarding task: internal events → `fartcode:event` on the
@@ -453,17 +377,11 @@ mod tests {
     use super::*;
     use fartcode_core::events::InternalEvent;
 
+    /// Envelope bytes are pinned by tests/event_wire_contract.rs; this test
+    /// documents only the INTENTIONAL quirks the hand-written arms preserve.
     #[test]
     fn maps_ui_events_to_frontend_payloads() {
-        let ev = InternalEvent::ProjectAdded {
-            id: "p1".into(),
-            name: "demo".into(),
-            path: "/repo/demo".into(),
-        };
-        let v = event_to_value(&ev).unwrap();
-        assert_eq!(v["type"], "project:added");
-        assert_eq!(v["id"], "p1");
-
+        // Derive path: name from the table, keys from the enum's serde derive.
         let ev = InternalEvent::TaskCreated {
             id: "t1".into(),
             project_id: "p1".into(),
@@ -471,114 +389,67 @@ mod tests {
         };
         let v = event_to_value(&ev).unwrap();
         assert_eq!(v["type"], "task:created");
+        assert_eq!(v["id"], "t1");
         assert_eq!(v["projectId"], "p1");
-        assert_eq!(v["name"], "fix");
 
-        // E4-01 watcher events reach the frontend envelope.
-        let ev = InternalEvent::GitChanged {
+        // Hand exceptions: the shipped id/taskId drift (see the TODO in
+        // event_to_value) — task:created says "id", these say "taskId".
+        for (ev, ty) in [
+            (
+                InternalEvent::TaskDeleted { id: "t1".into() },
+                "task:deleted",
+            ),
+            (
+                InternalEvent::TaskArchived { id: "t1".into() },
+                "task:archived",
+            ),
+            (
+                InternalEvent::TaskRestored { id: "t1".into() },
+                "task:restored",
+            ),
+        ] {
+            let v = event_to_value(&ev).unwrap();
+            assert_eq!(v["type"], ty);
+            assert_eq!(v["taskId"], "t1");
+            assert!(v.get("id").is_none(), "{ty} must not emit \"id\"");
+        }
+
+        // task:renamed shipped on the "taskId" side too (50d1f6e), while
+        // keeping projectId/name — its arm differs from the derive only
+        // in the id key.
+        let ev = InternalEvent::TaskRenamed {
+            id: "t1".into(),
             project_id: "p1".into(),
-            workspace_id: "w1".into(),
+            name: "renamed".into(),
         };
         let v = event_to_value(&ev).unwrap();
-        assert_eq!(v["type"], "git:changed");
+        assert_eq!(v["type"], "task:renamed");
+        assert_eq!(v["taskId"], "t1");
         assert_eq!(v["projectId"], "p1");
-        assert_eq!(v["workspaceId"], "w1");
+        assert_eq!(v["name"], "renamed");
+        assert!(v.get("id").is_none(), "task:renamed must not emit \"id\"");
 
-        let ev = InternalEvent::FilesChanged {
-            workspace_id: "w1".into(),
-            paths: vec!["src/main.rs".into()],
+        // task:status_changed renames new_status → "status", drops old_status.
+        let ev = InternalEvent::TaskStatusChanged {
+            id: "t1".into(),
+            old_status: "open".into(),
+            new_status: "running".into(),
         };
         let v = event_to_value(&ev).unwrap();
-        assert_eq!(v["type"], "files:changed");
-        assert_eq!(v["paths"][0], "src/main.rs");
-
-        // E4-09 PR sync events reach the frontend envelope.
-        let ev = InternalEvent::PrUpdated {
-            workspace_id: "w1".into(),
-            pr_url: "https://github.com/o/r/pull/42".into(),
-        };
-        let v = event_to_value(&ev).unwrap();
-        assert_eq!(v["type"], "pr:updated");
-        assert_eq!(v["workspaceId"], "w1");
-        assert_eq!(v["prUrl"], "https://github.com/o/r/pull/42");
-
-        // E4-10 line-comment events reach the frontend envelope.
-        let ev = InternalEvent::CommentCreated {
-            id: "lc_1".into(),
-            task_id: "t1".into(),
-            file_path: "src/main.rs".into(),
-            line_number: 42,
-        };
-        let v = event_to_value(&ev).unwrap();
-        assert_eq!(v["type"], "comment:created");
         assert_eq!(v["taskId"], "t1");
-        assert_eq!(v["filePath"], "src/main.rs");
-        assert_eq!(v["lineNumber"], 42);
+        assert_eq!(v["status"], "running");
+        assert!(v.get("oldStatus").is_none());
 
-        let ev = InternalEvent::CommentResolved { id: "lc_1".into() };
-        let v = event_to_value(&ev).unwrap();
-        assert_eq!(v["type"], "comment:resolved");
-        assert_eq!(v["id"], "lc_1");
-
-        // E18-04/05 step-engine events reach the frontend envelope.
-        let ev = InternalEvent::StepLaunch {
-            issue_id: "i1".into(),
-            project_id: "p1".into(),
-            column_id: "c1".into(),
+        // conversation:created drops `provider`.
+        let ev = InternalEvent::ConversationCreated {
+            id: "cv1".into(),
             task_id: "t1".into(),
-            prompt: "go".into(),
             provider: "claude".into(),
-            model: Some("haiku".into()),
-            effort: None,
-            reattached: false,
+            title: "chat".into(),
         };
         let v = event_to_value(&ev).unwrap();
-        assert_eq!(v["type"], "step:launch");
-        assert_eq!(v["issueId"], "i1");
         assert_eq!(v["taskId"], "t1");
-        assert_eq!(v["model"], "haiku");
-        assert_eq!(v["reattached"], false);
-
-        let ev = InternalEvent::StepQueued {
-            issue_id: "i1".into(),
-            project_id: "p1".into(),
-            column_id: "c1".into(),
-            provider: "claude".into(),
-            model: None,
-            effort: Some("high".into()),
-        };
-        let v = event_to_value(&ev).unwrap();
-        assert_eq!(v["type"], "step:queued");
-        assert_eq!(v["columnId"], "c1");
-        assert_eq!(v["effort"], "high");
-
-        let ev = InternalEvent::StepQueueCleared {
-            issue_id: "i1".into(),
-            project_id: "p1".into(),
-            column_id: "c1".into(),
-        };
-        assert_eq!(event_to_value(&ev).unwrap()["type"], "step:queue_cleared");
-
-        let ev = InternalEvent::StepSettled {
-            issue_id: "i1".into(),
-            project_id: "p1".into(),
-            column_id: "c1".into(),
-            task_id: "t1".into(),
-        };
-        let v = event_to_value(&ev).unwrap();
-        assert_eq!(v["type"], "step:settled");
-        assert_eq!(v["taskId"], "t1");
-
-        // 7a archive/restore events reach the frontend envelope.
-        let ev = InternalEvent::TaskArchived { id: "t1".into() };
-        let v = event_to_value(&ev).unwrap();
-        assert_eq!(v["type"], "task:archived");
-        assert_eq!(v["taskId"], "t1");
-
-        let ev = InternalEvent::TaskRestored { id: "t1".into() };
-        let v = event_to_value(&ev).unwrap();
-        assert_eq!(v["type"], "task:restored");
-        assert_eq!(v["taskId"], "t1");
+        assert!(v.get("provider").is_none());
 
         // Events the UI doesn't consume are skipped, not panicked on.
         assert!(event_to_value(&InternalEvent::AppStarted).is_none());

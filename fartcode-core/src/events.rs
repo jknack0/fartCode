@@ -8,9 +8,15 @@
 use serde::Serialize;
 
 /// Events emitted by domain services, consumed by the Tauri command layer.
+///
+/// The camelCase field keys ARE the frontend wire format: the Tauri
+/// forwarder (`event_to_value` in fartcode-app) serializes variant payloads
+/// straight from this derive, so a field rename here is a frontend contract
+/// change — gated byte-for-byte by
+/// `fartcode-app/tests/event_wire_contract.rs`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", content = "payload")]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", rename_all_fields = "camelCase")]
 pub enum InternalEvent {
     // Lifecycle
     AppStarted,
@@ -358,5 +364,15 @@ mod tests {
         let event = InternalEvent::ProjectDeleted { id: "p1".into() };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("project_deleted"), "snake_case tag: {json}");
+
+        // Payload fields are the frontend wire keys (see the derive comment);
+        // the full envelopes are pinned by fartcode-app's golden test.
+        let event = InternalEvent::TaskCreated {
+            id: "t1".into(),
+            project_id: "p1".into(),
+            name: "fix".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("projectId"), "camelCase fields: {json}");
     }
 }

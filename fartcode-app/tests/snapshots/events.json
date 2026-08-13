@@ -1,0 +1,179 @@
+{
+  "app_started": null,
+  "app_closed": null,
+  "project_added": {
+    "type": "project:added",
+    "id": "p1",
+    "name": "demo",
+    "path": "/repo/demo"
+  },
+  "project_deleted": {
+    "type": "project:deleted",
+    "id": "p1"
+  },
+  "task_created": {
+    "type": "task:created",
+    "id": "t1",
+    "projectId": "p1",
+    "name": "fix"
+  },
+  "task_renamed": {
+    "type": "task:renamed",
+    "taskId": "t1",
+    "projectId": "p1",
+    "name": "renamed"
+  },
+  "task_provisioned": null,
+  "task_status_changed": {
+    "type": "task:status_changed",
+    "taskId": "t1",
+    "status": "running"
+  },
+  "task_archived": {
+    "type": "task:archived",
+    "taskId": "t1"
+  },
+  "task_restored": {
+    "type": "task:restored",
+    "taskId": "t1"
+  },
+  "task_deleted": {
+    "type": "task:deleted",
+    "taskId": "t1"
+  },
+  "byoi_terminate_warning": {
+    "type": "task:terminate_warning",
+    "taskId": "t1",
+    "message": "terminate script failed"
+  },
+  "comment_created": {
+    "type": "comment:created",
+    "id": "lc_1",
+    "taskId": "t1",
+    "filePath": "src/main.rs",
+    "lineNumber": 42
+  },
+  "comment_resolved": {
+    "type": "comment:resolved",
+    "id": "lc_1"
+  },
+  "issue_created": {
+    "type": "issue:created",
+    "id": "i1",
+    "projectId": "p1",
+    "title": "card"
+  },
+  "issue_updated": {
+    "type": "issue:updated",
+    "id": "i1",
+    "projectId": "p1"
+  },
+  "issue_deleted": {
+    "type": "issue:deleted",
+    "id": "i1",
+    "projectId": "p1"
+  },
+  "issue_column_changed": null,
+  "step_launch": {
+    "type": "step:launch",
+    "issueId": "i1",
+    "projectId": "p1",
+    "columnId": "c1",
+    "taskId": "t1",
+    "prompt": "go",
+    "provider": "claude",
+    "model": "haiku",
+    "effort": null,
+    "reattached": false
+  },
+  "step_queued": {
+    "type": "step:queued",
+    "issueId": "i1",
+    "projectId": "p1",
+    "columnId": "c1",
+    "provider": "claude",
+    "model": null,
+    "effort": "high"
+  },
+  "step_queue_cleared": {
+    "type": "step:queue_cleared",
+    "issueId": "i1",
+    "projectId": "p1",
+    "columnId": "c1"
+  },
+  "step_settled": {
+    "type": "step:settled",
+    "issueId": "i1",
+    "projectId": "p1",
+    "columnId": "c1",
+    "taskId": "t1"
+  },
+  "step_chain_held": {
+    "type": "step:chain_held",
+    "issueId": "i1",
+    "projectId": "p1",
+    "columnId": "c1",
+    "targetColumnId": "c2",
+    "reason": "budget"
+  },
+  "conversation_created": {
+    "type": "conversation:created",
+    "id": "cv1",
+    "taskId": "t1",
+    "title": "chat"
+  },
+  "conversation_renamed": {
+    "type": "conversation:renamed",
+    "id": "cv1",
+    "title": "renamed"
+  },
+  "conversation_deleted": {
+    "type": "conversation:deleted",
+    "id": "cv1"
+  },
+  "agent_start": null,
+  "agent_run_started": null,
+  "agent_run_finished": null,
+  "agent_session_exited": null,
+  "pty_output": null,
+  "pty_closed": null,
+  "ssh_connection_state_changed": {
+    "type": "ssh:state_changed",
+    "connectionId": "s1",
+    "state": "reconnecting",
+    "attempt": 3,
+    "delayMs": 5000,
+    "error": null
+  },
+  "ssh_connection_health_changed": {
+    "type": "ssh:health_changed",
+    "connectionId": "s1",
+    "degraded": true
+  },
+  "terminal_created": null,
+  "terminal_deleted": null,
+  "lifecycle_script_status_changed": null,
+  "git_changed": {
+    "type": "git:changed",
+    "projectId": "p1",
+    "workspaceId": "w1"
+  },
+  "pr_updated": {
+    "type": "pr:updated",
+    "workspaceId": "w1",
+    "prUrl": "https://github.com/o/r/pull/42"
+  },
+  "files_changed": {
+    "type": "files:changed",
+    "workspaceId": "w1",
+    "paths": [
+      "src/main.rs"
+    ]
+  },
+  "setting_changed": {
+    "type": "setting:changed",
+    "key": "default_agent"
+  },
+  "sidebar_toggled": null,
+  "error": null
+}
