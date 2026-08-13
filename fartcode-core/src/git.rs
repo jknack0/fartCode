@@ -9,8 +9,8 @@
 //!
 //! `CliGit` shells out to the `git` CLI via `std::process::Command` with
 //! argument arrays — no shell, no quoting (see AGENTS.md "no ad-hoc shell
-//! quoting"). git2 bindings arrive with E2-02 for worktree lifecycle
-//! operations that need libgit2.
+//! quoting"). It covers worktree lifecycle too: the git2/libgit2 route was
+//! retired when ADR-0007 was superseded (2026-08-12).
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

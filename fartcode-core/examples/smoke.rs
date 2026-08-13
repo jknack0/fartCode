@@ -461,7 +461,7 @@ fn main() {
     );
 
     // -- 13. Worktrees (E2-02): ensure → isolated checkout → remove ---------
-    let wt_git: Arc<dyn fartcode_core::git::GitOps> = Arc::new(fartcode_git::Git2Ops::new());
+    let wt_git: Arc<dyn fartcode_core::git::GitOps> = Arc::new(fartcode_git::CliGit);
     let wt_manager = fartcode_core::projects::worktrees::WorktreeManager::new(
         db.clone(),
         Arc::new(settings.clone()),

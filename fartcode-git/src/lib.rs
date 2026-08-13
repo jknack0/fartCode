@@ -2,15 +2,15 @@
 //!
 //! `CliGit` shells out to the `git` CLI via `std::process::Command` with
 //! argument arrays — no shell, no quoting (AGENTS.md: "no ad-hoc shell
-//! quoting"). `Git2Ops` provides git2-backed worktree operations (E2-02
-//! git strategy) and delegates everything else to `CliGit`. The `GitOps`
-//! trait itself lives in `fartcode-core` so domain crates can use it without
-//! violating the leaf rule; this crate provides the implementations and
-//! re-exports the trait.
+//! quoting"). It is the sole `GitOps` implementation: the git2-backed
+//! `Git2Ops` was deleted with its libgit2 dependency when ADR-0007 was
+//! superseded (2026-08-12) — production only ever constructed `CliGit`.
+//! The `GitOps` trait itself lives in `fartcode-core` so domain crates can
+//! use it without violating the leaf rule; this crate provides the
+//! implementation and re-exports the trait.
 
 pub mod commit;
 pub mod diff;
-pub mod git2ops;
 pub mod issues;
 pub mod pr_sync;
 pub mod pr_target;
@@ -25,7 +25,6 @@ use std::time::{Duration, Instant};
 
 pub use fartcode_core::git::{BranchRef, GitOps, WorktreeEntry};
 use fartcode_core::Error;
-pub use git2ops::Git2Ops;
 
 /// git CLI-backed implementation of `GitOps`.
 #[derive(Debug)]
@@ -635,8 +634,9 @@ impl GitOps for CliGit {
     }
 
     fn worktree_remove(&self, repo_path: &Path, worktree_path: &Path) -> Result<(), Error> {
-        // Phase 0: rm -rf + prune (matches §6.4). E2-02 should switch to
-        // `git worktree remove` (safer for dirty/detached worktrees).
+        // Phase 0 stopgap: rm -rf + prune (matches §6.4). A CliGit hardening
+        // ticket should switch to `git worktree remove` (safer for dirty/
+        // detached worktrees) — tracked via the ADR-0007 supersession note.
         if worktree_path.exists() {
             std::fs::remove_dir_all(worktree_path)?;
         }

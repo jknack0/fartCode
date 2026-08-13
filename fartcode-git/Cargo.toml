@@ -6,7 +6,6 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-git2 = { workspace = true }
 fartcode-core = { path = "../fartcode-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }

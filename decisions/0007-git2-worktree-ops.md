@@ -1,6 +1,6 @@
 # ADR-0007: git2-backed worktree operations (Git2Ops)
 
-- **Status:** Accepted
+- **Status:** Superseded (2026-08-12, see note below)
 - **Date:** 2026-08-03
 - **Ticket:** E2-02
 - **Relates to:** ARCHITECTURE.md §6.4, AGENTS.md "Git strategy", ADR-0003
@@ -46,3 +46,18 @@ to the `CliGit` CLI implementation. git2 must behave like `git worktree`.
 - Tests: roundtrip add/list/remove, prune of stale metadata, prune skips
   locked worktrees, add refuses a checked-out branch.
 - `ensure_worktree` (E2-04) can rely on add/prune semantics matching the CLI.
+
+## Superseded 2026-08-12
+
+Production never adopted `Git2Ops`: every construction site (project store,
+both `WorktreeManager` wirings in `fartcode-app/src/app.rs`) built `CliGit`,
+and the only consumer left was `fartcode-core/examples/smoke.rs`. The 2026-08-12
+architecture deep dive (T6) forced the choice; production standardized on
+`CliGit`. `git2ops.rs` and the `git2`/libgit2 workspace dependency are deleted,
+and the smoke example now runs on `CliGit`.
+
+The one thing `Git2Ops` did better — a metadata-aware `worktree_remove`
+instead of `CliGit`'s rm-rf + prune, which the `CliGit::worktree_remove`
+comment in `fartcode-git/src/lib.rs` itself flags as the Phase-0 stopgap —
+is not dropped: it moves to a CliGit hardening ticket (switch to
+`git worktree remove`, safer for dirty/detached worktrees).

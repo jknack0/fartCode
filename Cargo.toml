@@ -35,9 +35,6 @@ agent-client-protocol-schema = "1.6"
 # ── Database ───────────────────────────────────────────────
 rusqlite = { version = "0.32", features = ["bundled"] }
 
-# ── Git ────────────────────────────────────────────────────
-git2 = "0.21"
-
 # ── Terminal / PTY ─────────────────────────────────────────
 portable-pty = "0.9"
 
