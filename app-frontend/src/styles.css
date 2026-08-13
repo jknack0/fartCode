@@ -84,6 +84,10 @@
   --accent-contrast: #0b0b0d;
   --selection: oklch(.78 .15 155 / .28);
   --selection-foreground: #e8e8ea;
+  /* diff additions (Audit 19): the accent's own hue at wash strengths, so
+     the merge view's green IS the app green, not the stray #8fd6ae mint. */
+  --diff-add-wash: oklch(.78 .15 155 / .07);
+  --diff-add-strong: oklch(.78 .15 155 / .18);
   --info: #7c8fd0;                /* link out */
   --info-background: #18202b;
   --info-border: #173865;

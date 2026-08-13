@@ -37,6 +37,8 @@ import {
 } from "../lib/diff-views";
 import { useDiffs, type DiffParams } from "../store/diffs";
 import { useLineComments } from "../store/line-comments";
+import { useTabs, type PaneId } from "../store/tabs";
+import { useUi } from "../store/ui";
 import type { LineCommentDto } from "../lib/tauri";
 
 function formatSize(bytes: number): string {
@@ -48,7 +50,8 @@ function formatSize(bytes: number): string {
 // -- Audit 19: token editor theme (replaces @codemirror/theme-one-dark) --------
 // DESIGN.md ramp on the CodeMirror surface: ground var(--background) #101012
 // for editor + gutters, gutter numbers at the meta floor, code at rest
-// --text-mid, additions in the #8fd6ae family, deletions in the #c96b6b
+// --text-mid, additions in the --accent family (--diff-add-wash/strong),
+// deletions in the #c96b6b
 // family, active line a bare white tint, selection = the diff-selection
 // token (styles/comments.css still owns the .diff-body override — same
 // wash plus the accent outline, kept via !important).
@@ -89,10 +92,10 @@ const diffTheme = EditorView.theme(
     },
     // @codemirror/merge chunks: quiet washes, no base-theme underlines.
     "&.cm-merge-b .cm-changedLine, .cm-inlineChangedLine": {
-      backgroundColor: "rgba(143, 214, 174, 0.07)",
+      backgroundColor: "var(--diff-add-wash)",
     },
     "&.cm-merge-b .cm-changedText": {
-      background: "rgba(143, 214, 174, 0.18)",
+      background: "var(--diff-add-strong)",
     },
     "&.cm-merge-a .cm-changedLine, .cm-deletedChunk": {
       backgroundColor: "rgba(201, 107, 107, 0.07)",
@@ -106,8 +109,8 @@ const diffTheme = EditorView.theme(
     "&.cm-merge-a .cm-changedLineGutter, .cm-deletedLineGutter": {
       background: "#c96b6b",
     },
-    "&.cm-merge-b .cm-changedLineGutter": { background: "#8fd6ae" },
-    ".cm-inlineChangedLineGutter": { background: "#8fd6ae" },
+    "&.cm-merge-b .cm-changedLineGutter": { background: "var(--accent)" },
+    ".cm-inlineChangedLineGutter": { background: "var(--accent)" },
     ".cm-collapsedLines": {
       color: "var(--meta)",
       background: "rgba(255, 255, 255, 0.03)",
@@ -262,11 +265,13 @@ export default function DiffView({
   tabId,
   title,
   taskId,
+  pane,
   active,
 }: {
   tabId: string;
   title: string;
   taskId: string;
+  pane: PaneId;
   active: boolean;
 }) {
   const storeParams = useDiffs((s) => s.paramsByTab[tabId]);
@@ -278,6 +283,16 @@ export default function DiffView({
   const saveError = useDiffs((s) => s.saveErrorByTab[tabId] ?? null);
   const mode = useDiffs((s) => s.mode);
   const setMode = useDiffs((s) => s.setMode);
+
+  // The right sheet overlays the main content; a diff that sits under it
+  // reserves the sheet width so the merge's worktree side is not covered.
+  // Terminal tabs stay overlayed on purpose (reflowing xterm scrollback is
+  // exactly what the overlay avoids), so only diff panes inset.
+  const sheetOpen = useUi((s) => s.changesOpen);
+  const sheetWidth = useUi((s) => s.sheetWidth);
+  const hasRightPane = useTabs((s) => Boolean(s.panesByTask[taskId]?.right));
+  const insetBySheet =
+    sheetOpen && (pane === "right" || !hasRightPane) ? sheetWidth : 0;
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | MergeView | null>(null);
@@ -510,7 +525,7 @@ export default function DiffView({
   );
 
   return (
-    <div className="diff-view">
+    <div className="diff-view" style={insetBySheet ? { marginRight: insetBySheet } : undefined}>
       <div className="diff-header">
         <span className="diff-path" title={payload?.origPath ?? params?.path ?? title}>
           {payload?.origPath ? (

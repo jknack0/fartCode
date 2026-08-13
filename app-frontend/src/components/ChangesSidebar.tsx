@@ -104,13 +104,18 @@ export default function ChangesSidebar() {
     if (changesVisible) mainRef.current?.focus();
   }, [changesVisible]);
 
-  if (!open || (!taskId && !workspaceId)) return null;
   // DESIGN.md: the right panel (PM chat / card detail) is 400px; the drag
-  // handle still wins above the floor.
+  // handle still wins above the floor. Published to the ui store so the
+  // diff view reserves this width instead of sitting under the sheet.
   const sheetWidth =
     showDetail || showChat || showTaskChat
       ? Math.max(resize.width, 400)
       : resize.width;
+  useEffect(() => {
+    useUi.getState().setSheetWidth(sheetWidth);
+  }, [sheetWidth]);
+
+  if (!open || (!taskId && !workspaceId)) return null;
 
   const snapshot = entry?.snapshot ?? null;
   const changeCount = snapshot ? snapshot.staged.length + snapshot.unstaged.length : 0;
