@@ -383,6 +383,13 @@ pub fn target_for(
     crate::workspaces::watch_target_for(db, task_id, workspace_id)
 }
 
+/// Target for a just-restored task (`TaskRestored` handler) — the event
+/// carries no workspace id, so the row is resolved by task alone. `None`
+/// when the task is gone or its workspace has no local path.
+pub fn target_for_task(db: &dyn Db, task_id: &str) -> Result<Option<WatchTarget>, Error> {
+    crate::workspaces::watch_target_for_task(db, task_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
