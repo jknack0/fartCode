@@ -67,8 +67,8 @@ fn test_migration_runner_idempotent() {
         .query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))
         .unwrap();
     assert_eq!(
-        migrations, 13,
-        "all journal migrations (0000–0012) should have been applied"
+        migrations, 14,
+        "all journal migrations (0000–0013) should have been applied"
     );
 
     // Running init again on the same file is a no-op.
@@ -79,7 +79,10 @@ fn test_migration_runner_idempotent() {
         .unwrap()
         .query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(migrations2, 13, "re-init must not re-apply migrations");
+    // Compared against the first count, not a literal: idempotency is the
+    // property under test, and a hardcoded number goes stale on every new
+    // migration (it did — #142 found this test red on main after 0013).
+    assert_eq!(migrations2, migrations, "re-init must not re-apply migrations");
 }
 
 #[test]

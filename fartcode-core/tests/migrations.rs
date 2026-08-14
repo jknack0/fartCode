@@ -6,6 +6,18 @@ use fartcode_core::db::migrations::{FILE_INDEX_VERSION, SEARCH_INDEX_VERSION};
 use fartcode_core::db::schema::{DOMAIN_TABLES, FTS_TABLES};
 use fartcode_core::db::{Db, SqliteDb};
 
+/// How many migrations the embedded journal declares.
+///
+/// Derived, not a literal: this expectation was hardcoded and went stale
+/// twice (once at 0008, again at 0013, each time leaving this binary red on
+/// main). The journal is the source of truth for "how many migrations exist",
+/// so the test asks it.
+fn journal_len() -> i64 {
+    include_str!("../migrations/meta/_journal.json")
+        .matches("\"idx\"")
+        .count() as i64
+}
+
 fn table_exists(conn: &rusqlite::Connection, name: &str) -> bool {
     let count: i64 = conn
         .query_row(
@@ -33,10 +45,11 @@ fn test_full_migration_chain_applies_from_scratch() {
             Ok((row.get(0)?, row.get::<_, String>(1)?.len()))
         })
         .unwrap();
-    // 0000–0010. (Was asserting 8 against a 9-entry journal since #66 added
-    // 0008 without bumping it — this binary has been red on main; corrected
-    // here rather than left broken under a new migration.)
-    assert_eq!(count, 13, "expected all journal migrations applied");
+    assert_eq!(
+        count,
+        journal_len(),
+        "expected all journal migrations applied"
+    );
     assert_eq!(hash_len, 64, "sha256 hex must be 64 chars");
 
     // FTS tables exist and the kv gates are set to the expected versions.
@@ -135,7 +148,7 @@ fn test_migrations_reinit_is_noop() {
         .unwrap()
         .query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(count, 13);
+    assert_eq!(count, journal_len());
     drop(db);
 
     let db2 = SqliteDb::init(Some(db_path.to_str().unwrap())).unwrap();
@@ -145,7 +158,7 @@ fn test_migrations_reinit_is_noop() {
         .unwrap()
         .query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(count2, 13, "re-init must not re-apply migrations");
+    assert_eq!(count2, count, "re-init must not re-apply migrations");
 }
 
 /// E19-01 (#70): migration 0009 adds `issues.dossier_path` as a plain
@@ -180,11 +193,12 @@ fn test_dossier_path_upgrade_leaves_existing_rows_intact() {
         conn.execute("ALTER TABLE projects DROP COLUMN worktree_pool_segment", [])
             .unwrap();
         conn.execute("DROP TABLE step_ledger", []).unwrap();
+        // Rewind EVERYTHING from 0009 on, not a hand-listed set: the runner
+        // rejects a journal entry that is missing while a later one is
+        // recorded (it reads as tampering), so an enumerated list breaks on
+        // the next migration. Later migrations are replay-safe.
         conn.execute(
-            "DELETE FROM migrations
-             WHERE created_at IN (
-                 1800000000009, 1800000000010, 1800000000011, 1800000000012
-             )",
+            "DELETE FROM migrations WHERE created_at >= 1800000000009",
             [],
         )
         .unwrap();
