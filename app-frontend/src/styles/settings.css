@@ -1140,3 +1140,22 @@
   border-radius: 2px;
   align-self: flex-start;
 }
+
+/* -- archived tasks (#136): restore / delete… inline row actions --------- */
+
+.fc-set-archived-action {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  margin-left: 10px;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #9a9aa1;
+  cursor: pointer;
+}
+
+.fc-set-archived-action:hover {
+  color: var(--text-card);
+}

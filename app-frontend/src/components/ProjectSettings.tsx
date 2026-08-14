@@ -11,16 +11,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DefaultBranchDto,
   ProjectSettingsDto,
+  TaskDto,
   getProjectSettings,
+  listTasks,
   onFartcodeEvent,
   projectSettingsProvenance,
   projectSettingsShare,
   remoteTasksEnabled,
+  restoreTask,
   setDefaultAgent,
   updateProjectSettings,
 } from "../lib/tauri";
 import { wireEvents } from "../lib/wireEvents";
 import { defaultAgentName, useDependencies } from "../store/dependencies";
+import { useUi } from "../store/ui";
 import SettingsModal from "./SettingsModal";
 
 const DEFAULTS = {
@@ -209,6 +213,30 @@ export function ProjectSettingsPane({ projectId }: { projectId: string }) {
       .then(setByoiEnabled)
       .catch(() => setByoiEnabled(false));
   }, []);
+
+  // #136: archived tasks were enumerable nowhere — this section is the
+  // recovery surface. list_tasks returns every row (the board and sidebar
+  // filter archivedAt client-side), so archived rows only ever show here.
+  const [archived, setArchived] = useState<TaskDto[]>([]);
+  const loadArchived = useCallback(
+    () =>
+      listTasks(projectId)
+        .then((ts) => setArchived(ts.filter((t) => t.archivedAt !== null)))
+        .catch(() => {}),
+    [projectId],
+  );
+  useEffect(() => {
+    void loadArchived();
+    return wireEvents(onFartcodeEvent, (ev) => {
+      if (
+        ev.type === "task:archived" ||
+        ev.type === "task:restored" ||
+        ev.type === "task:deleted"
+      ) {
+        void loadArchived();
+      }
+    });
+  }, [loadArchived]);
 
   useEffect(() => {
     setLoading(true);
@@ -669,6 +697,43 @@ export function ProjectSettingsPane({ projectId }: { projectId: string }) {
             }}
           />
         </Row>
+      </div>
+
+      <div className="fc-set-group">
+        <div className="fc-set-group-label">Archived</div>
+        {archived.length === 0 && <Row label="No archived tasks" value="—" />}
+        {archived.map((t) => (
+          <div key={t.id} className="fc-set-row-wrap">
+            <div className="fc-set-row static">
+              <span className="fc-set-label">{t.name}</span>
+              <span className="fc-set-value">
+                {t.archivedAt ? t.archivedAt.slice(0, 10) : ""}
+                <button
+                  type="button"
+                  className="fc-set-archived-action"
+                  title="Restore — the task returns to the board"
+                  onClick={() =>
+                    void restoreTask(t.id)
+                      .then(loadArchived)
+                      .catch((e) => setError(String(e)))
+                  }
+                >
+                  restore
+                </button>
+                <button
+                  type="button"
+                  className="fc-set-archived-action"
+                  title="Delete — opens the destructive confirm"
+                  onClick={() =>
+                    useUi.getState().setDeleteTaskTarget({ projectId, taskId: t.id })
+                  }
+                >
+                  delete…
+                </button>
+              </span>
+            </div>
+          </div>
+        ))}
       </div>
 
       <div className="fc-set-spacer" />
