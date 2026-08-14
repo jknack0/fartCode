@@ -107,6 +107,7 @@ fn fixtures() -> Vec<InternalEvent> {
             provider: "claude".into(),
             model: None,
             effort: Some("high".into()),
+            reason: fartcode_core::events::ParkReason::AgentBusy,
         },
         E::StepQueueCleared {
             issue_id: "i1".into(),

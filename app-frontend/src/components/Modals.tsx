@@ -17,6 +17,7 @@ import {
   createTask as apiCreateTask,
   createTaskFromComment,
   gitCommitState,
+  issueEnterColumn,
   listLineComments,
   listProjectBranches,
   listProviders,
@@ -24,9 +25,11 @@ import {
   sshConnectionList,
   terminalListForTask,
   terminalOpenAgent,
+  taskShip,
   terminalWrite,
   waitForTerminalReady,
 } from "../lib/tauri";
+import { maybeOfferWorktreeCleanup } from "../lib/taskPipeline";
 import { hint } from "../lib/useCommands";
 import { useLineComments } from "../store/line-comments";
 
@@ -1013,8 +1016,13 @@ export default function Modals() {
   const setCreateTaskTarget = useUi((s) => s.setCreateTaskTarget);
   const quickTaskTarget = useUi((s) => s.quickTaskTarget);
   const setQuickTaskTarget = useUi((s) => s.setQuickTaskTarget);
+  const shipPrompt = useUi((s) => s.shipPrompt);
+  const setShipPrompt = useUi((s) => s.setShipPrompt);
 
   const { projects, selectedProjectId, deleteProject } = useSidebar();
+  const taskName = (projectId: string, taskId: string) =>
+    (useSidebar.getState().tasksByProject[projectId] ?? []).find((t) => t.id === taskId)
+      ?.name ?? taskId;
 
   return (
     <>
@@ -1056,6 +1064,20 @@ export default function Modals() {
         />
       )}
       {quickTaskTarget && <QuickTaskDialog onClose={() => setQuickTaskTarget(null)} />}
+      {shipPrompt && (
+        <ConfirmDelete
+          title="Ship task"
+          name={taskName(shipPrompt.issue.projectId, shipPrompt.taskId)}
+          confirmLabel="Commit & ship"
+          message="The worktree has uncommitted changes. They are committed, the branch is squash-merged into the project root, and the root branch is pushed. Esc keeps the card where it is."
+          onClose={() => setShipPrompt(null)}
+          onConfirm={async () => {
+            await taskShip(shipPrompt.taskId, { autoCommit: true });
+            await issueEnterColumn(shipPrompt.issue.id, shipPrompt.column.id);
+            maybeOfferWorktreeCleanup(shipPrompt.issue, shipPrompt.column);
+          }}
+        />
+      )}
     </>
   );
 }

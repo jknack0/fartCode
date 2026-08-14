@@ -35,6 +35,7 @@ const KIND_LABEL: Record<ColumnKind, string> = {
   shelf: "shelf",
   agent_step: "agent step",
   human_gate: "human gate",
+  ship: "ship (squash-merge + push)",
 };
 
 /* -- shared row shells (the ProjectSettings fc-set-* idiom) -------------- */

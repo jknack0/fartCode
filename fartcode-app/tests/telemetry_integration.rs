@@ -161,7 +161,7 @@ impl Fixture {
             .list_for_project(&self.project_id)
             .unwrap()
             .into_iter()
-            .find(|c| c.name == "In Progress")
+            .find(|c| c.name == "Implement")
             .unwrap();
         step_engine::enter_column(&self.app, &issue.id, &column.id, None).unwrap();
         let stored = self.issue(&issue.id);
@@ -614,7 +614,7 @@ fn tag_literals_in_card_text_are_not_counted_as_clarifications() {
         .list_for_project(&fx.project_id)
         .unwrap()
         .into_iter()
-        .find(|c| c.name == "In Progress")
+        .find(|c| c.name == "Implement")
         .unwrap();
     step_engine::enter_column(&fx.app, &issue.id, &column.id, None).unwrap();
 
@@ -829,7 +829,7 @@ fn an_echoed_prompt_in_the_scrollback_scores_nothing() {
     let fx = fixture();
     let (issue, task_id) = fx.card_mid_step("OAuth login");
     let rel = issue.dossier_path.clone().unwrap();
-    let prompt = echoed_prompt("In Progress", &rel);
+    let prompt = echoed_prompt("Implement", &rel);
     assert!(prompt.contains(&rel), "the fixture must contain the path");
     assert!(prompt.contains(TAG_MEMORY) && prompt.contains(TAG_HUMAN));
 
@@ -857,7 +857,7 @@ fn a_pty_only_project_reports_unknown_across_the_board() {
     for title in ["OAuth login", "Billing retries", "Search ranking"] {
         let (issue, task_id) = fx.card_mid_step(title);
         let rel = issue.dossier_path.clone().unwrap();
-        let pty = pty_session(&fx.app, &task_id, &echoed_prompt("In Progress", &rel));
+        let pty = pty_session(&fx.app, &task_id, &echoed_prompt("Implement", &rel));
         dispatch::flip_for_exited_agent(pty.app.handle(), &task_id, &pty.terminal_id);
     }
     let report = fx.report();
@@ -916,7 +916,7 @@ fn a_pty_step_is_still_counted_through_its_committed_section() {
             today()
         ),
     );
-    let pty = pty_session(&fx.app, &task_id, &echoed_prompt("In Progress", &rel));
+    let pty = pty_session(&fx.app, &task_id, &echoed_prompt("Implement", &rel));
     dispatch::flip_for_exited_agent(pty.app.handle(), &task_id, &pty.terminal_id);
 
     let report = fx.report();

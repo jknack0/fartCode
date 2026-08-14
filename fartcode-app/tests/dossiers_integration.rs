@@ -232,7 +232,7 @@ impl Fixture {
 fn first_agent_step_entry_writes_the_dossier_inside_the_worktree() {
     let fx = fixture();
     let issue = fx.new_issue("Implement OAuth login");
-    let in_progress = fx.column("In Progress");
+    let in_progress = fx.column("Implement");
 
     let outcome = step_engine::enter_column(&fx.app, &issue.id, &in_progress.id, None).unwrap();
     let launch = outcome.launch.expect("run-mode step launches");
@@ -276,7 +276,7 @@ fn first_agent_step_entry_writes_the_dossier_inside_the_worktree() {
         text.contains("· created · proposal"),
         "pre-worktree history"
     );
-    assert!(text.contains("dossier created with the worktree · In Progress"));
+    assert!(text.contains("dossier created with the worktree · Implement"));
 }
 
 #[test]
@@ -285,7 +285,7 @@ fn a_second_step_column_reuses_the_dossier_and_writes_no_second_file() {
     let issue = fx.new_issue("Implement OAuth login");
     let review_step = fx.extra_step("Review");
 
-    step_engine::enter_column(&fx.app, &issue.id, &fx.column("In Progress").id, None).unwrap();
+    step_engine::enter_column(&fx.app, &issue.id, &fx.column("Implement").id, None).unwrap();
     let first = fx.app.issues.get(&issue.id).unwrap().unwrap();
     let task_id = first.linked_task_id.clone().unwrap();
 
@@ -371,7 +371,7 @@ fn a_hand_written_document_at_the_slug_is_never_touched() {
     );
 
     let issue = fx.new_issue("Dark mode");
-    let in_progress = fx.column("In Progress");
+    let in_progress = fx.column("Implement");
     step_engine::enter_column(&fx.app, &issue.id, &in_progress.id, None).unwrap();
 
     let stored = fx.app.issues.get(&issue.id).unwrap().unwrap();
@@ -398,7 +398,7 @@ fn a_hand_written_document_at_the_slug_is_never_touched() {
         HUMAN_DOC,
         "no Timeline section bolted onto someone's design doc"
     );
-    assert!(fx.dossier_text(&issue.id).contains("In Progress · settled"));
+    assert!(fx.dossier_text(&issue.id).contains("Implement · settled"));
 }
 
 // ---------------------------------------------------------------------------
@@ -454,7 +454,7 @@ fn consent_unset_writes_nothing_and_still_dispatches() {
 fn consent_withdrawn_stops_the_breadcrumbs_too() {
     let fx = fixture();
     let issue = fx.new_issue("Implement OAuth login");
-    let in_progress = fx.column("In Progress");
+    let in_progress = fx.column("Implement");
     step_engine::enter_column(&fx.app, &issue.id, &in_progress.id, None).unwrap();
     let task_id = fx
         .app
@@ -508,7 +508,7 @@ fn consent_on_writes() {
 fn step_events_append_one_timeline_line_each() {
     let fx = fixture();
     let issue = fx.new_issue("Implement OAuth login");
-    let in_progress = fx.column("In Progress");
+    let in_progress = fx.column("Implement");
     step_engine::enter_column(&fx.app, &issue.id, &in_progress.id, None).unwrap();
     let task_id = fx
         .app
@@ -541,19 +541,19 @@ fn step_events_append_one_timeline_line_each() {
 
     let text = fx.dossier_text(&issue.id);
     assert_eq!(
-        text.matches("In Progress · launched · claude · haiku")
+        text.matches("Implement · launched · claude")
             .count(),
         1,
         "one launch line with column, provider and model:\n{text}"
     );
-    assert_eq!(text.matches("In Progress · settled").count(), 1);
+    assert_eq!(text.matches("Implement · settled").count(), 1);
 }
 
 #[test]
 fn a_reattach_is_not_a_launch() {
     let fx = fixture();
     let issue = fx.new_issue("Implement OAuth login");
-    let in_progress = fx.column("In Progress");
+    let in_progress = fx.column("Implement");
     step_engine::enter_column(&fx.app, &issue.id, &in_progress.id, None).unwrap();
     let task_id = fx
         .app
@@ -583,7 +583,7 @@ fn a_reattach_is_not_a_launch() {
 fn agent_written_sections_survive_an_append_untouched() {
     let fx = fixture();
     let issue = fx.new_issue("Implement OAuth login");
-    let in_progress = fx.column("In Progress");
+    let in_progress = fx.column("Implement");
     step_engine::enter_column(&fx.app, &issue.id, &in_progress.id, None).unwrap();
     let stored = fx.app.issues.get(&issue.id).unwrap().unwrap();
     let task_id = stored.linked_task_id.clone().unwrap();
@@ -613,7 +613,7 @@ fn agent_written_sections_survive_an_append_untouched() {
     );
     let section_start = after.find("## Plan — 2026-08-09").unwrap();
     assert!(
-        after[..section_start].contains("In Progress · settled"),
+        after[..section_start].contains("Implement · settled"),
         "the new line landed UNDER Timeline, above the agent section:\n{after}"
     );
 }
@@ -626,12 +626,12 @@ fn agent_written_sections_survive_an_append_untouched() {
 fn a_column_move_records_both_endpoints_from_the_event() {
     let fx = fixture();
     let issue = fx.new_issue("Implement OAuth login");
-    let in_progress = fx.column("In Progress");
+    let in_progress = fx.column("Implement");
     step_engine::enter_column(&fx.app, &issue.id, &in_progress.id, None).unwrap();
 
     let mut rx = fx.app.event_bus.subscribe();
-    let review = fx.column("In Review");
-    let done = fx.column("Done");
+    let review = fx.column("Review");
+    let done = fx.column("Ship");
     fx.app
         .issues
         .enter_column(&issue.id, &review.id, None)
@@ -655,12 +655,12 @@ fn a_column_move_records_both_endpoints_from_the_event() {
 
     let text = fx.dossier_text(&issue.id);
     assert_eq!(
-        text.matches("column · In Progress → In Review").count(),
+        text.matches("column · Implement → Review").count(),
         1,
         "the first move remembers where it came from:\n{text}"
     );
     assert_eq!(
-        text.matches("column · In Review → Done").count(),
+        text.matches("column · Review → Ship").count(),
         1,
         "{text}"
     );
@@ -692,7 +692,7 @@ fn a_column_move_records_both_endpoints_from_the_event() {
 fn a_card_whose_worktree_is_gone_appends_nothing() {
     let fx = fixture();
     let issue = fx.new_issue("Implement OAuth login");
-    let in_progress = fx.column("In Progress");
+    let in_progress = fx.column("Implement");
     step_engine::enter_column(&fx.app, &issue.id, &in_progress.id, None).unwrap();
     let stored = fx.app.issues.get(&issue.id).unwrap().unwrap();
     let task_id = stored.linked_task_id.clone().unwrap();
@@ -726,7 +726,7 @@ fn a_card_with_no_dossier_appends_nothing() {
     let fx = fixture();
     fx.set_consent(Some(false));
     let issue = fx.new_issue("Implement OAuth login");
-    let in_progress = fx.column("In Progress");
+    let in_progress = fx.column("Implement");
     step_engine::enter_column(&fx.app, &issue.id, &in_progress.id, None).unwrap();
     let task_id = fx
         .app
@@ -757,7 +757,7 @@ fn a_card_with_no_dossier_appends_nothing() {
 fn pr_open_and_merge_append_one_timeline_line_each() {
     let fx = fixture();
     let issue = fx.new_issue("Implement OAuth login");
-    let in_progress = fx.column("In Progress");
+    let in_progress = fx.column("Implement");
     step_engine::enter_column(&fx.app, &issue.id, &in_progress.id, None).unwrap();
     let task_id = fx
         .app
@@ -825,7 +825,7 @@ fn pr_open_and_merge_append_one_timeline_line_each() {
 fn a_pr_number_is_not_masked_by_a_longer_one() {
     let fx = fixture();
     let issue = fx.new_issue("Implement OAuth login");
-    step_engine::enter_column(&fx.app, &issue.id, &fx.column("In Progress").id, None).unwrap();
+    step_engine::enter_column(&fx.app, &issue.id, &fx.column("Implement").id, None).unwrap();
     let task_id = fx
         .app
         .issues
@@ -875,7 +875,7 @@ fn a_pr_number_is_not_masked_by_a_longer_one() {
 fn the_spawned_subscriber_reaches_the_dossier() {
     let fx = fixture();
     let issue = fx.new_issue("Implement OAuth login");
-    let in_progress = fx.column("In Progress");
+    let in_progress = fx.column("Implement");
     step_engine::enter_column(&fx.app, &issue.id, &in_progress.id, None).unwrap();
     let task_id = fx
         .app
@@ -905,7 +905,7 @@ fn the_spawned_subscriber_reaches_the_dossier() {
             task_id: task_id.clone(),
         });
         std::thread::sleep(std::time::Duration::from_millis(25));
-        if fx.dossier_text(&issue.id).contains("In Progress · settled") {
+        if fx.dossier_text(&issue.id).contains("Implement · settled") {
             break;
         }
         assert!(

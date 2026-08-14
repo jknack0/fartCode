@@ -28,6 +28,13 @@ export interface TaskDto {
   type: string;
 }
 
+/** Why a step is parked instead of running (mirrors
+ * `fartcode_core::events::ParkReason`). `confirm` is the cost gate a
+ * human fires; `agent_busy` is the capacity gate — the card's task already
+ * owns a live agent (ADR-0033: one agent terminal per task), so the step
+ * waits for that agent to exit and then fires itself. */
+export type ParkReason = "confirm" | "agent_busy";
+
 export type FartcodeEvent =
   // E12-06 connection lifecycle. `attempt`/`delayMs` ride only the
   // reconnecting frames, so a row can say "retrying in 5s (3/5)" without
@@ -85,6 +92,10 @@ export type FartcodeEvent =
       provider: string;
       model: string | null;
       effort: string | null;
+      /** Which gate holds the step: `confirm` waits for the human,
+       * `agent_busy` waits for the task's live agent to exit and then
+       * fires itself (ADR-0033: one agent terminal per task). */
+      reason: ParkReason;
     }
   | { type: "step:queue_cleared"; issueId: string; projectId: string; columnId: string }
   /** The step settled and its column HOLDS — the card's step-done dot
@@ -1461,7 +1472,7 @@ export function dossierFeatureRows(itemIds: string[]): Promise<FeatureRowDto[]> 
 // Spike behind the seeded default: `lane` stays authoritative on IssueDto;
 // columns are data the board does not render from yet.
 
-export type ColumnKind = "shelf" | "agent_step" | "human_gate";
+export type ColumnKind = "shelf" | "agent_step" | "human_gate" | "ship";
 /** Step trigger: `run` fires on drop; `queue` confirms first. */
 export type ColumnOnEnter = "run" | "queue";
 /** Settle behavior: `hold` waits for a human drag; `advance` auto-moves. */
@@ -1496,6 +1507,24 @@ export interface BoardColumnDto {
   seedLane: Lane | null;
   createdAt: string | null;
   updatedAt: string | null;
+}
+
+/** Outcome of the ship verb (squash-merge + push). */
+export interface ShipOutcomeDto {
+  sourceBranch: string;
+  targetBranch: string;
+  mergeCommit: string;
+  pushed: boolean;
+}
+
+/** Squash-merges the task's branch into the project root and pushes.
+ * `autoCommit` commits the worktree's outstanding changes first (the
+ * ship dialog's "commit & ship"); without it a dirty worktree rejects. */
+export function taskShip(
+  taskId: string,
+  options: { autoCommit?: boolean } = {},
+): Promise<ShipOutcomeDto> {
+  return invoke("task_ship", { taskId, autoCommit: options.autoCommit ?? false });
 }
 
 /** Columns for a project in board order (position). */
@@ -1617,6 +1646,7 @@ export interface ParkedStepDto {
   provider: string;
   model: string | null;
   effort: string | null;
+  reason: ParkReason;
 }
 
 /** The project's current parks (E18-09 rehydration). Parks live only in

@@ -25,11 +25,11 @@ import { create } from "zustand";
 import {
   onFartcodeEvent,
   stepParkedList,
-  terminalListForTask,
   terminalOpenAgent,
   terminalWrite,
   waitForTerminalReady,
   type FartcodeEvent,
+  type ParkReason,
 } from "../lib/tauri";
 import { useScripts } from "./scripts";
 import { useSidebar } from "./sidebar";
@@ -39,8 +39,12 @@ import { useSidebar } from "./sidebar";
 export interface StepFlags {
   /** step:settled landed for this column and the column holds. */
   settledColumnId?: string;
-  /** step:queued parked a step here, awaiting the confirm. */
+  /** step:queued parked a step here. `confirm` awaits the human;
+   * `agent_busy` awaits the task's live agent exiting and then fires
+   * itself — there is nothing to confirm. */
   queuedColumnId?: string;
+  /** Which gate holds it. */
+  queuedReason?: ParkReason;
   /** step:chain_held — the guard refused the next automatic launch while
    * the card sat here (#82). Cleared by the next launch/entry. */
   heldColumnId?: string;
@@ -74,7 +78,12 @@ interface StepsState {
   notePark: (
     issueId: string,
     columnId: string,
-    agent?: { provider?: string; model?: string | null; effort?: string | null },
+    agent?: {
+      provider?: string;
+      model?: string | null;
+      effort?: string | null;
+      reason?: ParkReason;
+    },
   ) => void;
   /** Drops the queued flag once the confirm fires or is dismissed. */
   clearPark: (issueId: string) => void;
@@ -140,6 +149,7 @@ export const useSteps = create<StepsState>((set) => ({
         ...s.byIssue,
         [issueId]: {
           queuedColumnId: columnId,
+          queuedReason: agent?.reason ?? "confirm",
           queuedProvider: agent?.provider,
           queuedModel: agent?.model ?? null,
           queuedEffort: agent?.effort ?? null,
@@ -154,6 +164,7 @@ export const useSteps = create<StepsState>((set) => ({
       if (!flags?.queuedColumnId) return s;
       const next = { ...flags };
       delete next.queuedColumnId;
+      delete next.queuedReason;
       delete next.queuedProvider;
       delete next.queuedModel;
       delete next.queuedEffort;
@@ -202,6 +213,7 @@ export async function hydrateParkedSteps(projectId: string): Promise<void> {
         if (clearedInFlight.has(park.issueId)) continue; // cleared mid-flight
         byIssue[park.issueId] = {
           queuedColumnId: park.columnId,
+          queuedReason: park.reason,
           queuedProvider: park.provider,
           queuedModel: park.model,
           queuedEffort: park.effort,
@@ -252,35 +264,25 @@ export interface StepLaunchDirective {
   reattached: boolean;
 }
 
-/** THE re-entry guard (ADR-0033). A task has at most one agent terminal,
- * and `terminal_open_agent` REATTACHES to a live one instead of spawning
- * (fartcode-app/src/commands/terminals.rs). So "open the terminal, then
- * paste the prompt" silently becomes "type the prompt into the running
- * agent and press return" whenever a session is already alive — which is
- * exactly what a rework drag (In Review → In Progress) is: the engine
- * reports `reattached: false` because the PREVIOUS COLUMN differs, hands
- * over a full dispatch packet, and the paste derails the in-flight turn.
+/** Carries out a launch directive: focus when the engine says the card
+ * merely re-entered its own column, otherwise open a session and
+ * bracket-paste the step's prompt.
  *
- * `reattached` cannot answer this on its own, because it answers a
- * different question — did the card re-enter its own column. The terminal
- * list is the ground truth, and it is the same check the ⌘T resume path
- * already makes (lib/commands.ts). */
-async function hasLiveAgent(taskId: string): Promise<boolean> {
-  if (useScripts.getState().agentByTask[taskId]?.running) return true;
-  const terms = await terminalListForTask(taskId).catch(() => []);
-  return terms.some((t) => t.kind === "agent" && t.running);
-}
-
-/** Carries out a launch directive: move + focus when a session is already
- * live, otherwise open one and bracket-paste the step's prompt. Never
- * both — the board returns you to a running agent, it never talks to it. */
+ * There is deliberately NO live-agent probe here. It used to be THE
+ * re-entry guard (ADR-0033: `terminal_open_agent` reattaches, so
+ * "open then paste" silently became "type into the running agent"), but a
+ * guard whose only verb is `return` turns a launch the backend recorded
+ * into a prompt nobody ran — and the old session's exit then settled the
+ * step that never started. The capacity check moved into the engine,
+ * which can PARK instead of drop (`ParkReason.AgentBusy`), so a directive
+ * that reaches this function is one the backend has already established
+ * can run. */
 export async function runLaunchDirective(
   launch: StepLaunchDirective,
 ): Promise<void> {
   try {
-    // The engine says so itself (empty prompt), or the probe catches what
-    // the engine cannot see.
-    if (launch.reattached || !launch.prompt || (await hasLiveAgent(launch.taskId))) {
+    // The engine says so itself (empty prompt = reattach semantics).
+    if (launch.reattached || !launch.prompt) {
       focusIfCurrentProject(launch);
       return;
     }
@@ -333,6 +335,7 @@ export function wireStepEvents(): () => void {
         provider: event.provider,
         model: event.model,
         effort: event.effort,
+        reason: event.reason,
       });
       return;
     }
@@ -350,6 +353,7 @@ export function wireStepEvents(): () => void {
             ...s.byIssue[event.issueId],
             settledColumnId: event.columnId,
             queuedColumnId: undefined,
+            queuedReason: undefined,
             queuedProvider: undefined,
             queuedModel: undefined,
             queuedEffort: undefined,

@@ -1336,7 +1336,7 @@ mod tests {
             .into_iter()
             .find(|c| c.is_landing)
             .unwrap();
-        assert_eq!(backlog.name, "Backlog"); // seeded default
+        assert_eq!(backlog.name, "Idea"); // seeded default landing
 
         let card = store.create(new_issue("a")).unwrap();
         assert_eq!(card.column_id.as_deref(), Some(backlog.id.as_str()));
@@ -1366,15 +1366,17 @@ mod tests {
         assert_eq!(card.lane, Lane::Backlog); // interim, until E18-07
 
         // Move it to a SEEDED column: the lane follows the seed_lane.
-        let ready = col_store
+        // (Review — the seeded 'ready' column is now the Plan agent step,
+        // which can never take the landing flag.)
+        let review = col_store
             .list_for_project("p1")
             .unwrap()
             .into_iter()
-            .find(|c| c.seed_lane.as_deref() == Some("ready"))
+            .find(|c| c.seed_lane.as_deref() == Some("in_review"))
             .unwrap();
         col_store
             .update(
-                &ready.id,
+                &review.id,
                 columns::ColumnPatch {
                     is_landing: Some(true),
                     ..Default::default()
@@ -1382,8 +1384,8 @@ mod tests {
             )
             .unwrap();
         let card = store.create(new_issue("c")).unwrap();
-        assert_eq!(card.column_id.as_deref(), Some(ready.id.as_str()));
-        assert_eq!(card.lane, Lane::Ready);
+        assert_eq!(card.column_id.as_deref(), Some(review.id.as_str()));
+        assert_eq!(card.lane, Lane::InReview);
 
         // An explicit lane override still wins (internal callers), and
         // still carries that lane's seeded mirror.
@@ -1496,7 +1498,8 @@ mod tests {
         let store = fixture();
         let col_store = columns::ColumnStore::new(store.db.clone());
         let board = col_store.list_for_project("p1").unwrap();
-        let (quick, done) = (board[2].clone(), board[5].clone());
+        // Quick carries no seed_lane; Ship mirrors 'done'.
+        let (quick, done) = (board[2].clone(), board[7].clone());
         let a = store.create(new_issue("a")).unwrap();
 
         // Seeded column: lane syncs (reverse seed_lane mapping), mirror set,

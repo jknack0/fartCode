@@ -111,29 +111,15 @@ describe("the launch directive", () => {
     expect(useSidebar.getState().selectedTaskId).toBe("task-1");
   });
 
-  // THE regression this round exists for: a rework drag (In Review → In
-  // Progress) reports reattached:false and carries a full dispatch packet,
-  // but terminal_open_agent hands back the RUNNING pty (ADR-0033), so the
-  // paste lands in the middle of the agent's turn.
-  it("never writes to a task that already has a live agent", async () => {
-    vi.mocked(terminalListForTask).mockResolvedValue([
-      { id: "term-live", agent: "claude", kind: "agent", scriptType: null, running: true, exitCode: null },
-    ]);
-
-    await runLaunchDirective({
-      projectId: "p1",
-      taskId: "task-1",
-      prompt: "implement the thing",
-      provider: "claude",
-      reattached: false, // the engine's own answer is not to be trusted here
-    });
-
-    expect(terminalWrite).not.toHaveBeenCalled();
-    expect(terminalOpenAgent).not.toHaveBeenCalled();
-    expect(useSidebar.getState().selectedTaskId).toBe("task-1");
-  });
-
-  it("takes the scripts store's word for liveness without an extra round trip", async () => {
+  // The inverse of the old contract, and deliberately so. This used to
+  // probe the terminal list and REFUSE when an agent was live — which
+  // turned a launch the backend had already recorded into a prompt nobody
+  // ran, and left the old session's exit to settle a step that never
+  // started. Capacity is now decided in the engine, which can park
+  // (ParkReason.AgentBusy) instead of drop, so a directive that gets here
+  // is one the backend established can run. See the engine's
+  // `run_entry_parks_instead_of_launching_while_the_agent_is_live`.
+  it("obeys the directive without re-litigating liveness", async () => {
     useScripts.setState({
       agentByTask: { "task-1": { ids: ["term-live"], running: true, exitedAt: null } },
     });
@@ -141,13 +127,14 @@ describe("the launch directive", () => {
     await runLaunchDirective({
       projectId: "p1",
       taskId: "task-1",
-      prompt: "implement the thing",
+      prompt: "find the bugs",
       provider: "claude",
       reattached: false,
     });
 
-    expect(terminalListForTask).not.toHaveBeenCalled();
-    expect(terminalWrite).not.toHaveBeenCalled();
+    expect(terminalListForTask).not.toHaveBeenCalled(); // no probe at all
+    expect(terminalOpenAgent).toHaveBeenCalledWith("task-1", "claude", 24, 80);
+    expect(vi.mocked(terminalWrite).mock.calls[0][1]).toContain("find the bugs");
   });
 
   it("focuses without writing when the engine says it reattached", async () => {
@@ -342,6 +329,7 @@ describe("wireStepEvents", () => {
       provider: "fable",
       model: null,
       effort: null,
+      reason: "confirm" as const,
     });
     emit({
       type: "step:queue_cleared",
@@ -351,6 +339,26 @@ describe("wireStepEvents", () => {
     });
 
     expect(useSteps.getState().byIssue["iss-2"]?.queuedColumnId).toBeUndefined();
+  });
+
+  // The capacity gate: nothing for the human to confirm, so the board
+  // must be able to tell the two parks apart (BoardView skips the confirm
+  // overlay for this one).
+  it("remembers WHY a step is parked", async () => {
+    emit({
+      type: "step:queued",
+      issueId: "iss-9",
+      projectId: "p1",
+      columnId: "col-adversarial",
+      provider: "claude",
+      model: null,
+      effort: null,
+      reason: "agent_busy",
+    });
+
+    const flags = useSteps.getState().byIssue["iss-9"];
+    expect(flags?.queuedColumnId).toBe("col-adversarial");
+    expect(flags?.queuedReason).toBe("agent_busy");
   });
 
   // E18-09: parks live in the backend's in-memory registry, so a webview
@@ -364,6 +372,7 @@ describe("wireStepEvents", () => {
         provider: "fable",
         model: "opus",
         effort: "high",
+        reason: "confirm" as const,
       },
     ]);
 
@@ -400,6 +409,7 @@ describe("wireStepEvents", () => {
         provider: "fable",
         model: "opus",
         effort: "high",
+        reason: "confirm" as const,
       },
     ]);
 
@@ -419,6 +429,7 @@ describe("wireStepEvents", () => {
         provider: "fable",
         model: null,
         effort: null,
+        reason: "confirm" as const,
       },
     ]);
     await hydrateParkedSteps("p1");
@@ -461,6 +472,7 @@ describe("wireStepEvents", () => {
         provider: "fable",
         model: null,
         effort: null,
+        reason: "confirm" as const,
       },
     ]);
     await hydration;
@@ -485,6 +497,7 @@ describe("wireStepEvents", () => {
       provider: "fable",
       model: null,
       effort: null,
+      reason: "confirm" as const,
     });
     resolveQuery([park("iss-3"), park("iss-4")]);
     await hydration;
@@ -506,6 +519,7 @@ describe("wireStepEvents", () => {
         provider: "fable",
         model: null,
         effort: null,
+        reason: "confirm" as const,
       },
     ]);
     await hydrateParkedSteps("p1");

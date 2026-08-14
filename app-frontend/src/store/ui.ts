@@ -2,10 +2,20 @@
 // scope). The keybinding dispatch reads this store to decide whether a
 // modal scope is active and what Esc closes first.
 import { create } from "zustand";
+import type { BoardColumnDto, IssueDto } from "../lib/tauri";
 import type { ScriptType } from "./scripts";
 
 export interface DeleteTaskTarget {
   projectId: string;
+  taskId: string;
+}
+
+/** Pending ship confirm (pipeline overhaul): a card dropped on a ship
+ * column whose worktree has uncommitted changes — the dialog offers
+ * commit-and-ship or cancel, then finishes the interrupted move. */
+export interface ShipPromptTarget {
+  issue: IssueDto;
+  column: BoardColumnDto;
   taskId: string;
 }
 
@@ -49,6 +59,7 @@ interface UiState {
   projectSettingsOpen: boolean;
   sidebarVisible: boolean;
   deleteTaskTarget: DeleteTaskTarget | null;
+  shipPrompt: ShipPromptTarget | null;
   /** Project id the create-task dialog targets (null = closed). */
   createTaskTarget: string | null;
   deleteProjectTarget: string | null;
@@ -79,6 +90,7 @@ interface UiState {
   toggleSidebarVisible: () => void;
   setSidebarVisible: (visible: boolean) => void;
   setDeleteTaskTarget: (target: DeleteTaskTarget | null) => void;
+  setShipPrompt: (target: ShipPromptTarget | null) => void;
   setCreateTaskTarget: (projectId: string | null) => void;
   setDeleteProjectTarget: (id: string | null) => void;
   setQuickTaskTarget: (target: QuickTaskTarget | null) => void;
@@ -124,6 +136,7 @@ export const useUi = create<UiState>((set, get) => ({
   projectSettingsOpen: false,
   sidebarVisible: initialSidebarVisible(),
   deleteTaskTarget: null,
+  shipPrompt: null,
   createTaskTarget: null,
   deleteProjectTarget: null,
   quickTaskTarget: null,
@@ -154,6 +167,7 @@ export const useUi = create<UiState>((set, get) => ({
     set({ sidebarVisible });
   },
   setDeleteTaskTarget: (deleteTaskTarget) => set({ deleteTaskTarget }),
+  setShipPrompt: (shipPrompt) => set({ shipPrompt }),
   setCreateTaskTarget: (createTaskTarget) => set({ createTaskTarget }),
   setDeleteProjectTarget: (deleteProjectTarget) => set({ deleteProjectTarget }),
   setQuickTaskTarget: (quickTaskTarget) => set({ quickTaskTarget }),
@@ -166,6 +180,7 @@ export const useUi = create<UiState>((set, get) => ({
     const s = get();
     if (s.paletteOpen) return set({ paletteOpen: false });
     if (s.quickTaskTarget) return set({ quickTaskTarget: null });
+    if (s.shipPrompt) return set({ shipPrompt: null });
     if (s.deleteTaskTarget) return set({ deleteTaskTarget: null });
     if (s.createTaskTarget) return set({ createTaskTarget: null });
     if (s.deleteProjectTarget) return set({ deleteProjectTarget: null });
@@ -182,6 +197,7 @@ export const useUi = create<UiState>((set, get) => ({
       s.settingsOpen ||
       s.projectSettingsOpen ||
       s.deleteTaskTarget !== null ||
+      s.shipPrompt !== null ||
       s.createTaskTarget !== null ||
       s.deleteProjectTarget !== null ||
       s.quickTaskTarget !== null ||

@@ -33,7 +33,7 @@ import {
   type TaskDto,
 } from "../../lib/tauri";
 import { renderMarkdown } from "../../lib/markdown";
-import { maybeOfferWorktreeCleanup } from "../../lib/taskPipeline";
+import { ensureShipped, maybeOfferWorktreeCleanup } from "../../lib/taskPipeline";
 import {
   advanceTarget,
   columnIdForIssue,
@@ -378,6 +378,9 @@ export default function CardDetail({
       ) {
         return;
       }
+      // Ship gate first (merge before move); a dirty worktree hands the
+      // flow to the ship dialog and this call ends here.
+      if (!(await ensureShipped(issue, nextColumn))) return;
       // The outcome is deliberately ignored — launches and parks arrive
       // as step:* events like every other entry.
       await issueEnterColumn(issue.id, nextColumn.id);

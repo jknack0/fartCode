@@ -7,6 +7,21 @@
 
 use serde::Serialize;
 
+/// Why a step is parked instead of running.
+///
+/// `Confirm` is the queue-mode cost gate (ADR-0037): a human must fire it.
+/// `AgentBusy` is the capacity gate: the card's task already owns a live
+/// agent session, and ADR-0033 (one agent terminal per task) plus
+/// ADR-0037 item 11 (the board never kills) make a second concurrent step
+/// unrepresentable — so the entry waits for that agent to exit and fires
+/// itself, no human needed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParkReason {
+    Confirm,
+    AgentBusy,
+}
+
 /// Events emitted by domain services, consumed by the Tauri command layer.
 ///
 /// The camelCase field keys ARE the frontend wire format: the Tauri
@@ -156,6 +171,9 @@ pub enum InternalEvent {
         provider: String,
         model: Option<String>,
         effort: Option<String>,
+        /// Confirm gate (human fires it) vs agent-busy gate (the blocking
+        /// agent's exit fires it).
+        reason: ParkReason,
     },
     /// A parked step was dropped without launching (manual drag override,
     /// or superseded by another entry).

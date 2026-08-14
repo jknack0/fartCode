@@ -20,8 +20,10 @@
 //     display-derived `#12`.
 
 import {
+  gitStatus,
   issueEnterColumn,
   stepConfirm,
+  taskShip,
   type BoardColumnDto,
   type IssueDto,
 } from "./tauri";
@@ -177,6 +179,7 @@ export async function enterColumn(
   if (column.kind === "agent_step" && !(await ensureDossierConsent(issue.projectId, issue))) {
     return "inert";
   }
+  if (!(await ensureShipped(issue, column))) return "inert";
   if (column.kind === "agent_step") useSteps.getState().beginDispatch(issue.id);
   try {
     const outcome = await issueEnterColumn(issue.id, column.id);
@@ -203,6 +206,38 @@ export async function confirmParkedStep(issue: IssueDto): Promise<void> {
     useSteps.getState().endLaunch(issue.id);
     throw e;
   }
+}
+
+/** THE ship gate: entering a ship column merges FIRST — squash-merge the
+ * linked task's branch into the project root + push (`task_ship`), the
+ * same way the consent gate runs before the enter. A clean worktree ships
+ * inline (throws on conflict — the card never enters, which IS the
+ * bounce-back to Review); a dirty worktree opens the commit-or-cancel
+ * dialog and the dialog finishes the interrupted move. Cards without a
+ * linked worktree task (or project-root tasks) move like a plain shelf. */
+export async function ensureShipped(issue: IssueDto, column: BoardColumnDto): Promise<boolean> {
+  if (column.kind !== "ship" || !issue.linkedTaskId) return true;
+  const sb = useSidebar.getState();
+  const task = (sb.tasksByProject[issue.projectId] ?? []).find(
+    (t) => t.id === issue.linkedTaskId,
+  );
+  const project = sb.projects.find((p) => p.id === issue.projectId);
+  if (!task?.workspaceId || task.workspaceId === project?.repositoryWorkspaceId) {
+    return true;
+  }
+  let dirty = false;
+  try {
+    const s = await gitStatus(task.workspaceId);
+    dirty = s.staged.length > 0 || s.unstaged.length > 0 || s.truncated;
+  } catch {
+    // Status unreadable — let the ship command be the judge.
+  }
+  if (dirty) {
+    useUi.getState().setShipPrompt({ issue, column, taskId: task.id });
+    return false;
+  }
+  await taskShip(task.id);
+  return true;
 }
 
 /** Landing in Done (seedLane "done") with a linked task opens the

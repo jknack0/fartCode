@@ -208,7 +208,7 @@ impl Fixture {
     /// The real board gesture: drop a card on an agent-step column.
     fn dispatch(&self, title: &str) -> Dispatched {
         let issue = self.new_issue(title);
-        self.enter(&issue.id, &self.column("In Progress"))
+        self.enter(&issue.id, &self.column("Implement"))
     }
 
     fn enter(&self, issue_id: &str, column: &BoardColumn) -> Dispatched {
@@ -462,7 +462,7 @@ fn the_step_prompt_ends_with_the_append_instruction_and_names_the_column() {
 
     assert!(prompt.contains("# Feature log"), "{prompt}");
     assert!(
-        prompt.contains("## In Progress — <YYYY-MM-DD>"),
+        prompt.contains("## Implement — <YYYY-MM-DD>"),
         "names the actual column:\n{prompt}"
     );
     assert!(
@@ -494,7 +494,7 @@ fn the_legacy_dispatch_prompt_carries_the_append_instruction() {
 
     assert!(prompt.contains("# Feature log"), "{prompt}");
     assert!(
-        prompt.contains("## In Progress — <YYYY-MM-DD>"),
+        prompt.contains("## Implement — <YYYY-MM-DD>"),
         "names the seeded dispatch column:\n{prompt}"
     );
     assert!(
@@ -533,7 +533,7 @@ fn a_card_without_a_dossier_gets_no_instruction() {
     assert!(issue.dossier_path.is_none());
 
     let prompt =
-        skills_app::with_append_instruction(&fx.app, &issue, "In Progress", "PACKET".to_string());
+        skills_app::with_append_instruction(&fx.app, &issue, "Implement", "PACKET".to_string());
     assert_eq!(prompt, "PACKET");
 }
 
@@ -556,12 +556,12 @@ fn revoking_consent_stops_the_instruction_on_a_card_that_has_a_dossier() {
         .unwrap();
 
     assert!(
-        skills_app::with_append_instruction(&fx.app, &issue, "In Progress", "P".into())
+        skills_app::with_append_instruction(&fx.app, &issue, "Implement", "P".into())
             .contains("# Feature log")
     );
     fx.set_consent(Some(false));
     assert_eq!(
-        skills_app::with_append_instruction(&fx.app, &issue, "In Progress", "P".into()),
+        skills_app::with_append_instruction(&fx.app, &issue, "Implement", "P".into()),
         "P"
     );
 }

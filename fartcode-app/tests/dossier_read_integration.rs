@@ -187,7 +187,7 @@ impl Fixture {
     /// launch breadcrumb written by the app's own appender.
     fn card_in_step(&self, title: &str) -> (Issue, PathBuf) {
         let issue = self.new_issue(title);
-        let column = self.column("In Progress");
+        let column = self.column("Implement");
         step_engine::enter_column(&self.app, &issue.id, &column, None).unwrap();
         let stored = self.issue(&issue.id);
         let rel = stored.dossier_path.clone().expect("dossier born");
@@ -264,11 +264,11 @@ fn the_read_returns_the_path_the_folded_timeline_and_the_agent_sections() {
     assert!(
         texts
             .iter()
-            .any(|t| t.starts_with("In Progress · claude · launched → settled")),
+            .any(|t| t.starts_with("Implement · claude · launched → settled")),
         "the launch/settle pair folds into one line: {texts:?}"
     );
     assert!(
-        !texts.contains(&"In Progress · settled"),
+        !texts.contains(&"Implement · settled"),
         "the settle is folded, not listed twice: {texts:?}"
     );
     // THE regression: the seeded step is `on_settle: advance`, which emits
@@ -283,12 +283,12 @@ fn the_read_returns_the_path_the_folded_timeline_and_the_agent_sections() {
     // follows it (that inference is the repair path for older files).
     let on_disk = std::fs::read_to_string(&path).unwrap();
     assert!(
-        on_disk.contains("In Progress · settled"),
+        on_disk.contains("Implement · settled"),
         "the advance arm writes the settle line:\n{on_disk}"
     );
     assert!(
-        on_disk.find("In Progress · launched").unwrap()
-            < on_disk.find("In Progress · settled").unwrap(),
+        on_disk.find("Implement · launched").unwrap()
+            < on_disk.find("Implement · settled").unwrap(),
         "the settle lands after the launch it closes"
     );
 
@@ -315,7 +315,7 @@ fn the_read_returns_the_path_the_folded_timeline_and_the_agent_sections() {
 fn a_skipped_append_leaves_the_timeline_and_no_sections() {
     let fx = fixture();
     let issue = fx.new_issue("Nobody wrote a section");
-    step_engine::enter_column(&fx.app, &issue.id, &fx.column("In Progress"), None).unwrap();
+    step_engine::enter_column(&fx.app, &issue.id, &fx.column("Implement"), None).unwrap();
 
     let dossier = read_dossier(&fx.app, &fx.issue(&issue.id).id).expect("dossier born");
     assert!(

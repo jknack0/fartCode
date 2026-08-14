@@ -748,6 +748,15 @@ impl<R: tauri::Runtime> TerminalManager<R> {
     }
 }
 
+/// The step engine's capacity gate (ADR-0033: one agent terminal per
+/// task). This manager owns the only truth about live agent sessions, so
+/// it is the port's natural implementer.
+impl<R: tauri::Runtime> crate::step_engine::AgentLiveness for TerminalManager<R> {
+    fn has_running_agent(&self, task_id: &str) -> bool {
+        self.find_running_agent(task_id).is_some()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

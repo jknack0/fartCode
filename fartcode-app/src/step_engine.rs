@@ -72,9 +72,9 @@
 //! that removes queue-ness, or the stale-park backstop at confirm time.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 
-use fartcode_core::events::{EventBus, InternalEvent};
+use fartcode_core::events::{EventBus, InternalEvent, ParkReason};
 use fartcode_core::issues::columns::{
     compose_step_prompt, BoardColumn, ColumnKind, OnEnter, OnSettle,
 };
@@ -87,12 +87,31 @@ use fartcode_core::Error;
 use crate::app::App;
 use crate::dispatch::provision_issue_task;
 
-/// A queue-mode entry awaiting `step_confirm`.
+/// Agent-liveness port: can a new step start in this task right now?
+///
+/// The engine must know this BEFORE it emits a launch. ADR-0033 gives a
+/// task one agent terminal for its whole life (`terminal_open_agent`
+/// reattaches rather than stacking) and ADR-0037 item 11 forbids killing,
+/// so launching a second step into a busy task cannot work — the frontend
+/// would have to drop the prompt, which is precisely the silent failure
+/// this port exists to prevent.
+///
+/// A port rather than a direct call because the ground truth
+/// (`TerminalManager::find_running_agent`) lives on a type generic over
+/// the Tauri runtime, built AFTER `App::init` in `lib.rs` — `App` cannot
+/// name it. Uninstalled (tests, headless) reads as "never busy", which is
+/// the pre-port behavior.
+pub trait AgentLiveness: Send + Sync {
+    fn has_running_agent(&self, task_id: &str) -> bool;
+}
+
+/// A parked entry: a step that has NOT launched, and what it waits on.
 #[derive(Debug, Clone)]
 pub struct ParkedStep {
     pub issue_id: String,
     pub project_id: String,
     pub column_id: String,
+    pub reason: ParkReason,
 }
 
 /// One recorded launch (or heuristic settle) per issue — the most recent.
@@ -149,6 +168,10 @@ enum SettleDecision {
     /// Registry-less settle on a queue column: the park was restored
     /// (restart contract) — the caller emits `StepQueued`.
     Repark,
+    /// An `AgentBusy` park for the card's CURRENT column was waiting on
+    /// exactly this exit: the terminal is free, so the deferred step
+    /// launches now. Nothing settled — the step is only starting.
+    FireParked,
 }
 
 /// Outcome of the atomic park-take inside `confirm_step`.
@@ -165,13 +188,31 @@ enum ParkTake {
 /// In-memory engine state: parks + launch registry, one mutex.
 pub struct StepEngine {
     state: Mutex<EngineState>,
+    /// Installed once at boot by the Tauri layer (`lib.rs`), absent in
+    /// tests that do not care — see [`AgentLiveness`].
+    liveness: OnceLock<Arc<dyn AgentLiveness>>,
 }
 
 impl StepEngine {
     pub fn new() -> Self {
         Self {
             state: Mutex::new(EngineState::default()),
+            liveness: OnceLock::new(),
         }
+    }
+
+    /// Installs the agent-liveness port. Once per process; a second call
+    /// is ignored (the first wins).
+    pub fn install_liveness(&self, liveness: Arc<dyn AgentLiveness>) {
+        let _ = self.liveness.set(liveness);
+    }
+
+    /// Does this task already own a live agent session? `false` when no
+    /// port is installed.
+    fn agent_busy(&self, task_id: &str) -> bool {
+        self.liveness
+            .get()
+            .is_some_and(|l| l.has_running_agent(task_id))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, EngineState> {
@@ -240,9 +281,34 @@ impl StepEngine {
     ) -> SettleDecision {
         let mut st = self.lock();
         // Never act on a parked issue: the step never launched, so it
-        // cannot have settled — acting would bypass the confirm gate.
-        if st.parked.contains_key(issue_id) {
-            return SettleDecision::Skip;
+        // cannot have settled — acting would bypass the gate. One
+        // exception, and it is the whole point of `AgentBusy`: this exit
+        // is the event that park is waiting for, so take it and launch
+        // (registry entry inserted in the SAME critical section as
+        // `take_park_for_launch` does, so a racing trigger finds a real
+        // entry instead of an empty registry it would read as a restart).
+        if let Some(parked) = st.parked.get(issue_id).cloned() {
+            if parked.reason != ParkReason::AgentBusy || parked.column_id != column.id {
+                return SettleDecision::Skip;
+            }
+            st.parked.remove(issue_id);
+            st.launches.insert(
+                issue_id.to_string(),
+                LaunchEntry {
+                    column_id: parked.column_id,
+                    project_id: parked.project_id,
+                    session: None,
+                    settled: false,
+                    delivered: false,
+                },
+            );
+            if let Some(s) = session {
+                st.consumed
+                    .entry(issue_id.to_string())
+                    .or_default()
+                    .insert(s.to_string());
+            }
+            return SettleDecision::FireParked;
         }
         // A consumed session's triggers are stale, whatever the column.
         if let Some(s) = session {
@@ -283,6 +349,7 @@ impl StepEngine {
                             issue_id: issue_id.to_string(),
                             project_id: column.project_id.clone(),
                             column_id: column.id.clone(),
+                            reason: ParkReason::Confirm,
                         },
                     );
                     return SettleDecision::Repark;
@@ -539,6 +606,9 @@ pub struct ParkedStepDto {
     pub provider: String,
     pub model: Option<String>,
     pub effort: Option<String>,
+    /// Which gate holds this step — the confirm overlay renders one and
+    /// the busy indicator the other.
+    pub reason: ParkReason,
 }
 
 /// The project's current parks (E18-09 rehydration): a pure read of the
@@ -564,6 +634,7 @@ pub fn parked_list(app: &App, project_id: &str) -> Result<Vec<ParkedStepDto>, St
             provider,
             model,
             effort,
+            reason: parked.reason,
         });
     }
     Ok(out)
@@ -706,26 +777,15 @@ fn enter_column_inner(
     }
     let (provider, model, effort) = resolve_agent(app, &issue, &column)?;
     match column.on_enter {
-        OnEnter::Queue => {
-            app.steps.park(ParkedStep {
-                issue_id: issue.id.clone(),
-                project_id: issue.project_id.clone(),
-                column_id: column.id.clone(),
-            });
-            app.event_bus.send(InternalEvent::StepQueued {
-                issue_id: issue.id.clone(),
-                project_id: issue.project_id.clone(),
-                column_id: column.id.clone(),
-                provider,
-                model,
-                effort,
-            });
-            Ok(EnterOutcome {
-                issue,
-                step: "queued".into(),
-                launch: None,
-            })
-        }
+        OnEnter::Queue => Ok(park_entry(
+            app,
+            issue,
+            &column,
+            ParkReason::Confirm,
+            provider,
+            model,
+            effort,
+        )),
         OnEnter::Run => {
             // Reattach requires evidence a session was opened for this
             // column: same-column re-entry, AND no park was pending here
@@ -736,6 +796,28 @@ fn enter_column_inner(
             let reattach_ok = prev_column_id.as_deref() == Some(column.id.as_str())
                 && !had_park_here
                 && !undelivered_here;
+            // Capacity gate. A NEW step cannot start while the task's
+            // previous agent is still alive (ADR-0033 one terminal, and
+            // the board never kills), so emitting a launch here would
+            // hand the frontend a prompt it can only drop — and leave a
+            // registry entry the OLD session's exit would then settle,
+            // advancing the card past a step that never ran. Park it; the
+            // exit fires it (`SettleDecision::FireParked`).
+            let busy = issue
+                .linked_task_id
+                .as_deref()
+                .is_some_and(|t| app.steps.agent_busy(t));
+            if !reattach_ok && busy {
+                return Ok(park_entry(
+                    app,
+                    issue,
+                    &column,
+                    ParkReason::AgentBusy,
+                    provider,
+                    model,
+                    effort,
+                ));
+            }
             // A non-user entry into a run column is a settle-chained
             // (automatic) launch — no human confirmed it (#82).
             let (issue, launch) = launch_step(
@@ -843,6 +925,69 @@ pub fn confirm_step(app: &App, issue_id: &str) -> Result<EnterOutcome, String> {
         step: "launched".into(),
         launch: Some(launch),
     })
+}
+
+/// Parks an entry instead of launching it, announcing the gate.
+fn park_entry(
+    app: &App,
+    issue: Issue,
+    column: &BoardColumn,
+    reason: ParkReason,
+    provider: String,
+    model: Option<String>,
+    effort: Option<String>,
+) -> EnterOutcome {
+    app.steps.park(ParkedStep {
+        issue_id: issue.id.clone(),
+        project_id: issue.project_id.clone(),
+        column_id: column.id.clone(),
+        reason,
+    });
+    app.event_bus.send(InternalEvent::StepQueued {
+        issue_id: issue.id.clone(),
+        project_id: issue.project_id.clone(),
+        column_id: column.id.clone(),
+        provider,
+        model,
+        effort,
+        reason,
+    });
+    EnterOutcome {
+        issue,
+        step: "queued".into(),
+        launch: None,
+    }
+}
+
+/// Fires a step deferred by an `AgentBusy` park, now that the blocking
+/// agent has exited. The park was already taken (atomically, in
+/// `begin_settle`), so this cannot double-launch. Best-effort by design:
+/// it runs on the PTY pump / ACP callback and must not poison a settle.
+fn fire_parked_step(app: &App, issue: &Issue, column: &BoardColumn) {
+    let (provider, model, effort) = match resolve_agent(app, issue, column) {
+        Ok(agent) => agent,
+        Err(e) => {
+            tracing::warn!(issue = %issue.id, error = %e, "deferred step resolve failed");
+            return;
+        }
+    };
+    // Not `auto`: a human dragged this card here: the launch is their
+    // gesture, merely deferred, so it must not count against the chain
+    // depth cap (#82).
+    if let Err(e) = launch_step(
+        app,
+        issue.clone(),
+        column,
+        LaunchMode {
+            reattach_ok: false,
+            auto: false,
+        },
+        provider,
+        model,
+        effort,
+    ) {
+        tracing::warn!(issue = %issue.id, error = %e, "deferred step launch failed");
+    }
 }
 
 /// Launches (or reattaches) the step's agent and emits `StepLaunch`.
@@ -1000,6 +1145,10 @@ pub fn settle_issues_observed(
                             provider,
                             model,
                             effort,
+                            // Restart contract restores a CONFIRM gate;
+                            // an AgentBusy park is never reconstructed
+                            // from a settle (it fires instead).
+                            reason: ParkReason::Confirm,
                         });
                     }
                     Err(e) => {
@@ -1007,6 +1156,14 @@ pub fn settle_issues_observed(
                     }
                 }
                 continue; // nothing settled
+            }
+            SettleDecision::FireParked => {
+                // The blocking agent just exited: run the step its entry
+                // deferred. Not a settle — nothing is counted, and the
+                // card does not advance (that happens when THIS step's
+                // own session settles).
+                fire_parked_step(app, &issue, &column);
+                continue;
             }
             SettleDecision::Act => {}
         }
@@ -1445,6 +1602,81 @@ mod tests {
         app.issues.get(issue_id).unwrap().unwrap().column_id.clone()
     }
 
+    /// Fake [`AgentLiveness`]: the tasks whose agent is "running".
+    struct BusyAgents(Vec<String>);
+    impl AgentLiveness for BusyAgents {
+        fn has_running_agent(&self, task_id: &str) -> bool {
+            self.0.iter().any(|t| t == task_id)
+        }
+    }
+
+    /// A run-mode entry into a DIFFERENT column while the card's task
+    /// still owns a live agent cannot launch: ADR-0033 gives a task one
+    /// agent terminal and ADR-0037 item 11 forbids killing, so a second
+    /// concurrent step is unrepresentable. It parks (`AgentBusy`) instead
+    /// of emitting a launch nobody can honor.
+    #[test]
+    fn run_entry_parks_instead_of_launching_while_the_agent_is_live() {
+        let app = fixture();
+        let mut rx = app.event_bus.subscribe();
+        let issue = new_issue(&app, "card");
+        with_task(&app, "t1");
+        app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
+        app.steps.install_liveness(Arc::new(BusyAgents(vec!["t1".to_string()])));
+
+        let adversarial = column(&app, "Adversarial");
+        let outcome = enter_column_from_command(&app, &issue.id, &adversarial.id, None).unwrap();
+
+        assert_eq!(outcome.step, "queued");
+        assert!(outcome.launch.is_none(), "no launch the frontend cannot honor");
+        let events = step_events(&mut rx);
+        assert!(
+            matches!(&events[..], [InternalEvent::StepQueued { column_id, reason, .. }]
+                if column_id == &adversarial.id && *reason == ParkReason::AgentBusy),
+            "expected one AgentBusy StepQueued, got {events:?}"
+        );
+        assert_eq!(
+            app.steps.peek_park(&issue.id).map(|p| p.reason),
+            Some(ParkReason::AgentBusy)
+        );
+        // The ledger must not record a step that never ran.
+        assert!(app.ledger.list_for_issue(&issue.id).unwrap().is_empty());
+    }
+
+    /// The live agent's exit is the moment the terminal frees up: the
+    /// `AgentBusy` park fires THERE, rather than the settle advancing the
+    /// card past a step that never ran.
+    #[test]
+    fn agent_busy_park_fires_when_the_blocking_agent_exits() {
+        let app = fixture();
+        let issue = new_issue(&app, "card");
+        with_task(&app, "t1");
+        app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
+        app.steps.install_liveness(Arc::new(BusyAgents(vec!["t1".to_string()])));
+        let adversarial = column(&app, "Adversarial");
+        let review = column(&app, "Review");
+        enter_column_from_command(&app, &issue.id, &adversarial.id, None).unwrap();
+
+        let mut rx = app.event_bus.subscribe();
+        // The Implement agent exits. Nothing SETTLED (the step never ran),
+        // so the count is 0 — but the park fires.
+        assert_eq!(settle_issues_for_task(&app, "t1", Some("pty:implement")), 0);
+
+        let events = step_events(&mut rx);
+        assert!(
+            matches!(&events[..], [InternalEvent::StepLaunch { column_id, reattached: false, prompt, .. }]
+                if column_id == &adversarial.id && prompt.contains("hostile reviewer")),
+            "expected the Adversarial launch, got {events:?}"
+        );
+        assert!(app.steps.peek_park(&issue.id).is_none(), "park consumed");
+        assert_eq!(
+            issue_column_id(&app, &issue.id).as_deref(),
+            Some(adversarial.id.as_str()),
+            "must NOT advance to {} — the hostile pass has not run",
+            review.id
+        );
+    }
+
     #[test]
     fn enter_shelf_is_inert_and_run_step_launches_in_the_linked_task() {
         let app = fixture();
@@ -1454,28 +1686,29 @@ mod tests {
         app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
 
         // Shelf: state moves, engine does nothing.
-        let ready = column(&app, "Ready");
+        let ready = column(&app, "Idea");
         let outcome = enter_column_from_command(&app, &issue.id, &ready.id, None).unwrap();
         assert_eq!(outcome.step, "inert");
         assert!(outcome.launch.is_none());
         assert!(step_events(&mut rx).is_empty());
 
-        // Run-mode agent step (Quick, pinned claude · haiku): launches a
-        // session in the LINKED task; lane untouched (Quick is
-        // non-seeded); prompt is the packet byte-identical (no framing).
+        // Run-mode agent step (Quick, pipeline overhaul: NO pin — rides
+        // the defaultAgent setting, model NULL = provider default):
+        // launches a session in the LINKED task; lane untouched (Quick
+        // is non-seeded); prompt is the packet byte-identical.
         let quick = column(&app, "Quick");
         let outcome = enter_column_from_command(&app, &issue.id, &quick.id, None).unwrap();
         assert_eq!(outcome.step, "launched");
         let launch = outcome.launch.unwrap();
         assert_eq!(launch.task.id, "t1");
-        assert_eq!(launch.provider, "claude");
-        assert_eq!(launch.model.as_deref(), Some("haiku"));
+        assert_eq!(launch.provider, "claude"); // defaultAgent fallback
+        assert!(launch.model.is_none());
         assert!(launch.effort.is_none());
         assert!(!launch.reattached);
         assert!(launch
             .prompt
             .starts_with("You are implementing an issue from the project board."));
-        assert_eq!(outcome.issue.lane, Lane::Ready); // unchanged
+        assert_eq!(outcome.issue.lane, Lane::Backlog); // unchanged
         assert_eq!(outcome.issue.column_id.as_deref(), Some(quick.id.as_str()));
         let events = step_events(&mut rx);
         assert_eq!(events.len(), 1);
@@ -1643,7 +1876,7 @@ mod tests {
         // CORE level (bypassing the command layer), confirm → typed error
         // + cleared event, no launch.
         enter_column_from_command(&app, &issue.id, &plan.id, None).unwrap();
-        let ready = column(&app, "Ready");
+        let ready = column(&app, "Idea");
         app.issues.enter_column(&issue.id, &ready.id, None).unwrap();
         let _ = step_events(&mut rx);
         let err = confirm_step(&app, &issue.id).unwrap_err();
@@ -1662,9 +1895,9 @@ mod tests {
         let mut rx = app.event_bus.subscribe();
         let issue = new_issue(&app, "card");
         let col_store = ColumnStore::new(app.db.clone());
-        // Reconfigure the seeded In Progress column to queue-mode so the
+        // Reconfigure the seeded Implement column to queue-mode so the
         // park sits on a SEEDED column (lane-addressable by issue_move).
-        let in_progress = column(&app, "In Progress");
+        let in_progress = column(&app, "Implement");
         col_store
             .update(
                 &in_progress.id,
@@ -1696,7 +1929,7 @@ mod tests {
 
         // Engine entry into a different column also supersedes the park.
         enter_column_from_command(&app, &issue.id, &in_progress.id, None).unwrap();
-        let ready = column(&app, "Ready");
+        let ready = column(&app, "Idea");
         enter_column_from_command(&app, &issue.id, &ready.id, None).unwrap();
         assert!(app.steps.peek_park(&issue.id).is_none());
         let events = step_events(&mut rx);
@@ -1748,9 +1981,9 @@ mod tests {
 
         let app = fixture();
         let col_store = ColumnStore::new(app.db.clone());
-        // Delete seeded Ready (empty shelf, not landing, no advance
-        // target) so lane "ready" no longer resolves.
-        col_store.delete(&column(&app, "Ready").id).unwrap();
+        // Delete seeded Plan (empty, not landing, no advance target;
+        // seed_lane 'ready') so lane "ready" no longer resolves.
+        col_store.delete(&column(&app, "Plan").id).unwrap();
 
         let issue = new_issue(&app, "card");
         let quick = column(&app, "Quick");
@@ -1836,17 +2069,17 @@ mod tests {
         let issue = new_issue(&app, "card");
         with_task(&app, "t1");
         app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
-        let done = column(&app, "Done");
+        let done = column(&app, "Ship");
         let review = make_step(
             &app,
-            "Review",
+            "Gate",
             OnEnter::Queue,
             OnSettle::Advance,
             Some(done.id.clone()),
         );
         let implement = make_step(
             &app,
-            "Implement",
+            "Builder",
             OnEnter::Run,
             OnSettle::Advance,
             Some(review.id.clone()),
@@ -1946,9 +2179,10 @@ mod tests {
         assert_eq!(task_count(&app), 1, "whole chain lived in one task");
     }
 
-    /// GOLDEN (E18-05 parity): the seeded In Progress column reproduces
-    /// the E17-03 auto-flip exactly — In Progress → In Review on settle,
-    /// cards dragged elsewhere stay put — including (registry-empty, as
+    /// Pipeline overhaul: settling in the seeded Implement column
+    /// auto-advances into Adversarial — a run-mode step, so the hostile
+    /// pass launches settle-chained (the deliberate confirm-free chain);
+    /// cards resting elsewhere stay put — including (registry-empty, as
     /// after a restart) dispatch-launched agents.
     #[test]
     fn settle_reproduces_the_in_progress_auto_flip() {
@@ -1961,24 +2195,31 @@ mod tests {
         // Dispatch-style entry: lane move, NO engine launch — the
         // registry has no entry, like after an app restart.
         app.issues.move_to(&a.id, Lane::InProgress, None).unwrap();
-        app.issues.move_to(&b.id, Lane::Ready, None).unwrap();
         let mut rx = app.event_bus.subscribe();
 
         assert_eq!(settle_issues_for_task(&app, "t1", Some("pty:term1")), 1);
         let a_read = app.issues.get(&a.id).unwrap().unwrap();
-        assert_eq!(a_read.lane, Lane::InReview);
-        let in_review = column(&app, "In Review");
-        assert_eq!(a_read.column_id.as_deref(), Some(in_review.id.as_str()));
-        // The card dragged elsewhere stays put.
-        assert_eq!(app.issues.get(&b.id).unwrap().unwrap().lane, Lane::Ready);
-        // Human gate is inert: no launch/queue events, just the move.
-        assert!(step_events(&mut rx).is_empty());
-        // Duplicate trigger (other hook, same or other identity): the
-        // card left In Progress, so nothing settles — E17 idempotence.
-        assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:conv1")), 0);
+        // Adversarial carries no seed_lane: the display lane is stale by
+        // design; the mirror pointer is the authority.
+        assert_eq!(a_read.lane, Lane::InProgress);
+        let adversarial = column(&app, "Adversarial");
+        assert_eq!(a_read.column_id.as_deref(), Some(adversarial.id.as_str()));
+        // The card resting on the landing shelf stays put.
+        assert_eq!(app.issues.get(&b.id).unwrap().unwrap().lane, Lane::Backlog);
+        // The advance lands on a run-mode step: exactly one settle-chained
+        // launch for the hostile pass.
+        assert!(matches!(
+            &step_events(&mut rx)[..],
+            [InternalEvent::StepLaunch { .. }]
+        ));
+        // Duplicate trigger from the SAME identity: consumed — E17
+        // idempotence. (A different session is a legitimate settle signal
+        // for the chained Adversarial launch, so it is not asserted inert
+        // here.)
+        assert_eq!(settle_issues_for_task(&app, "t1", Some("pty:term1")), 0);
     }
 
-    /// Quick → Done end-to-end: run on entry, advance_to Done on settle.
+    /// Quick → Ship end-to-end: run on entry, advance_to Ship on settle.
     #[test]
     fn settle_advances_quick_to_done_end_to_end() {
         let app = fixture();
@@ -1993,10 +2234,10 @@ mod tests {
 
         assert_eq!(settle_issues_for_task(&app, "t1", Some("pty:quick1")), 1);
         let issue = app.issues.get(&issue.id).unwrap().unwrap();
-        let done = column(&app, "Done");
+        let done = column(&app, "Ship");
         assert_eq!(issue.column_id.as_deref(), Some(done.id.as_str()));
-        assert_eq!(issue.lane, Lane::Done); // Done is seeded → lane syncs
-                                            // One launch (the Quick entry); Done is a shelf → inert on enter.
+        assert_eq!(issue.lane, Lane::Done); // Ship mirrors 'done' → lane syncs
+                                            // One launch (the Quick entry); a ship column is engine-inert on enter.
         let events = step_events(&mut rx);
         assert_eq!(events.len(), 1);
         assert!(matches!(&events[0], InternalEvent::StepLaunch { .. }));
@@ -2172,10 +2413,10 @@ mod tests {
         let issue = new_issue(&app, "card");
         with_task(&app, "t1");
         app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
-        let done = column(&app, "Done");
+        let done = column(&app, "Ship");
         let review = make_step(
             &app,
-            "Review",
+            "Gate",
             OnEnter::Queue,
             OnSettle::Advance,
             Some(done.id.clone()),
@@ -2224,28 +2465,31 @@ mod tests {
             .move_to(&issue.id, Lane::InProgress, None)
             .unwrap();
 
-        // First settle from the task's conversation: auto-flip.
+        // First settle from the task's conversation: auto-advance into
+        // Adversarial (lane stays stale — Adversarial has no seed_lane;
+        // the mirror pointer is the authority).
+        let adversarial = column(&app, "Adversarial");
         assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:conv")), 1);
         assert_eq!(
-            app.issues.get(&issue.id).unwrap().unwrap().lane,
-            Lane::InReview
+            issue_column_id(&app, &issue.id).as_deref(),
+            Some(adversarial.id.as_str())
         );
         // Duplicate trigger inside the same epoch: consumed → no-op.
         assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:conv")), 0);
 
-        // Rework: re-drag back to In Progress exactly as the issue_move
-        // command does (epoch reset + lane move). The dispatch reattaches
-        // the SAME conversation — no new session identity exists.
-        on_lane_move(&app, &issue.id, Lane::InProgress);
-        app.issues
-            .move_to(&issue.id, Lane::InProgress, None)
-            .unwrap();
+        // Rework: re-enter Implement through the engine (a board drag).
+        // The dispatch reattaches the SAME conversation (ADR-0032 — no
+        // new session identity), the epoch resets, and the registry entry
+        // rebinds to Implement (the settle-chained Adversarial entry
+        // would otherwise be stale and rightly refuse the settle).
+        let implement = column(&app, "Implement");
+        enter_column_from_command(&app, &issue.id, &implement.id, None).unwrap();
 
-        // The same session settles again → flips again.
+        // The same session settles again → advances again.
         assert_eq!(settle_issues_for_task(&app, "t1", Some("acp:conv")), 1);
         assert_eq!(
-            app.issues.get(&issue.id).unwrap().unwrap().lane,
-            Lane::InReview
+            issue_column_id(&app, &issue.id).as_deref(),
+            Some(adversarial.id.as_str())
         );
     }
 

@@ -55,6 +55,7 @@ export function columnConfigSummary(
   opts: { columns?: BoardColumnDto[]; defaultAgent?: string | null } = {},
 ): string {
   if (column.kind !== "agent_step") {
+    if (column.kind === "ship") return "squash-merge + push";
     if (column.countsAsDone) return "counts as done";
     return column.kind === "human_gate" ? "human gate" : "shelf";
   }

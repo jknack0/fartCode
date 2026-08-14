@@ -264,16 +264,40 @@ fn flip_moves_only_in_progress_cards() {
 
     let flipped = flip_issues_for_task(&fx.app, &dispatched.task.id);
     assert_eq!(flipped, 1);
+    // Pipeline overhaul: Implement advances into Adversarial, which has no
+    // seed_lane — the mirror pointer moves, the display lane stays.
+    let adversarial = fx
+        .app
+        .columns
+        .list_for_project(&fx.project_id)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name == "Adversarial")
+        .unwrap();
     assert_eq!(
-        fx.app.issues.get(&in_progress.id).unwrap().unwrap().lane,
-        Lane::InReview
+        fx.app
+            .issues
+            .get(&in_progress.id)
+            .unwrap()
+            .unwrap()
+            .column_id
+            .as_deref(),
+        Some(adversarial.id.as_str())
     );
     // The ready card is untouched even though it shares the project.
     assert_eq!(
         fx.app.issues.get(&ready.id).unwrap().unwrap().lane,
         Lane::Ready
     );
-    // Idempotent: a second exit signal flips nothing.
+    // A second exit signal is the ADVERSARIAL agent exiting: its settle
+    // advances the findings into the Review human gate (the designed
+    // Implement → Adversarial → Review chain).
+    assert_eq!(flip_issues_for_task(&fx.app, &dispatched.task.id), 1);
+    assert_eq!(
+        fx.app.issues.get(&in_progress.id).unwrap().unwrap().lane,
+        Lane::InReview // Review is seeded ('in_review') → lane syncs
+    );
+    // Idempotent from here: the human gate holds.
     assert_eq!(flip_issues_for_task(&fx.app, &dispatched.task.id), 0);
 }
 
@@ -324,10 +348,20 @@ fn agent_terminal_exit_flips_the_card() {
         })
         .unwrap();
 
+    // Pipeline overhaul: the flip lands the card in Adversarial (mirror
+    // pointer — Adversarial carries no seed_lane).
+    let adversarial = fx
+        .app
+        .columns
+        .list_for_project(&fx.project_id)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name == "Adversarial")
+        .unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        let lane = fx.app.issues.get(&issue.id).unwrap().unwrap().lane;
-        if lane == Lane::InReview {
+        let column_id = fx.app.issues.get(&issue.id).unwrap().unwrap().column_id;
+        if column_id.as_deref() == Some(adversarial.id.as_str()) {
             break;
         }
         assert!(std::time::Instant::now() < deadline, "card never flipped");

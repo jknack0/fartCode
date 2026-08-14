@@ -50,6 +50,11 @@ pub enum ColumnKind {
     Shelf,
     AgentStep,
     HumanGate,
+    /// The merge verb (pipeline overhaul): entering runs squash-merge +
+    /// push + worktree cleanup FRONTEND-side; backend-side a ship column
+    /// behaves exactly like a shelf (no step, no gate) so enter_column
+    /// stays kind-agnostic and old boards are unaffected.
+    Ship,
 }
 
 impl ColumnKind {
@@ -58,6 +63,7 @@ impl ColumnKind {
             ColumnKind::Shelf => "shelf",
             ColumnKind::AgentStep => "agent_step",
             ColumnKind::HumanGate => "human_gate",
+            ColumnKind::Ship => "ship",
         }
     }
 
@@ -66,8 +72,9 @@ impl ColumnKind {
             "shelf" => Ok(ColumnKind::Shelf),
             "agent_step" => Ok(ColumnKind::AgentStep),
             "human_gate" => Ok(ColumnKind::HumanGate),
+            "ship" => Ok(ColumnKind::Ship),
             other => Err(Error::InvalidBoardColumnInput(format!(
-                "invalid column kind: {other:?} (expected shelf|agent_step|human_gate)"
+                "invalid column kind: {other:?} (expected shelf|agent_step|human_gate|ship)"
             ))),
         }
     }
@@ -241,8 +248,13 @@ struct SeedColumn {
     on_settle: OnSettle,
     /// Legacy lane this column mirrors (`issues.lane` value).
     seed_lane: Option<&'static str>,
-    /// `advance_to` target, named by the target's `seed_lane`.
-    advance_to_seed_lane: Option<&'static str>,
+    /// `advance_to` target, named by the target column's seed NAME
+    /// (names are unique within SEED_COLUMNS; several targets carry no
+    /// seed_lane, so lanes cannot address them).
+    advance_to_name: Option<&'static str>,
+    /// Step framing prepended to the dispatch packet by
+    /// `compose_step_prompt` (`None` = the packet alone).
+    step_prompt: Option<&'static str>,
     /// Step agent pin (`None` = project default). Encoded like the
     /// ADR-0032 per-issue overrides: provider registry id + bare Claude
     /// model alias.
@@ -250,37 +262,81 @@ struct SeedColumn {
     step_model: Option<&'static str>,
 }
 
-/// The seeded default board (ADR-0037 item 8): Backlog · Ready · Quick ·
-/// In Progress · In Review · Done. In Progress carries today's dispatch
-/// semantics (`on_enter: run`) and the E17-03 auto-flip
-/// (`on_settle: advance` into the next column) on the project-default
-/// agent; Quick is the gateless small-work lane, pinned to the cheap
-/// agent (design handoff v3: claude · haiku) and advancing straight to
-/// Done (ADR item 4 — without the target a Quick card would walk into In
-/// Progress and fire a second unconfirmed dispatch); In Review is the
-/// human gate; Done counts as done; Backlog lands imports.
+/// Grill: interactive interrogation of a raw idea — the terminal chat IS
+/// the back-and-forth; the hardened result lands in the dossier for the
+/// steps downstream.
+const GRILL_PROMPT: &str = "You are running a grill session, not implementing anything. \
+     Interrogate this idea until it is fully specified: ask ONE question at a time in the \
+     conversation and wait for the answer before asking the next — hunt gaps, hidden \
+     assumptions, edge cases, scope cuts, failure modes, and what 'done' means. Push back \
+     on vague answers. When the idea is hardened, write the result into the issue's \
+     dossier: the sharpened problem statement, the decisions made, and a numbered \
+     acceptance-criteria list precise enough to write failing tests from. Do not write \
+     code and do not modify anything else in the repo.";
+
+/// Plan: grilled issue → ordered TDD-executable steps. No code.
+const PLAN_PROMPT: &str = "Turn the grilled issue into an implementation plan — write no \
+     code. Read the dossier (the grill session's decisions and acceptance criteria) and \
+     the files the work will touch. Produce, in the dossier: an ordered list of small \
+     implementation steps, each naming the files it touches and the acceptance criteria \
+     it satisfies; a test list with one named failing test per criterion; the risks, \
+     riskiest step first. Steps must be small enough for a TDD implementer to execute one \
+     at a time. If a criterion cannot be planned, say so loudly instead of guessing.";
+
+/// Implement: strict TDD against the plan.
+const IMPLEMENT_PROMPT: &str = "Work strictly test-driven. Follow the plan in the dossier \
+     one step at a time: first write the failing test for the step's acceptance \
+     criterion, run it and watch it fail, then write the minimal code that makes it pass, \
+     then refactor. Never write implementation before its failing test exists. An \
+     acceptance criterion without a covering test is not done. Finish with the full test \
+     suite green, and record any deviations from the plan in the dossier.";
+
+/// Adversarial: hostile review — find, never fix.
+const ADVERSARIAL_PROMPT: &str = "You are a hostile reviewer; assume the diff is wrong \
+     until proven otherwise. Do not fix anything — only find. Hunt: acceptance criteria \
+     not actually met, tests that pass without testing their criterion, unhandled edge \
+     cases, race conditions, security holes, silent failure paths, dead code, and lies in \
+     comments or names. Verify every finding against the code before reporting it. Write \
+     the findings into the dossier ranked by severity with file:line references; an empty \
+     findings list must be earned by listing what you checked.";
+
+/// The seeded default board (pipeline overhaul): Idea · Grill · Quick ·
+/// Plan · Implement · Adversarial · Review · Ship.
+///
+/// Idea lands imports; Grill and Plan are confirm-gated think-steps on
+/// the project-default agent whose artifacts accumulate in the dossier;
+/// Quick is the gateless small-work escape hatch advancing straight to
+/// Ship; Implement runs strict TDD and auto-advances into Adversarial
+/// (deliberate confirm-free chain — the hostile pass is the step that
+/// must never be skipped), which auto-advances its findings into the
+/// Review human gate; Ship is the merge verb (squash-merge + push +
+/// worktree cleanup, frontend-driven) and counts as done. Ship carries
+/// seed_lane 'done' so lane sync, imports, and the cleanup-dialog
+/// trigger all keep working unchanged.
 const SEED_COLUMNS: &[SeedColumn] = &[
     SeedColumn {
-        name: "Backlog",
+        name: "Idea",
         kind: ColumnKind::Shelf,
         counts_as_done: false,
         is_landing: true,
         on_enter: OnEnter::Queue,
         on_settle: OnSettle::Hold,
         seed_lane: Some("backlog"),
-        advance_to_seed_lane: None,
+        advance_to_name: None,
+        step_prompt: None,
         step_provider: None,
         step_model: None,
     },
     SeedColumn {
-        name: "Ready",
-        kind: ColumnKind::Shelf,
+        name: "Grill",
+        kind: ColumnKind::AgentStep,
         counts_as_done: false,
         is_landing: false,
         on_enter: OnEnter::Queue,
         on_settle: OnSettle::Hold,
-        seed_lane: Some("ready"),
-        advance_to_seed_lane: None,
+        seed_lane: None,
+        advance_to_name: None,
+        step_prompt: Some(GRILL_PROMPT),
         step_provider: None,
         step_model: None,
     },
@@ -292,62 +348,78 @@ const SEED_COLUMNS: &[SeedColumn] = &[
         on_enter: OnEnter::Run,
         on_settle: OnSettle::Advance,
         seed_lane: None,
-        advance_to_seed_lane: Some("done"),
-        step_provider: Some("claude"),
-        step_model: Some("haiku"),
+        // Straight to Ship — without the pin a Quick card would walk
+        // into Plan/Implement and fire a second unconfirmed dispatch.
+        advance_to_name: Some("Ship"),
+        step_prompt: None,
+        step_provider: None,
+        step_model: None,
     },
     SeedColumn {
-        name: "In Progress",
+        name: "Plan",
+        kind: ColumnKind::AgentStep,
+        counts_as_done: false,
+        is_landing: false,
+        on_enter: OnEnter::Queue,
+        on_settle: OnSettle::Hold,
+        seed_lane: Some("ready"),
+        advance_to_name: None,
+        step_prompt: Some(PLAN_PROMPT),
+        step_provider: None,
+        step_model: None,
+    },
+    SeedColumn {
+        name: "Implement",
         kind: ColumnKind::AgentStep,
         counts_as_done: false,
         is_landing: false,
         on_enter: OnEnter::Run,
         on_settle: OnSettle::Advance,
         seed_lane: Some("in_progress"),
-        // Pinned to the human gate (fix round): next-by-position adjacency
-        // would reroute to Done if In Review were deleted or the board
-        // reordered — approval gates remain the doctrine.
-        advance_to_seed_lane: Some("in_review"),
+        // Pinned to Adversarial (never next-by-position): the hostile
+        // pass survives reorders and neighbor deletion.
+        advance_to_name: Some("Adversarial"),
+        step_prompt: Some(IMPLEMENT_PROMPT),
         step_provider: None,
         step_model: None,
     },
     SeedColumn {
-        name: "In Review",
+        name: "Adversarial",
+        kind: ColumnKind::AgentStep,
+        counts_as_done: false,
+        is_landing: false,
+        on_enter: OnEnter::Run,
+        on_settle: OnSettle::Advance,
+        seed_lane: None,
+        // Findings land in front of the human gate.
+        advance_to_name: Some("Review"),
+        step_prompt: Some(ADVERSARIAL_PROMPT),
+        step_provider: None,
+        step_model: None,
+    },
+    SeedColumn {
+        name: "Review",
         kind: ColumnKind::HumanGate,
         counts_as_done: false,
         is_landing: false,
         on_enter: OnEnter::Queue,
         on_settle: OnSettle::Hold,
         seed_lane: Some("in_review"),
-        advance_to_seed_lane: None,
+        advance_to_name: None,
+        step_prompt: None,
         step_provider: None,
         step_model: None,
     },
     SeedColumn {
-        name: "Done",
-        kind: ColumnKind::Shelf,
+        name: "Ship",
+        kind: ColumnKind::Ship,
         counts_as_done: true,
         is_landing: false,
         on_enter: OnEnter::Queue,
         on_settle: OnSettle::Hold,
         seed_lane: Some("done"),
-        advance_to_seed_lane: None,
-        step_provider: None,
-        step_model: None,
-    },
-    // Closed is the post-cleanup shelf: a Done card whose worktree has
-    // been deleted parks here. counts_as_done so blockers resting in
-    // Closed still read as finished; no seed_lane — the legacy lane
-    // stays whatever it was (lane sync only follows seeded columns).
-    SeedColumn {
-        name: "Closed",
-        kind: ColumnKind::Shelf,
-        counts_as_done: true,
-        is_landing: false,
-        on_enter: OnEnter::Queue,
-        on_settle: OnSettle::Hold,
-        seed_lane: None,
-        advance_to_seed_lane: None,
+        advance_to_name: None,
+        step_prompt: None,
         step_provider: None,
         step_model: None,
     },
@@ -366,7 +438,7 @@ pub fn seed_default_columns(conn: &rusqlite::Connection, project_id: &str) -> Re
     if has_columns {
         return Ok(());
     }
-    let mut id_by_seed_lane: Vec<(&'static str, String)> = Vec::new();
+    let mut id_by_name: Vec<(&'static str, String)> = Vec::new();
     let mut pending_targets: Vec<(String, &'static str)> = Vec::new();
     for (position, seed) in SEED_COLUMNS.iter().enumerate() {
         let id = format!("col_{}", uuid::Uuid::new_v4());
@@ -374,8 +446,8 @@ pub fn seed_default_columns(conn: &rusqlite::Connection, project_id: &str) -> Re
             "INSERT INTO board_columns
                  (id, project_id, name, position, kind, counts_as_done,
                   is_landing, on_enter, on_settle, seed_lane,
-                  step_provider, step_model)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                  step_provider, step_model, step_prompt)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             rusqlite::params![
                 id,
                 project_id,
@@ -389,25 +461,24 @@ pub fn seed_default_columns(conn: &rusqlite::Connection, project_id: &str) -> Re
                 seed.seed_lane,
                 seed.step_provider,
                 seed.step_model,
+                seed.step_prompt,
             ],
         )?;
-        if let Some(seed_lane) = seed.seed_lane {
-            id_by_seed_lane.push((seed_lane, id.clone()));
-        }
-        if let Some(target) = seed.advance_to_seed_lane {
+        id_by_name.push((seed.name, id.clone()));
+        if let Some(target) = seed.advance_to_name {
             pending_targets.push((id, target));
         }
     }
-    // Second pass: wire advance_to targets (Quick → Done) once every
-    // target row exists.
-    for (id, target_seed_lane) in pending_targets {
-        let target_id = id_by_seed_lane
+    // Second pass: wire advance_to targets (Quick → Ship, Implement →
+    // Adversarial, Adversarial → Review) once every target row exists.
+    for (id, target_name) in pending_targets {
+        let target_id = id_by_name
             .iter()
-            .find(|(lane, _)| *lane == target_seed_lane)
+            .find(|(name, _)| *name == target_name)
             .map(|(_, id)| id.clone())
             .ok_or_else(|| {
                 Error::Internal(format!(
-                    "seed advance_to target '{target_seed_lane}' missing from SEED_COLUMNS"
+                    "seed advance_to target '{target_name}' missing from SEED_COLUMNS"
                 ))
             })?;
         conn.execute(
@@ -511,6 +582,14 @@ fn reject_landing_agent_step(is_landing: bool, kind: ColumnKind) -> Result<(), E
              cards directly and never fire on_enter, so arriving cards would \
              sit inert (ADR-0037 item 7) — move is_landing to a shelf or \
              human gate, or change this column's kind first"
+                .into(),
+        ));
+    }
+    if is_landing && kind == ColumnKind::Ship {
+        return Err(Error::InvalidBoardColumnInput(
+            "the landing column cannot be a ship column: arriving cards \
+             would sit on the merge verb with nothing to merge — move \
+             is_landing to a shelf or human gate first"
                 .into(),
         ));
     }
@@ -993,7 +1072,7 @@ mod tests {
             summary,
             vec![
                 (
-                    "Backlog",
+                    "Idea",
                     ColumnKind::Shelf,
                     false,
                     true,
@@ -1001,8 +1080,8 @@ mod tests {
                     OnSettle::Hold
                 ),
                 (
-                    "Ready",
-                    ColumnKind::Shelf,
+                    "Grill",
+                    ColumnKind::AgentStep,
                     false,
                     false,
                     OnEnter::Queue,
@@ -1017,7 +1096,15 @@ mod tests {
                     OnSettle::Advance
                 ),
                 (
-                    "In Progress",
+                    "Plan",
+                    ColumnKind::AgentStep,
+                    false,
+                    false,
+                    OnEnter::Queue,
+                    OnSettle::Hold
+                ),
+                (
+                    "Implement",
                     ColumnKind::AgentStep,
                     false,
                     false,
@@ -1025,7 +1112,15 @@ mod tests {
                     OnSettle::Advance
                 ),
                 (
-                    "In Review",
+                    "Adversarial",
+                    ColumnKind::AgentStep,
+                    false,
+                    false,
+                    OnEnter::Run,
+                    OnSettle::Advance
+                ),
+                (
+                    "Review",
                     ColumnKind::HumanGate,
                     false,
                     false,
@@ -1033,16 +1128,8 @@ mod tests {
                     OnSettle::Hold
                 ),
                 (
-                    "Done",
-                    ColumnKind::Shelf,
-                    true,
-                    false,
-                    OnEnter::Queue,
-                    OnSettle::Hold
-                ),
-                (
-                    "Closed",
-                    ColumnKind::Shelf,
+                    "Ship",
+                    ColumnKind::Ship,
                     true,
                     false,
                     OnEnter::Queue,
@@ -1050,44 +1137,56 @@ mod tests {
                 ),
             ]
         );
-        // Quick advances straight to Done (ADR-0037 item 4); In Progress
-        // pins its advance to the In Review human gate (fix round — the
-        // gate must survive reorders and neighbor deletion).
-        let done = &columns[5];
-        let in_review = &columns[4];
-        assert_eq!(columns[2].advance_to.as_deref(), Some(done.id.as_str()));
+        // Quick advances straight to Ship; Implement pins its advance to
+        // Adversarial and Adversarial to the Review human gate — pins
+        // must survive reorders and neighbor deletion.
+        let ship = &columns[7];
+        let review = &columns[6];
+        let adversarial = &columns[5];
+        assert_eq!(columns[2].advance_to.as_deref(), Some(ship.id.as_str()));
         assert_eq!(
-            columns[3].advance_to.as_deref(),
-            Some(in_review.id.as_str())
+            columns[4].advance_to.as_deref(),
+            Some(adversarial.id.as_str())
         );
-        // Quick is pinned to the cheap agent (design handoff v3:
-        // claude · haiku); In Progress stays NULL = project default.
-        assert_eq!(columns[2].step_provider.as_deref(), Some("claude"));
-        assert_eq!(columns[2].step_model.as_deref(), Some("haiku"));
-        assert_eq!(columns[3].step_provider, None);
-        assert_eq!(columns[3].step_model, None);
-        // seed_lane mirrors the five legacy lanes; Quick has none.
+        assert_eq!(
+            columns[5].advance_to.as_deref(),
+            Some(review.id.as_str())
+        );
+        // Every agent step rides the project-default agent (the old
+        // claude·haiku Quick pin is gone — pipeline overhaul).
+        assert!(columns.iter().all(|c| c.step_provider.is_none()));
+        assert!(columns.iter().all(|c| c.step_model.is_none()));
+        // The think/attack steps carry their pipeline prompts; the rest
+        // ride the bare dispatch packet.
+        let prompts: Vec<bool> = columns.iter().map(|c| c.step_prompt.is_some()).collect();
+        assert_eq!(
+            prompts,
+            vec![false, true, false, true, true, true, false, false]
+        );
+        // seed_lane mirrors the legacy lanes where one fits; Grill,
+        // Quick, and Adversarial have none.
         let seed_lanes: Vec<Option<&str>> =
             columns.iter().map(|c| c.seed_lane.as_deref()).collect();
         assert_eq!(
             seed_lanes,
             vec![
                 Some("backlog"),
-                Some("ready"),
                 None,
+                None,
+                Some("ready"),
                 Some("in_progress"),
+                None,
                 Some("in_review"),
                 Some("done"),
-                None,
             ]
         );
         // Positions are compact board order; ids carry the col_ prefix.
         let positions: Vec<i64> = columns.iter().map(|c| c.position).collect();
-        assert_eq!(positions, vec![0, 1, 2, 3, 4, 5, 6]);
+        assert_eq!(positions, vec![0, 1, 2, 3, 4, 5, 6, 7]);
         assert!(columns.iter().all(|c| c.id.starts_with("col_")));
         // Idempotent: a second seed call leaves the board alone.
         seed_default_columns(&store.conn().unwrap(), "p1").unwrap();
-        assert_eq!(store.list_for_project("p1").unwrap().len(), 7);
+        assert_eq!(store.list_for_project("p1").unwrap().len(), 8);
         // Project scoping: p2 was never seeded.
         assert!(store.list_for_project("p2").unwrap().is_empty());
     }
@@ -1465,7 +1564,7 @@ mod tests {
     #[test]
     fn create_appends_validates_and_round_trips_step_config() {
         let store = seeded_fixture();
-        let done_id = store.list_for_project("p1").unwrap()[5].id.clone();
+        let done_id = store.list_for_project("p1").unwrap()[7].id.clone();
         let created = store
             .create(NewColumn {
                 kind: ColumnKind::AgentStep,
@@ -1480,7 +1579,7 @@ mod tests {
                 ..new_column("Plan")
             })
             .unwrap();
-        assert_eq!(created.position, 7); // appended after the seeded seven
+        assert_eq!(created.position, 8); // appended after the seeded eight
         assert_eq!(created.kind, ColumnKind::AgentStep);
         assert_eq!(created.on_enter, OnEnter::Run);
         assert_eq!(created.on_settle, OnSettle::Advance);
@@ -1626,20 +1725,28 @@ mod tests {
     }
 
     /// E18-07 (#66): the seeded board's own advance pins are protected —
-    /// Done is Quick's target, In Review is In Progress's.
+    /// Ship is Quick's target, Adversarial is Implement's, Review is
+    /// Adversarial's.
     #[test]
     fn seeded_advance_targets_cannot_be_deleted_until_repointed() {
         let store = seeded_fixture();
         let columns = store.list_for_project("p1").unwrap();
-        let (quick, in_review, done) = (columns[2].clone(), columns[4].clone(), columns[5].clone());
+        let (quick, adversarial, review, ship) = (
+            columns[2].clone(),
+            columns[5].clone(),
+            columns[6].clone(),
+            columns[7].clone(),
+        );
 
-        let err = store.delete(&done.id).unwrap_err();
+        let err = store.delete(&ship.id).unwrap_err();
         assert!(matches!(err, Error::BoardColumnIsAdvanceTarget { .. }));
         assert!(err.to_string().contains("advance target of Quick"));
-        let err = store.delete(&in_review.id).unwrap_err();
-        assert!(err.to_string().contains("advance target of In Progress"));
+        let err = store.delete(&adversarial.id).unwrap_err();
+        assert!(err.to_string().contains("advance target of Implement"));
+        let err = store.delete(&review.id).unwrap_err();
+        assert!(err.to_string().contains("advance target of Adversarial"));
 
-        // Clearing Quick's pin frees Done.
+        // Clearing Quick's pin frees Ship.
         store
             .update(
                 &quick.id,
@@ -1649,7 +1756,7 @@ mod tests {
                 },
             )
             .unwrap();
-        store.delete(&done.id).unwrap();
+        store.delete(&ship.id).unwrap();
     }
 
     #[test]
@@ -1850,7 +1957,7 @@ mod tests {
     fn delete_guard_occupancy_is_strictly_by_column_id() {
         let store = seeded_fixture();
         let issues = issue_store(&store);
-        let ready = store.list_for_project("p1").unwrap()[1].clone();
+        let ready = store.list_for_project("p1").unwrap()[3].clone();
         assert_eq!(ready.seed_lane.as_deref(), Some("ready"));
 
         // A card resident in Ready (column_id set) blocks the delete.
@@ -1879,10 +1986,10 @@ mod tests {
         let names: Vec<&str> = after.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(
             names,
-            vec!["Backlog", "Quick", "In Progress", "In Review", "Done", "Closed"]
+            vec!["Idea", "Grill", "Quick", "Implement", "Adversarial", "Review", "Ship"]
         );
         let positions: Vec<i64> = after.iter().map(|c| c.position).collect();
-        assert_eq!(positions, vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(positions, vec![0, 1, 2, 3, 4, 5, 6]);
 
         // The landing column can never be deleted; unknown ids are typed.
         assert!(matches!(
@@ -1928,9 +2035,15 @@ mod tests {
         // Triage owns the card: it cannot be deleted while occupied.
         // (Landing guard first — move the flag, then the occupancy guard
         // is what refuses.)
+        let review = store
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name == "Review")
+            .unwrap();
         store
             .update(
-                &store.list_for_project("p1").unwrap()[0].id,
+                &review.id,
                 ColumnPatch {
                     is_landing: Some(true),
                     ..Default::default()
@@ -1970,7 +2083,7 @@ mod tests {
             .filter(|c| c.is_landing)
             .map(|c| c.name)
             .collect();
-        assert_eq!(landing, vec!["Backlog"]);
+        assert_eq!(landing, vec!["Idea"]);
 
         // Direction 2 — flag an EXISTING agent step as landing.
         let quick = store.list_for_project("p1").unwrap()[2].clone();
@@ -2062,8 +2175,9 @@ mod tests {
             .filter(|c| c.is_landing)
             .collect();
         assert_eq!(landing.len(), 1);
-        assert_eq!(landing[0].name, "Backlog");
+        assert_eq!(landing[0].name, "Idea");
         assert_ne!(landing[0].kind, ColumnKind::AgentStep);
+        assert_ne!(landing[0].kind, ColumnKind::Ship);
     }
 
     #[test]
@@ -2112,17 +2226,18 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                "Closed",
-                "Done",
-                "In Review",
-                "In Progress",
+                "Ship",
+                "Review",
+                "Adversarial",
+                "Implement",
+                "Plan",
                 "Quick",
-                "Ready",
-                "Backlog"
+                "Grill",
+                "Idea"
             ]
         );
         let positions: Vec<i64> = after.iter().map(|c| c.position).collect();
-        assert_eq!(positions, vec![0, 1, 2, 3, 4, 5, 6]);
+        assert_eq!(positions, vec![0, 1, 2, 3, 4, 5, 6, 7]);
 
         // Missing, duplicated, and foreign ids are all rejected.
         assert!(matches!(
@@ -2156,7 +2271,7 @@ mod tests {
     #[test]
     fn seeded_agent_step_columns_are_deletable_when_empty() {
         let store = seeded_fixture();
-        let in_progress = store.list_for_project("p1").unwrap()[3].clone();
+        let in_progress = store.list_for_project("p1").unwrap()[4].clone();
         assert_eq!(in_progress.seed_lane.as_deref(), Some("in_progress"));
         assert_eq!(in_progress.kind, ColumnKind::AgentStep);
         store.delete(&in_progress.id).unwrap();
@@ -2185,7 +2300,7 @@ mod tests {
     #[test]
     fn project_delete_cascades_columns() {
         let store = seeded_fixture();
-        assert_eq!(store.list_for_project("p1").unwrap().len(), 7);
+        assert_eq!(store.list_for_project("p1").unwrap().len(), 8);
         store
             .conn()
             .unwrap()

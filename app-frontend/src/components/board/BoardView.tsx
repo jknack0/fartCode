@@ -51,7 +51,7 @@ import {
   landingColumn,
   stepArtifact,
 } from "../../lib/columnConfig";
-import { maybeOfferWorktreeCleanup } from "../../lib/taskPipeline";
+import { ensureShipped, maybeOfferWorktreeCleanup } from "../../lib/taskPipeline";
 import { useColumns } from "../../store/columns";
 import { defaultAgentName, useDependencies } from "../../store/dependencies";
 import { useScripts } from "../../store/scripts";
@@ -408,6 +408,14 @@ export default function BoardView({ projectId }: { projectId: string }) {
     if (column.kind === "agent_step" && !(await ensureDossierConsent(projectId, issue))) {
       return;
     }
+    // Ship gate (pipeline overhaul): merge before the move; a conflict
+    // throws and the card never leaves its column.
+    try {
+      if (!(await ensureShipped(issue, column))) return;
+    } catch (e) {
+      setError(String(e));
+      return;
+    }
     await enter(issue, column, position);
   };
 
@@ -477,6 +485,11 @@ export default function BoardView({ projectId }: { projectId: string }) {
     if (pending || consentAsk) return;
     for (const [issueId, flags] of Object.entries(steps)) {
       if (!flags.queuedColumnId || dismissedPark === issueId) continue;
+      // An agent-busy park has nothing to confirm: it is not waiting on a
+      // human, it is waiting for the card's live agent to exit, and it
+      // fires itself when that happens. Raising the dispatch confirm here
+      // would invite the user to "fire" a step that cannot start yet.
+      if (flags.queuedReason === "agent_busy") continue;
       const issue = issues.find((i) => i.id === issueId);
       const column = columns.find((c) => c.id === flags.queuedColumnId);
       if (!issue || !column) continue;

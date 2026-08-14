@@ -187,7 +187,7 @@ impl Fixture {
     /// finds.
     fn card_mid_step(&self, title: &str) -> (Issue, String) {
         let issue = self.new_issue(title);
-        step_engine::enter_column(&self.app, &issue.id, &self.column("In Progress").id, None)
+        step_engine::enter_column(&self.app, &issue.id, &self.column("Implement").id, None)
             .unwrap();
         let stored = self.issue(&issue.id);
         let rel = stored.dossier_path.clone().expect("dossier born");

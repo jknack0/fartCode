@@ -12,6 +12,7 @@
 pub mod commit;
 pub mod diff;
 pub mod issues;
+pub mod merge;
 pub mod pr_sync;
 pub mod pr_target;
 pub mod remote;

@@ -93,7 +93,8 @@
     "columnId": "c1",
     "provider": "claude",
     "model": null,
-    "effort": "high"
+    "effort": "high",
+    "reason": "agent_busy"
   },
   "step_queue_cleared": {
     "type": "step:queue_cleared",

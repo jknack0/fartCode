@@ -256,6 +256,11 @@ pub fn run() {
                 terminals::TerminalManager::new(app.handle().clone())
                     .with_remote(app_state.remote_pty.clone()),
             );
+            // The step engine asks this before launching a step into a
+            // task that may already own a live agent (ADR-0033) — see
+            // `step_engine::AgentLiveness`. Installed here because the
+            // manager is runtime-generic and outlives `App::init`.
+            app_state.steps.install_liveness(terminal_manager.clone());
             app.manage(terminal_manager);
             // E2-11-4/5: ACP runtime — owns the SessionManager, spawns the
             // adapter per conversation, and emits `acp:update` /
@@ -361,6 +366,7 @@ pub fn run() {
             commands::columns::column_reorder,
             commands::steps::issue_enter_column,
             commands::steps::step_confirm,
+            commands::ship::task_ship,
             commands::steps::step_parked_list,
             commands::steps::step_ledger_list,
             commands::files::write_workspace_file,

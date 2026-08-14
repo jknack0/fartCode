@@ -23,6 +23,7 @@ pub mod remote_projects;
 pub mod search;
 pub mod serde_util;
 pub mod settings;
+pub mod ship;
 pub mod ssh_connections;
 pub mod steps;
 pub mod tasks;

@@ -186,7 +186,7 @@ mod tests {
     async fn enter_a_shelf_column_is_inert_and_still_moves_the_card() {
         let app = fixture();
         let issue = new_issue(&app, "shelve me");
-        let ready = column_id(&app, "Ready");
+        let ready = column_id(&app, "Idea");
         let mut rx = app.event_bus.subscribe();
         let tapp = managed(&app);
 
@@ -219,7 +219,7 @@ mod tests {
     #[tokio::test]
     async fn enter_column_keeps_the_unknown_issue_error_verbatim() {
         let app = fixture();
-        let ready = column_id(&app, "Ready");
+        let ready = column_id(&app, "Idea");
         let tapp = managed(&app);
         let err = issue_enter_column(tapp.state::<Arc<App>>(), "nope".into(), ready, None)
             .await
@@ -247,7 +247,7 @@ mod tests {
         let app = fixture();
         let issue = new_issue(&app, "park then drag");
         let gate = queue_step(&app, "Gate");
-        let ready = column_id(&app, "Ready");
+        let ready = column_id(&app, "Idea");
         let mut rx = app.event_bus.subscribe();
         let tapp = managed(&app);
 
