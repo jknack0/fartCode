@@ -359,6 +359,7 @@ export default function ChangesSidebar() {
                     changes={snapshot.unstaged}
                     taskId={taskId}
                     workspaceId={workspaceId}
+                    active={active}
                     onActive={setActive}
                     onRequestDiscard={(c) =>
                       setDiscardTarget({ path: c.path, hasUntracked: c.status === "added" })
@@ -370,6 +371,7 @@ export default function ChangesSidebar() {
                     changes={snapshot.staged}
                     taskId={taskId}
                     workspaceId={workspaceId}
+                    active={active}
                     onActive={setActive}
                     onRequestDiscard={null}
                   />
@@ -465,6 +467,7 @@ function ChangeSection({
   changes,
   taskId,
   workspaceId,
+  active,
   onActive,
   onRequestDiscard,
 }: {
@@ -475,6 +478,7 @@ function ChangeSection({
    * opening, which needs a task's tab surface. */
   taskId: string | null;
   workspaceId: string;
+  active: { side: DiffSide; path: string } | null;
   onActive: (row: { side: DiffSide; path: string } | null) => void;
   /** Null on the staged section (discard is an unstaged verb). */
   onRequestDiscard: ((change: GitChangeDto) => void) | null;
@@ -509,6 +513,7 @@ function ChangeSection({
               side={side}
               taskId={taskId}
               workspaceId={workspaceId}
+              active={active?.side === side && active?.path === change.path}
               onActive={onActive}
               onRequestDiscard={onRequestDiscard}
             />
@@ -524,6 +529,7 @@ function ChangeRow({
   side,
   taskId,
   workspaceId,
+  active,
   onActive,
   onRequestDiscard,
 }: {
@@ -531,6 +537,7 @@ function ChangeRow({
   side: DiffSide;
   taskId: string | null;
   workspaceId: string;
+  active: boolean;
   onActive: (row: { side: DiffSide; path: string } | null) => void;
   onRequestDiscard: ((change: GitChangeDto) => void) | null;
 }) {
@@ -538,10 +545,11 @@ function ChangeRow({
   const stats = statLine(change);
   return (
     <li
-      className={`fc-row ${side}${conflicted ? " conflicted" : ""}${taskId ? "" : " no-diff"}`}
+      className={`fc-row ${side}${conflicted ? " conflicted" : ""}${active ? " active" : ""}${taskId ? "" : " no-diff"}`}
       tabIndex={-1}
       title={taskId ? change.path : `${change.path} — diff opens in the task view`}
       onMouseEnter={() => onActive({ side, path: change.path })}
+      onMouseLeave={() => onActive(null)}
       onFocus={() => onActive({ side, path: change.path })}
       onClick={(e) => {
         if (!taskId) return;
