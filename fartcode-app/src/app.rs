@@ -18,7 +18,7 @@ use fartcode_core::projects::DbProjectStore;
 use fartcode_core::provider_accounts::ProviderAccountStore;
 use fartcode_core::pty::launcher::Rehydrator;
 use fartcode_core::pty::sessions::SessionRegistry;
-use fartcode_core::settings::DbSettingsStore;
+use fartcode_core::settings::{DbSettingsStore, TaskGroup, TASKS};
 use fartcode_core::ssh_connections::SshConnectionStore;
 use fartcode_core::tasks::deletion::TaskDeletionService;
 use fartcode_core::tasks::operations::TaskCreationService;
@@ -129,7 +129,12 @@ impl App {
             tasks.clone(),
             projects.clone(),
             db.clone(),
-            false, // auto-approve defaults off on boot
+            // #139: boot resume honors the app-level auto-approve default
+            // (the conversation's own toggle still wins inside `rehydrate`).
+            settings
+                .get::<TaskGroup>(&TASKS)
+                .map(|t| t.auto_approve_by_default)
+                .unwrap_or(false),
             Some(sessions.clone()),
             Some(remote_pty.clone()),
         );

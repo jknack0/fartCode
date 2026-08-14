@@ -197,6 +197,22 @@ impl Default for BrowserPreviewGroup {
     }
 }
 
+/// Local memory-value telemetry (E19-04, #73; #139). Opt-out, not opt-in —
+/// the PRD (E15) specifies an opt-out surface and the capture is local-only
+/// (nothing leaves the machine). Toggling the row records the consent
+/// decision as this persisted boolean; `enabled: false` gates capture.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TelemetryGroup {
+    pub enabled: bool,
+}
+
+impl Default for TelemetryGroup {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Typed keys + defaults
 // ---------------------------------------------------------------------------
@@ -211,6 +227,7 @@ pub static LOCAL_PROJECT: SettingKey<LocalProjectGroup> = SettingKey::new("local
 pub static TERMINAL: SettingKey<TerminalGroup> = SettingKey::new("terminal");
 pub static NOTIFICATIONS: SettingKey<NotificationGroup> = SettingKey::new("notifications");
 pub static BROWSER_PREVIEW: SettingKey<BrowserPreviewGroup> = SettingKey::new("browserPreview");
+pub static TELEMETRY: SettingKey<TelemetryGroup> = SettingKey::new("telemetry");
 
 /// All registered app-setting keys, in registry order.
 pub fn all_keys() -> &'static [&'static str] {
@@ -223,6 +240,7 @@ pub fn all_keys() -> &'static [&'static str] {
         "notifications",
         "browserPreview",
         "resourceMonitor",
+        "telemetry",
     ]
 }
 
@@ -238,6 +256,7 @@ pub fn default_value(key: &str) -> Option<serde_json::Value> {
         "notifications" => serde_json::to_value(NotificationGroup::default()).ok()?,
         "browserPreview" => serde_json::to_value(BrowserPreviewGroup::default()).ok()?,
         "resourceMonitor" => serde_json::to_value(ResourceMonitorGroup::default()).ok()?,
+        "telemetry" => serde_json::to_value(TelemetryGroup::default()).ok()?,
         _ => return None,
     };
     Some(value)
@@ -251,29 +270,31 @@ pub fn canonical_value(
     key: &str,
     value: &serde_json::Value,
 ) -> Result<serde_json::Value, crate::Error> {
-    let parsed: Result<serde_json::Value, serde_json::Error> = match key {
-        "project" => {
-            serde_json::from_value::<ProjectGroup>(value.clone()).and_then(serde_json::to_value)
-        }
-        "tasks" => {
-            serde_json::from_value::<TaskGroup>(value.clone()).and_then(serde_json::to_value)
-        }
-        "defaultAgent" => {
-            serde_json::from_value::<String>(value.clone()).and_then(serde_json::to_value)
-        }
-        "localProject" => serde_json::from_value::<LocalProjectGroup>(value.clone())
-            .and_then(serde_json::to_value),
-        "terminal" => {
-            serde_json::from_value::<TerminalGroup>(value.clone()).and_then(serde_json::to_value)
-        }
-        "notifications" => serde_json::from_value::<NotificationGroup>(value.clone())
-            .and_then(serde_json::to_value),
-        "browserPreview" => serde_json::from_value::<BrowserPreviewGroup>(value.clone())
-            .and_then(serde_json::to_value),
-        "resourceMonitor" => serde_json::from_value::<ResourceMonitorGroup>(value.clone())
-            .and_then(serde_json::to_value),
-        _ => return Err(crate::Error::InvalidSettingKey(key.into())),
-    };
+    let parsed: Result<serde_json::Value, serde_json::Error> =
+        match key {
+            "project" => {
+                serde_json::from_value::<ProjectGroup>(value.clone()).and_then(serde_json::to_value)
+            }
+            "tasks" => {
+                serde_json::from_value::<TaskGroup>(value.clone()).and_then(serde_json::to_value)
+            }
+            "defaultAgent" => {
+                serde_json::from_value::<String>(value.clone()).and_then(serde_json::to_value)
+            }
+            "localProject" => serde_json::from_value::<LocalProjectGroup>(value.clone())
+                .and_then(serde_json::to_value),
+            "terminal" => serde_json::from_value::<TerminalGroup>(value.clone())
+                .and_then(serde_json::to_value),
+            "notifications" => serde_json::from_value::<NotificationGroup>(value.clone())
+                .and_then(serde_json::to_value),
+            "browserPreview" => serde_json::from_value::<BrowserPreviewGroup>(value.clone())
+                .and_then(serde_json::to_value),
+            "resourceMonitor" => serde_json::from_value::<ResourceMonitorGroup>(value.clone())
+                .and_then(serde_json::to_value),
+            "telemetry" => serde_json::from_value::<TelemetryGroup>(value.clone())
+                .and_then(serde_json::to_value),
+            _ => return Err(crate::Error::InvalidSettingKey(key.into())),
+        };
     parsed.map_err(|e| crate::Error::InvalidSettingValue {
         key: key.into(),
         reason: e.to_string(),

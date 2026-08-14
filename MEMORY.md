@@ -1,4 +1,31 @@
 # MEMORY.md — fartCode
+## #139 Telemetry opt-out + auto-approve settings (2026-08-13)
+
+Two settings-surface controls, both wired to real behavior:
+
+- **Telemetry opt-out.** New registry key `telemetry` (`TelemetryGroup
+  { enabled }`, default true = opt-out per PRD E15). The SettingsModal App
+  pane gains an on/off row; the value is the persisted (recorded) consent
+  decision. `fartcode_app::telemetry::observe_settled_step` early-returns
+  when disabled — capture gated, dashboard read untouched (historical data
+  stays visible). Integration test `the_telemetry_opt_out_records_nothing`.
+- **Auto-approve.** App pane "Agent" row toggles `tasks.autoApproveByDefault`
+  (full-group write, so other task overrides survive). Wired three ways:
+  `auto_approve_mechanism` (new, in `pty/mod.rs`) is now the ONE definition
+  of the argv-flag/env mechanism (refactor of `build_command`), and the
+  raw agent-terminal open path (`terminal_open_agent` + `launch_default_agent`)
+  passes it via a new `commands::terminals::agent_auto_approve` helper; boot
+  rehydrate (`app.rs`) seeds `default_auto_approve` from the same setting.
+  Per-provider = capability-gated inside the mechanism; per-session = the
+  conversation config override still wins in `rehydrate`.
+
+Bites:
+- Auto-trust (`autoTrustWorktrees`) left unexposed — not named in #139 and
+  its provider trust WRITE still lands with E2-06 (currently log-only).
+- `resolve_auto_approve` ORs trust in, but the launch paths deliberately use
+  `autoApproveByDefault` only (reference behavior); trust != auto-approve flag.
+
+Next: none queued.
 ## #140 OS notifications for agent-needs-you LANDED (2026-08-12, f3982fa)
 
 Wired the three "agent needs you" events to OS notifications behind the

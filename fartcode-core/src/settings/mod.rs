@@ -10,9 +10,10 @@ pub use kv::KvStore;
 pub use registry::{
     BaseProjectSettings, BrowserPreviewGroup, DefaultBranch, LocalProjectGroup, NotificationGroup,
     ProjectGroup, ProjectSettings, ResourceMonitorGroup, Scripts, SettingKey, SettingValue,
-    ShareableProjectSettings, TaskGroup, TerminalGroup, TerminalShell, WorkspaceProvider,
-    BROWSER_PREVIEW, DEFAULT_AGENT, DEFAULT_AGENT_ID, DEFAULT_BASE_REMOTE, DEFAULT_BRANCH_FALLBACK,
-    DEFAULT_PRESERVE_PATTERNS, DEFAULT_STEP_CHAIN_DEPTH_CAP, LEGACY_CONFIG_FILE, LOCAL_PROJECT,
-    NOTIFICATIONS, PROJECT, PROJECT_CONFIG_FILE, RESOURCE_MONITOR, TASKS, TERMINAL,
+    ShareableProjectSettings, TaskGroup, TelemetryGroup, TerminalGroup, TerminalShell,
+    WorkspaceProvider, BROWSER_PREVIEW, DEFAULT_AGENT, DEFAULT_AGENT_ID, DEFAULT_BASE_REMOTE,
+    DEFAULT_BRANCH_FALLBACK, DEFAULT_PRESERVE_PATTERNS, DEFAULT_STEP_CHAIN_DEPTH_CAP,
+    LEGACY_CONFIG_FILE, LOCAL_PROJECT, NOTIFICATIONS, PROJECT, PROJECT_CONFIG_FILE,
+    RESOURCE_MONITOR, TASKS, TELEMETRY, TERMINAL,
 };
 pub use service::{DbSettingsStore, SettingsStore};

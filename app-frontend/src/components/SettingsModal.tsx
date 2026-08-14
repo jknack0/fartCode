@@ -64,6 +64,80 @@ function AppNotifications() {
   );
 }
 
+/* -- App pane: telemetry opt-out (issue #139) ---------------------------- */
+
+function AppTelemetry() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  useEffect(() => {
+    void getAppSetting("telemetry")
+      .then((g) =>
+        setEnabled((g as { enabled?: boolean })?.enabled ?? true),
+      )
+      .catch(() => setEnabled(true));
+  }, []);
+  const toggle = () => {
+    const next = !(enabled ?? true);
+    setEnabled(next);
+    void setAppSetting("telemetry", { enabled: next }).catch(() => {});
+  };
+  return (
+    <div className="fc-set-group">
+      <div className="fc-set-group-label">Telemetry</div>
+      <div className="fc-set-row-wrap">
+        <button type="button" className="fc-set-row" onClick={toggle} tabIndex={0}>
+          <span className="fc-set-label">
+            Local memory-value telemetry — computed on this machine, never uploaded
+          </span>
+          <span className="fc-set-value">
+            {enabled == null ? "…" : enabled ? "on" : "off"}
+          </span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* -- App pane: auto-approve (issue #139) --------------------------------- */
+
+function AppAutoApprove() {
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => {
+    void getAppSetting("tasks")
+      .then((g) =>
+        setOn(
+          (g as { autoApproveByDefault?: boolean })?.autoApproveByDefault ?? false,
+        ),
+      )
+      .catch(() => setOn(false));
+  }, []);
+  const toggle = () => {
+    const next = !(on ?? false);
+    setOn(next);
+    // Full-group write: set_app_setting stores a delta vs defaults, so a
+    // per-field patch would reset the tasks group's other overrides.
+    void getAppSetting("tasks")
+      .then((g) =>
+        setAppSetting("tasks", { ...(g as object), autoApproveByDefault: next }),
+      )
+      .catch(() => {});
+  };
+  return (
+    <div className="fc-set-group">
+      <div className="fc-set-group-label">Agent</div>
+      <div className="fc-set-row-wrap">
+        <button type="button" className="fc-set-row" onClick={toggle} tabIndex={0}>
+          <span className="fc-set-label">
+            Auto-approve permissions for supported agents
+          </span>
+          <span className="fc-set-value">
+            {on == null ? "…" : on ? "on" : "off"}
+          </span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* -- Keys pane: the shortcut editor as rows ------------------------------ */
 
 function KeysPane() {
@@ -304,6 +378,8 @@ export default function SettingsModal({
           {section === "app" && (
             <div className="fc-set-pane-body">
               <AppNotifications />
+              <AppTelemetry />
+              <AppAutoApprove />
               <AgentsList />
               <ProviderAccounts />
               <div className="fc-set-spacer" />
