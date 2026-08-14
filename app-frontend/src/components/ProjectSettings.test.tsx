@@ -14,6 +14,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 vi.mock("../lib/tauri", () => ({
   getProjectSettings: vi.fn(),
+  listTasks: vi.fn(() => Promise.resolve([])),
+  restoreTask: vi.fn(() => Promise.resolve()),
   updateProjectSettings: vi.fn(),
   projectSettingsProvenance: vi.fn(() => Promise.resolve({})),
   projectSettingsShare: vi.fn(() => Promise.resolve()),
@@ -29,11 +31,15 @@ vi.mock("../lib/tauri", () => ({
 import { ProjectSettingsPane } from "./ProjectSettings";
 import {
   getProjectSettings,
+  listTasks,
   remoteTasksEnabled,
+  restoreTask,
   updateProjectSettings,
   type ProjectSettingsDto,
+  type TaskDto,
 } from "../lib/tauri";
 import { useDependencies } from "../store/dependencies";
+import { useUi } from "../store/ui";
 
 const SETTINGS: ProjectSettingsDto = {
   tmux: false,
@@ -60,7 +66,9 @@ async function renderPane(over: Partial<ProjectSettingsDto> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(updateProjectSettings).mockImplementation((_p, s) => Promise.resolve(s));
+  vi.mocked(listTasks).mockResolvedValue([]);
   useDependencies.setState({ deps: [] });
+  useUi.setState({ deleteTaskTarget: null });
 });
 
 describe("feature dossiers row", () => {
@@ -163,5 +171,48 @@ describe("workspace provider gate (E12-10)", () => {
     await waitFor(() =>
       expect(screen.getByText("Provision · terminate commands")).toBeInTheDocument(),
     );
+  });
+});
+
+// #136: archived tasks are enumerable HERE — the only surface that lists
+// archivedAt rows, with restore and the routed destructive delete.
+describe("archived section (#136)", () => {
+  const archivedTask: TaskDto = {
+    id: "t-arch",
+    projectId: "p1",
+    name: "forgotten",
+    status: "done",
+    linkedIssue: null,
+    archivedAt: "2026-01-02T03:04:05Z",
+    isPinned: false,
+    lastInteractedAt: null,
+    statusChangedAt: null,
+    workspaceId: null,
+    createdBy: "user",
+    type: "task",
+  };
+
+  it("shows the empty note when nothing is archived", async () => {
+    await renderPane();
+    expect(screen.getByText("No archived tasks")).toBeInTheDocument();
+  });
+
+  it("lists archived tasks and restores on click", async () => {
+    vi.mocked(listTasks).mockResolvedValue([archivedTask]);
+    await renderPane();
+    await waitFor(() => expect(screen.getByText("forgotten")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("restore"));
+    await waitFor(() => expect(restoreTask).toHaveBeenCalledWith("t-arch"));
+  });
+
+  it("routes delete through the existing destructive confirm", async () => {
+    vi.mocked(listTasks).mockResolvedValue([archivedTask]);
+    await renderPane();
+    await waitFor(() => expect(screen.getByText("forgotten")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("delete\u2026"));
+    expect(useUi.getState().deleteTaskTarget).toEqual({
+      projectId: "p1",
+      taskId: "t-arch",
+    });
   });
 });
