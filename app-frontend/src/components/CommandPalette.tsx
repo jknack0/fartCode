@@ -86,6 +86,16 @@ export default function CommandPalette() {
   const [features, setFeatures] = useState<Record<string, FeatureRowDto>>({});
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  // #138: the results box clips at ~8 rows; keep the highlighted row
+  // visible as arrows walk past the fold. "nearest" makes mouse-driven
+  // selection (rows already on screen) a no-op.
+  useEffect(() => {
+    listRef.current
+      ?.querySelector(".selected")
+      ?.scrollIntoView({ block: "nearest" });
+  }, [selected]);
 
   useEffect(() => {
     if (open) {
@@ -283,7 +293,7 @@ export default function CommandPalette() {
             }
           }}
         />
-        <ul className="palette-results">
+        <ul className="palette-results" ref={listRef}>
           {entries.map((entry, i) => (
             <li
               key={entry.key}

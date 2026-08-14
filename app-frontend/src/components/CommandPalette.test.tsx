@@ -201,3 +201,22 @@ describe("feature hits", () => {
     expect(vi.mocked(dossierFeatureRows)).not.toHaveBeenCalled();
   });
 });
+describe("arrow-key scrolling (#138)", () => {
+  it("scrolls the highlighted row into view on selection change", async () => {
+    const spy = vi.fn();
+    Element.prototype.scrollIntoView = spy;
+    vi.mocked(search).mockResolvedValue([
+      FEATURE_HIT,
+      { itemType: "task", itemId: "t1", projectId: "p1", taskId: "t1", title: "plan the plan", issueId: null },
+    ]);
+    await searchFor("plan");
+    await screen.findByText("plan the plan");
+    spy.mockClear();
+    fireEvent.keyDown(screen.getByLabelText("Command palette"), { key: "ArrowDown" });
+    await waitFor(() => expect(spy).toHaveBeenCalledWith({ block: "nearest" }));
+    // The call rides the SELECTED row, not the list or input.
+    const el = spy.mock.instances[0] as unknown as Element;
+    expect(el.classList.contains("selected")).toBe(true);
+  });
+});
+
