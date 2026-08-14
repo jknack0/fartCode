@@ -350,7 +350,8 @@ pub fn terminal_surviving_blocking<R: tauri::Runtime>(
 
 #[cfg(test)]
 mod tests {
-    use super::terminal_program;
+    use super::{agent_auto_approve, terminal_program};
+    use crate::app::App;
     use fartcode_core::settings::ProjectSettings;
 
     #[test]
@@ -382,6 +383,41 @@ mod tests {
             assert_eq!(program, "/bin/zsh", "cmd={cmd:?}");
             assert!(args.is_empty(), "cmd={cmd:?}");
         }
+    }
+
+    /// #139: the settings toggle feeds the launch mechanism, and the
+    /// provider capability still gates it (a non-capable provider gets
+    /// nothing even when the setting is on).
+    #[test]
+    fn auto_approve_follows_the_setting_and_capability() {
+        let app = App::init(Some(":memory:")).unwrap();
+        let claude = fartcode_providers::get("claude").unwrap();
+
+        // Default off → no mechanism.
+        assert_eq!(agent_auto_approve(&app, claude), (vec![], vec![]));
+
+        // On → the capable provider's argv flag lands.
+        app.settings
+            .set(
+                &fartcode_core::settings::TASKS,
+                fartcode_core::settings::TaskGroup {
+                    auto_approve_by_default: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let (args, env) = agent_auto_approve(&app, claude);
+        assert!(
+            args.contains(&"--dangerously-skip-permissions".to_string()),
+            "{args:?} {env:?}"
+        );
+
+        // A non-capable provider never gets a mechanism.
+        let incapable = fartcode_providers::list()
+            .iter()
+            .find(|p| !p.capabilities.auto_approve)
+            .expect("registry has a non-auto-approve provider");
+        assert_eq!(agent_auto_approve(&app, incapable), (vec![], vec![]));
     }
 
     #[test]
