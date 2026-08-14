@@ -270,6 +270,7 @@ pub fn launch_default_agent<R: tauri::Runtime>(
             .ok_or_else(|| format!("agent not installed: {provider}"))?;
         let ctx = crate::commands::terminals::resolve_task_context(&app.db, task_id)?;
         let remove = crate::commands::terminals::agent_env_removals(app, &provider);
+        let (aa_args, aa_env) = crate::commands::terminals::agent_auto_approve(app, registry);
         terminals
             .open(TerminalSpec {
                 task_id,
@@ -277,8 +278,8 @@ pub fn launch_default_agent<R: tauri::Runtime>(
                 agent: Some(&provider),
                 tmux: false,
                 program: &binary.to_string_lossy(),
-                args: &[],
-                env: &[],
+                args: &aa_args,
+                env: &aa_env,
                 remove: &remove,
                 cwd: std::path::Path::new(&ctx.cwd),
                 rows: 24,

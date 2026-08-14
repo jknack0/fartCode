@@ -158,6 +158,22 @@ pub(crate) fn agent_env_removals(app: &App, provider_id: &str) -> Vec<String> {
     }
 }
 
+/// Auto-approve launch mechanism for a fresh agent-terminal open (#139,
+/// ADR-0013): argv flag / env vars, gated on `tasks.autoApproveByDefault`
+/// and the provider's capability. Fresh launches only — resume rehydrates
+/// through the launcher and honors the conversation's own toggle there.
+pub(crate) fn agent_auto_approve(
+    app: &App,
+    provider: &fartcode_providers::ProviderDescriptor,
+) -> (Vec<String>, Vec<(String, String)>) {
+    let enabled = app
+        .settings
+        .get::<fartcode_core::settings::TaskGroup>(&fartcode_core::settings::TASKS)
+        .map(|t| t.auto_approve_by_default)
+        .unwrap_or(false);
+    fartcode_core::pty::auto_approve_mechanism(provider, enabled, false)
+}
+
 /// Opens an agent CLI (e.g. `omp`) in the task's workspace. The binary is
 /// resolved from the provider registry's `binaries` list via PATH. Returns
 /// the terminal id. Agent terminals always run as plain PTYs — tmux slot
@@ -210,6 +226,7 @@ pub fn terminal_open_agent_blocking<R: tauri::Runtime>(
         .find_map(|b| fartcode_core::pty::launcher::find_on_path(b))
         .ok_or_else(|| format!("agent not installed: {agent}"))?;
     let remove = agent_env_removals(app, agent);
+    let (aa_args, aa_env) = agent_auto_approve(app, provider);
     terminals
         .open(TerminalSpec {
             task_id,
@@ -217,8 +234,8 @@ pub fn terminal_open_agent_blocking<R: tauri::Runtime>(
             agent: Some(agent),
             tmux: false,
             program: &binary.to_string_lossy(),
-            args: &[],
-            env: &[],
+            args: &aa_args,
+            env: &aa_env,
             remove: &remove,
             cwd: std::path::Path::new(&ctx.cwd),
             rows,
@@ -333,7 +350,8 @@ pub fn terminal_surviving_blocking<R: tauri::Runtime>(
 
 #[cfg(test)]
 mod tests {
-    use super::terminal_program;
+    use super::{agent_auto_approve, terminal_program};
+    use crate::app::App;
     use fartcode_core::settings::ProjectSettings;
 
     #[test]
@@ -365,6 +383,41 @@ mod tests {
             assert_eq!(program, "/bin/zsh", "cmd={cmd:?}");
             assert!(args.is_empty(), "cmd={cmd:?}");
         }
+    }
+
+    /// #139: the settings toggle feeds the launch mechanism, and the
+    /// provider capability still gates it (a non-capable provider gets
+    /// nothing even when the setting is on).
+    #[test]
+    fn auto_approve_follows_the_setting_and_capability() {
+        let app = App::init(Some(":memory:")).unwrap();
+        let claude = fartcode_providers::get("claude").unwrap();
+
+        // Default off → no mechanism.
+        assert_eq!(agent_auto_approve(&app, claude), (vec![], vec![]));
+
+        // On → the capable provider's argv flag lands.
+        app.settings
+            .set(
+                &fartcode_core::settings::TASKS,
+                fartcode_core::settings::TaskGroup {
+                    auto_approve_by_default: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let (args, env) = agent_auto_approve(&app, claude);
+        assert!(
+            args.contains(&"--dangerously-skip-permissions".to_string()),
+            "{args:?} {env:?}"
+        );
+
+        // A non-capable provider never gets a mechanism.
+        let incapable = fartcode_providers::list()
+            .iter()
+            .find(|p| !p.capabilities.auto_approve)
+            .expect("registry has a non-auto-approve provider");
+        assert_eq!(agent_auto_approve(&app, incapable), (vec![], vec![]));
     }
 
     #[test]

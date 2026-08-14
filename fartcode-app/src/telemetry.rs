@@ -150,6 +150,16 @@ fn now_secs() -> i64 {
 // Capture
 // ---------------------------------------------------------------------------
 
+/// Whether local memory-value telemetry is enabled (opt-out, default on).
+/// Reads the persisted consent decision; an unreadable value fails open
+/// (telemetry stays on) — losing a signal is not worth failing a settle.
+fn enabled(app: &App) -> bool {
+    app.settings
+        .get::<fartcode_core::settings::TelemetryGroup>(&fartcode_core::settings::TELEMETRY)
+        .map(|t| t.enabled)
+        .unwrap_or(true)
+}
+
 /// Records one settled step run against the card it settled.
 ///
 /// Called by `step_engine::settle_issues_observed` after the engine decided
@@ -163,6 +173,9 @@ pub fn observe_settled_step(
     session: Option<&str>,
     transcript: Option<&TranscriptView<'_>>,
 ) {
+    if !enabled(app) {
+        return;
+    }
     let Some(rel) = issue
         .dossier_path
         .as_deref()

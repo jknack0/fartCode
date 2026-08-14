@@ -28,7 +28,7 @@ use fartcode_app_lib::{dispatch, step_engine, telemetry};
 use fartcode_core::conversations::{ConversationStore, CreateConversationParams};
 use fartcode_core::issues::{Issue, NewIssue};
 use fartcode_core::projects::ProjectStore;
-use fartcode_core::settings::{LocalProjectGroup, LOCAL_PROJECT};
+use fartcode_core::settings::{LocalProjectGroup, TelemetryGroup, LOCAL_PROJECT, TELEMETRY};
 use fartcode_core::tasks::TaskStore;
 use fartcode_telemetry::memory::DEFAULT_WINDOW_DAYS;
 use fartcode_telemetry::reask::{TAG_HUMAN, TAG_MEMORY};
@@ -325,6 +325,31 @@ fn a_session_that_read_the_dossier_is_recorded_as_citing() {
     assert_eq!(report.sessions_observed, 1);
     assert_eq!(report.citations.cited_read, 1);
     assert_eq!(report.citations.rate(), Some(1.0));
+}
+
+/// #139: the telemetry opt-out is a real gate, not a cosmetic toggle —
+/// with `enabled: false` a settled session records nothing at all.
+#[test]
+fn the_telemetry_opt_out_records_nothing() {
+    let fx = fixture();
+    fx.app
+        .settings
+        .set(&TELEMETRY, TelemetryGroup { enabled: false })
+        .unwrap();
+    let (issue, task_id) = fx.card_mid_step("OAuth login");
+    let rel = issue.dossier_path.clone().unwrap();
+    let conversation = fx.conversation(&task_id);
+
+    dispatch::flip_issues_for_conversation_observed(
+        &fx.app,
+        &conversation,
+        &models(
+            vec![tool(ToolItemKind::ReadToolCall, 1, &rel)],
+            Some(10_000),
+        ),
+    );
+
+    assert_eq!(fx.report().sessions_observed, 0);
 }
 
 /// The same session shape with only the injected prompt: not a citation.

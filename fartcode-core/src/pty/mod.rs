@@ -70,6 +70,31 @@ pub fn resolve_auto_approve(
     worktree_is_trusted || conversation_auto_approve || auto_approve_by_default
 }
 
+/// The auto-approve launch mechanism for one provider (ADR-0013): the argv
+/// flag or env vars that turn it on, gated on the provider's capability and
+/// `omitAutoApproveOnResume` (kimi). Shared by [`build_command`] and the
+/// app's raw agent-terminal open path so the mechanism has one definition.
+pub fn auto_approve_mechanism(
+    provider: &ProviderDescriptor,
+    auto_approve: bool,
+    is_resuming: bool,
+) -> (Vec<String>, Vec<(String, String)>) {
+    if !auto_approve || !provider.capabilities.auto_approve {
+        return (Vec::new(), Vec::new());
+    }
+    let spec = &provider.prompt;
+    if spec.omit_auto_approve_on_resume && is_resuming {
+        return (Vec::new(), Vec::new());
+    }
+    let args = spec
+        .auto_approve_flag
+        .as_deref()
+        .map(split_flag)
+        .unwrap_or_default();
+    let env = spec.auto_approve_env.clone().unwrap_or_default();
+    (args, env)
+}
+
 // Convenience wrapper deliberately removed: a settings-group version of
 // resolve_auto_approve would pass the raw autoTrustWorktrees setting
 // (default true) and auto-approve every launch. E2-06 must pass the
@@ -159,15 +184,9 @@ pub fn build_command(ctx: &CommandContext, provider: &ProviderDescriptor) -> Age
     // conversation config + task settings via `resolve_auto_approve`).
     // `omitAutoApproveOnResume` (kimi) suppresses it on resume. Providers
     // without an argv flag gate auto-approve via env (reference `extraEnv`).
-    let skip_auto_approve = spec.omit_auto_approve_on_resume && ctx.is_resuming;
-    if ctx.auto_approve && provider.capabilities.auto_approve && !skip_auto_approve {
-        if let Some(flag) = &spec.auto_approve_flag {
-            args.extend(split_flag(flag));
-        }
-        if let Some(envs) = &spec.auto_approve_env {
-            env.extend(envs.iter().cloned());
-        }
-    }
+    let (aa_args, aa_env) = auto_approve_mechanism(provider, ctx.auto_approve, ctx.is_resuming);
+    args.extend(aa_args);
+    env.extend(aa_env);
 
     // Model selection.
     if let Some(model_flag) = &spec.model_flag {
