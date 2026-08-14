@@ -257,6 +257,40 @@ pub(crate) fn watch_target_for(
     })
 }
 
+/// Target for a just-restored task (`TaskRestored` handler). The event
+/// carries only the task id, so the workspace is resolved from the row.
+/// `None` when the task is missing, has no workspace, or the workspace has
+/// no stored path (e.g. remote/BYOI).
+pub(crate) fn watch_target_for_task(
+    db: &dyn Db,
+    task_id: &str,
+) -> Result<Option<WatchTarget>, Error> {
+    let conn = lock(db)?;
+    conn.query_row(
+        "SELECT t.project_id, t.workspace_id, w.path
+         FROM tasks t JOIN workspaces w ON w.id = t.workspace_id
+         WHERE t.id = ?1",
+        [task_id],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        },
+    )
+    .optional()?
+    .map_or(Ok(None), |(project_id, workspace_id, path)| {
+        Ok(path.map(|p| WatchTarget {
+            task_id: task_id.into(),
+            project_id,
+            workspace_id,
+            worktree: PathBuf::from(p),
+        }))
+    })
+}
+
+
 // -- Public store -----------------------------------------------------------
 
 /// Workspace-row access for services holding the shared DB handle. Cheap to
@@ -534,5 +568,13 @@ mod tests {
         assert_eq!(one.project_id, "p1");
         assert!(s.watch_target_for("t2", "w2").unwrap().is_none());
         assert!(s.watch_target_for("missing", "w1").unwrap().is_none());
+
+        // By-task lookup (TaskRestored handler): live path resolves, a
+        // pathless workspace and an unknown task are both None.
+        let restored = watch_target_for_task(db.as_ref(), "t1").unwrap().unwrap();
+        assert_eq!(restored.workspace_id, "w1");
+        assert_eq!(restored.worktree, PathBuf::from("/wt1"));
+        assert!(watch_target_for_task(db.as_ref(), "t2").unwrap().is_none());
+        assert!(watch_target_for_task(db.as_ref(), "missing").unwrap().is_none());
     }
 }

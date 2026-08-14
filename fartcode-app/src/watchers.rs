@@ -1,9 +1,10 @@
 //! E4-01: workspace watch lifecycle — boot backfill + event subscription.
 //!
 //! Boot registers every live (non-archived) task's workspace with the
-//! `FsWatchService`; afterwards `TaskProvisioned` registers and
-//! `TaskDeleted` unregisters (deletion tears the watch down before the
-//! worktree is pruned events-wise — a pruned root simply stops producing).
+//! `FsWatchService`; afterwards `TaskProvisioned` and `TaskRestored`
+//! register, `TaskArchived` and `TaskDeleted` unregister (deletion tears
+//! the watch down before the worktree is pruned events-wise — a pruned root
+//! simply stops producing).
 //! Registration failures are non-fatal: a stale workspace row (worktree
 //! gone from disk) must never block boot or provisioning.
 
@@ -65,6 +66,22 @@ async fn watch_task_events(
                     ),
                 }
             }
+            // Restore mirrors provisioning, but the event carries no
+            // workspace id — resolve it from the task row.
+            Ok(InternalEvent::TaskRestored { id }) => {
+                match fs_watch::target_for_task(db.as_ref(), &id) {
+                    Ok(Some(target)) => {
+                        register(&fs_watch, &target);
+                    }
+                    Ok(None) => {} // no local path (remote/BYOI)
+                    Err(e) => tracing::warn!(
+                        task_id = %id,
+                        error = %e,
+                        "watch target lookup failed"
+                    ),
+                }
+            }
+            Ok(InternalEvent::TaskArchived { id }) => fs_watch.unregister_task(&id),
             Ok(InternalEvent::TaskDeleted { id }) => fs_watch.unregister_task(&id),
             Ok(_) => {}
             // Dropped frames may have included a TaskProvisioned whose
@@ -151,6 +168,78 @@ mod tests {
             }
         }
         saw
+    }
+
+    /// #137: archiving a task stops its watch; restoring re-registers it,
+    /// so the Changes panel refreshes again without an app restart.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn archive_unregisters_and_restore_reregisters() {
+        let db: Arc<dyn Db> = SqliteDb::init(Some(":memory:")).unwrap();
+        db.conn()
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO projects (id, name, path) VALUES ('p1', 'P', '/proj')",
+                [],
+            )
+            .unwrap();
+        let wt = tempfile::tempdir().unwrap();
+        seed_task(db.as_ref(), "t1", "w1", wt.path());
+
+        let out_bus = Arc::new(BroadcastEventBus::new(256));
+        let fs_watch = Arc::new(FsWatchService::new(out_bus.clone() as Arc<dyn EventBus>).unwrap());
+
+        let t1 = fs_watch::target_for(db.as_ref(), "t1", "w1")
+            .unwrap()
+            .expect("t1 has a local workspace");
+        assert!(register(&fs_watch, &t1));
+
+        // Archive: the loop must drop the watch.
+        let bus = BroadcastEventBus::new(8);
+        let rx = bus.subscribe();
+        bus.send(InternalEvent::TaskArchived { id: "t1".into() });
+        drop(bus);
+        watch_task_events(db.clone(), fs_watch.clone(), rx).await;
+
+        // The tempdir is not a git repo, so a watched write surfaces as
+        // `FilesChanged` (git: None layout emits no GitChanged).
+        let mut out_rx = out_bus.subscribe();
+        std::fs::write(wt.path().join("archived.txt"), "unwatched\n").unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        let mut saw_while_archived = false;
+        while let Ok(ev) = out_rx.try_recv() {
+            if matches!(
+                ev,
+                InternalEvent::FilesChanged { .. } | InternalEvent::GitChanged { .. }
+            ) {
+                saw_while_archived = true;
+            }
+        }
+        assert!(!saw_while_archived, "archived task's worktree must be unwatched");
+
+        // Restore: the loop must re-register from the task row alone.
+        let bus = BroadcastEventBus::new(8);
+        let rx = bus.subscribe();
+        bus.send(InternalEvent::TaskRestored { id: "t1".into() });
+        drop(bus);
+        watch_task_events(db.clone(), fs_watch.clone(), rx).await;
+
+        std::fs::write(wt.path().join("restored.txt"), "watched again\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut rewatched = false;
+        while !rewatched && Instant::now() < deadline {
+            match out_rx.try_recv() {
+                Ok(InternalEvent::FilesChanged { workspace_id, .. }) if workspace_id == "w1" => {
+                    rewatched = true;
+                }
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break,
+            }
+        }
+        assert!(rewatched, "restored task's worktree must be watched again");
     }
 
     /// The review scenario: a `TaskProvisioned` among the dropped frames.
