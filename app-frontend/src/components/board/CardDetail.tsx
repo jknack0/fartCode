@@ -33,6 +33,7 @@ import {
   type TaskDto,
 } from "../../lib/tauri";
 import { renderMarkdown } from "../../lib/markdown";
+import { maybeOfferWorktreeCleanup } from "../../lib/taskPipeline";
 import {
   advanceTarget,
   columnIdForIssue,
@@ -380,6 +381,7 @@ export default function CardDetail({
       // The outcome is deliberately ignored — launches and parks arrive
       // as step:* events like every other entry.
       await issueEnterColumn(issue.id, nextColumn.id);
+      maybeOfferWorktreeCleanup(issue, nextColumn);
     } catch (e) {
       setError(String(e));
     } finally {

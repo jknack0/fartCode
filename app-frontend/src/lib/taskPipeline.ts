@@ -181,6 +181,7 @@ export async function enterColumn(
   try {
     const outcome = await issueEnterColumn(issue.id, column.id);
     if (outcome.step === "queued") useSteps.getState().endLaunch(issue.id);
+    maybeOfferWorktreeCleanup(issue, column);
     return outcome.step;
   } catch (e) {
     useSteps.getState().endLaunch(issue.id);
@@ -202,6 +203,21 @@ export async function confirmParkedStep(issue: IssueDto): Promise<void> {
     useSteps.getState().endLaunch(issue.id);
     throw e;
   }
+}
+
+/** Landing in Done (seedLane "done") with a linked task opens the
+ * delete-task/worktree confirm — cleanup is offered at the moment work
+ * finishes instead of waiting for a manual delete. Esc/keep leaves the
+ * card in Done with its worktree intact; delete tears the task and
+ * worktree down (the card survives — linked_task_id nulls via FK) so the
+ * card can rest in Closed. Shared by every entry surface: board drag,
+ * card-detail advance, and the task header's advance/move (both funnel
+ * through enterColumn above). */
+export function maybeOfferWorktreeCleanup(issue: IssueDto, column: BoardColumnDto): void {
+  if (column.seedLane !== "done" || !issue.linkedTaskId) return;
+  useUi
+    .getState()
+    .setDeleteTaskTarget({ projectId: issue.projectId, taskId: issue.linkedTaskId });
 }
 
 // -- the four header actions -------------------------------------------------

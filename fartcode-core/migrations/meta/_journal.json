@@ -92,6 +92,13 @@
             "when": 1800000000012,
             "tag": "0012_project_path_per_connection",
             "breakpoints": true
+        },
+        {
+            "idx": 13,
+            "version": "6",
+            "when": 1800000000013,
+            "tag": "0013_closed_column",
+            "breakpoints": true
         }
     ]
 }

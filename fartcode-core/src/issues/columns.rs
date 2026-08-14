@@ -335,6 +335,22 @@ const SEED_COLUMNS: &[SeedColumn] = &[
         step_provider: None,
         step_model: None,
     },
+    // Closed is the post-cleanup shelf: a Done card whose worktree has
+    // been deleted parks here. counts_as_done so blockers resting in
+    // Closed still read as finished; no seed_lane — the legacy lane
+    // stays whatever it was (lane sync only follows seeded columns).
+    SeedColumn {
+        name: "Closed",
+        kind: ColumnKind::Shelf,
+        counts_as_done: true,
+        is_landing: false,
+        on_enter: OnEnter::Queue,
+        on_settle: OnSettle::Hold,
+        seed_lane: None,
+        advance_to_seed_lane: None,
+        step_provider: None,
+        step_model: None,
+    },
 ];
 
 /// Seeds the default column set for a project (called inside the
@@ -1024,6 +1040,14 @@ mod tests {
                     OnEnter::Queue,
                     OnSettle::Hold
                 ),
+                (
+                    "Closed",
+                    ColumnKind::Shelf,
+                    true,
+                    false,
+                    OnEnter::Queue,
+                    OnSettle::Hold
+                ),
             ]
         );
         // Quick advances straight to Done (ADR-0037 item 4); In Progress
@@ -1054,15 +1078,16 @@ mod tests {
                 Some("in_progress"),
                 Some("in_review"),
                 Some("done"),
+                None,
             ]
         );
         // Positions are compact board order; ids carry the col_ prefix.
         let positions: Vec<i64> = columns.iter().map(|c| c.position).collect();
-        assert_eq!(positions, vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(positions, vec![0, 1, 2, 3, 4, 5, 6]);
         assert!(columns.iter().all(|c| c.id.starts_with("col_")));
         // Idempotent: a second seed call leaves the board alone.
         seed_default_columns(&store.conn().unwrap(), "p1").unwrap();
-        assert_eq!(store.list_for_project("p1").unwrap().len(), 6);
+        assert_eq!(store.list_for_project("p1").unwrap().len(), 7);
         // Project scoping: p2 was never seeded.
         assert!(store.list_for_project("p2").unwrap().is_empty());
     }
@@ -1225,6 +1250,126 @@ mod tests {
         );
     }
 
+    /// Migration 0013 against a database whose boards predate the Closed
+    /// column: replays 0000–0007 with projects in place before 0006 (so
+    /// both get the classic six-column seed), gives one project a
+    /// hand-added trailing column and the other a pre-existing 'Closed',
+    /// then applies 0013. The board lacking Closed gets exactly one,
+    /// appended after everything (position = MAX+1) with the shelf /
+    /// counts_as_done / no-seed_lane shape; the board already carrying a
+    /// Closed is left untouched (no duplicate).
+    #[test]
+    fn migration_0013_appends_closed_to_existing_boards() {
+        const PRIOR: &[&str] = &[
+            include_str!("../../migrations/0000_initial.sql"),
+            include_str!("../../migrations/0001_line_comments.sql"),
+            include_str!("../../migrations/0002_issues.sql"),
+            include_str!("../../migrations/0003_issue_external_ref.sql"),
+            include_str!("../../migrations/0004_provider_auth_method.sql"),
+            include_str!("../../migrations/0005_pull_requests.sql"),
+        ];
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        let apply = |sql: &str| {
+            for statement in sql.split("--> statement-breakpoint") {
+                let statement = statement.trim();
+                if !statement.is_empty() {
+                    conn.execute_batch(statement).unwrap();
+                }
+            }
+        };
+        for sql in PRIOR {
+            apply(sql);
+        }
+        // Projects exist before 0006 so both boards get the seeded six.
+        conn.execute_batch(
+            "INSERT INTO projects (id, name, path) VALUES
+                ('p1', 'proj', '/tmp/proj'),
+                ('p2', 'other', '/tmp/other');",
+        )
+        .unwrap();
+        apply(include_str!("../../migrations/0006_board_columns.sql"));
+        apply(include_str!(
+            "../../migrations/0007_pin_in_progress_advance.sql"
+        ));
+        // p1: a user column already sits past the seeded six — Closed must
+        // land AFTER it. p2: a Closed already exists (a user made their
+        // own) — 0013 must not add a second.
+        conn.execute_batch(
+            "INSERT INTO board_columns (id, project_id, name, position)
+                VALUES ('col_user', 'p1', 'Later', 6);
+             INSERT INTO board_columns (id, project_id, name, position, counts_as_done)
+                VALUES ('col_mine', 'p2', 'Closed', 6, 0);",
+        )
+        .unwrap();
+
+        apply(include_str!("../../migrations/0013_closed_column.sql"));
+
+        // p1: exactly one Closed, appended last, with the seeded shape.
+        let (count, position, kind, counts_as_done, is_landing, on_enter, on_settle, seed_lane): (
+            i64,
+            i64,
+            String,
+            i64,
+            i64,
+            String,
+            String,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "SELECT COUNT(*), position, kind, counts_as_done, is_landing,
+                        on_enter, on_settle, seed_lane
+                   FROM board_columns
+                  WHERE project_id = 'p1' AND name = 'Closed'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(position, 7, "appended after the user column at 6");
+        assert_eq!(kind, "shelf");
+        assert_eq!(counts_as_done, 1);
+        assert_eq!(is_landing, 0);
+        assert_eq!(on_enter, "queue");
+        assert_eq!(on_settle, "hold");
+        assert_eq!(seed_lane, None);
+
+        // p2: the hand-made Closed survives untouched and alone.
+        let (count, id, counts_as_done): (i64, String, i64) = conn
+            .query_row(
+                "SELECT COUNT(*), id, counts_as_done FROM board_columns
+                  WHERE project_id = 'p2' AND name = 'Closed'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "0013 must not duplicate an existing Closed");
+        assert_eq!(id, "col_mine");
+        assert_eq!(counts_as_done, 0, "the user's own column is untouched");
+
+        // Re-application is a no-op (defense for a replayed journal).
+        apply(include_str!("../../migrations/0013_closed_column.sql"));
+        let total: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM board_columns WHERE name = 'Closed'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(total, 2);
+    }
+
     /// E18-07 migration 0008 (#66): a pre-flip database with mirrorless
     /// rows backfills TOTALLY — the lane's seeded column when it exists,
     /// the project's landing column when the seeded column was deleted
@@ -1335,7 +1480,7 @@ mod tests {
                 ..new_column("Plan")
             })
             .unwrap();
-        assert_eq!(created.position, 6); // appended after the seeded six
+        assert_eq!(created.position, 7); // appended after the seeded seven
         assert_eq!(created.kind, ColumnKind::AgentStep);
         assert_eq!(created.on_enter, OnEnter::Run);
         assert_eq!(created.on_settle, OnSettle::Advance);
@@ -1734,10 +1879,10 @@ mod tests {
         let names: Vec<&str> = after.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(
             names,
-            vec!["Backlog", "Quick", "In Progress", "In Review", "Done"]
+            vec!["Backlog", "Quick", "In Progress", "In Review", "Done", "Closed"]
         );
         let positions: Vec<i64> = after.iter().map(|c| c.position).collect();
-        assert_eq!(positions, vec![0, 1, 2, 3, 4]);
+        assert_eq!(positions, vec![0, 1, 2, 3, 4, 5]);
 
         // The landing column can never be deleted; unknown ids are typed.
         assert!(matches!(
@@ -1967,6 +2112,7 @@ mod tests {
         assert_eq!(
             names,
             vec![
+                "Closed",
                 "Done",
                 "In Review",
                 "In Progress",
@@ -1976,7 +2122,7 @@ mod tests {
             ]
         );
         let positions: Vec<i64> = after.iter().map(|c| c.position).collect();
-        assert_eq!(positions, vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(positions, vec![0, 1, 2, 3, 4, 5, 6]);
 
         // Missing, duplicated, and foreign ids are all rejected.
         assert!(matches!(
@@ -2039,7 +2185,7 @@ mod tests {
     #[test]
     fn project_delete_cascades_columns() {
         let store = seeded_fixture();
-        assert_eq!(store.list_for_project("p1").unwrap().len(), 6);
+        assert_eq!(store.list_for_project("p1").unwrap().len(), 7);
         store
             .conn()
             .unwrap()

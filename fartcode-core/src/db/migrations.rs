@@ -77,6 +77,7 @@ fn sql_for_tag(tag: &str) -> Option<&'static str> {
         "0012_project_path_per_connection" => Some(include_str!(
             "../../migrations/0012_project_path_per_connection.sql"
         )),
+        "0013_closed_column" => Some(include_str!("../../migrations/0013_closed_column.sql")),
         _ => None,
     }
 }

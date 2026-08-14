@@ -51,6 +51,7 @@ import {
   landingColumn,
   stepArtifact,
 } from "../../lib/columnConfig";
+import { maybeOfferWorktreeCleanup } from "../../lib/taskPipeline";
 import { useColumns } from "../../store/columns";
 import { defaultAgentName, useDependencies } from "../../store/dependencies";
 import { useScripts } from "../../store/scripts";
@@ -370,6 +371,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
     if (column.kind === "agent_step") useSteps.getState().beginDispatch(issue.id);
     try {
       const outcome = await issueEnterColumn(issue.id, column.id, position ?? undefined);
+      maybeOfferWorktreeCleanup(issue, column);
       if (outcome.step === "queued") {
         useSteps.getState().endLaunch(issue.id);
         setPending({
