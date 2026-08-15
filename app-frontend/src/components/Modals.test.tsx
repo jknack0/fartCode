@@ -8,6 +8,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 vi.mock("../lib/useCommands", () => ({ hint: () => "" }));
 vi.mock("../lib/tauri", () => ({
   terminalListForTask: vi.fn(() => Promise.resolve([])),
+  terminalListPersisted: vi.fn(() => Promise.resolve([])),
   listLineComments: vi.fn(() => Promise.resolve([])),
   gitCommitState: vi.fn(() => Promise.resolve({ branch: null })),
   issueList: vi.fn(() => Promise.resolve([])),
@@ -15,7 +16,13 @@ vi.mock("../lib/tauri", () => ({
 }));
 
 import Modals from "./Modals";
-import { issueList, type IssueDto, type TaskDto } from "../lib/tauri";
+import {
+  issueList,
+  terminalListForTask,
+  terminalListPersisted,
+  type IssueDto,
+  type TaskDto,
+} from "../lib/tauri";
 import { useSidebar } from "../store/sidebar";
 import { useUi } from "../store/ui";
 
@@ -109,3 +116,78 @@ describe("DeleteTaskConfirm unlinks row (#135)", () => {
     expect(screen.queryByText(/unlinks card/)).toBeNull();
   });
 });
+
+describe("DeleteTaskConfirm tmux kill rows (#134)", () => {
+  it("itemises kills tmux terminal <slot> for each live persisted session, slot-ordered", async () => {
+    vi.mocked(terminalListPersisted).mockResolvedValue([
+      "p1:t1:terminal:0",
+      "p1:t1:terminal:2",
+    ]);
+
+    render(<Modals />);
+
+    await waitFor(() =>
+      expect(screen.getByText("kills tmux terminal 0")).toBeTruthy(),
+    );
+    // Adversarial finding 2: assert ORDER, not just presence — a reversed
+    // render must fail here, not only a missing row.
+    const rows = screen
+      .getAllByText(/^kills tmux /)
+      .map((el) => el.textContent);
+    expect(rows).toEqual(["kills tmux terminal 0", "kills tmux terminal 2"]);
+  });
+
+  it("shows the tmux kill rows even when the in-memory terminal list is empty", async () => {
+    // The post-restart bug: manager knows nothing, sessions are alive.
+    vi.mocked(terminalListForTask).mockResolvedValue([]);
+    vi.mocked(terminalListPersisted).mockResolvedValue(["p1:t1:terminal:0"]);
+
+    render(<Modals />);
+
+    await waitFor(() =>
+      expect(screen.getByText("kills tmux terminal 0")).toBeTruthy(),
+    );
+    // No in-memory terminals → no misleading count line either.
+    expect(screen.queryByText(/deletes .*terminal/)).toBeNull();
+  });
+
+  it("falls back to the full decoded id when the slot suffix does not parse", async () => {
+    vi.mocked(terminalListPersisted).mockResolvedValue(["p1:t1:terminal:x"]);
+
+    render(<Modals />);
+
+    await waitFor(() =>
+      expect(screen.getByText("kills tmux p1:t1:terminal:x")).toBeTruthy(),
+    );
+  });
+
+  it("renders no tmux row when no persisted session is alive", async () => {
+    vi.mocked(terminalListPersisted).mockResolvedValue([]);
+
+    render(<Modals />);
+
+    await waitFor(() =>
+      expect(vi.mocked(terminalListPersisted)).toHaveBeenCalledWith("t1"),
+    );
+    await act(async () => {});
+    expect(screen.queryByText(/kills tmux/)).toBeNull();
+  });
+
+  it("survives a rejected persisted probe — dialog opens, no rows, no error state", async () => {
+    // Grill decision 4: unreachable remote host → best-effort silence.
+    vi.mocked(terminalListPersisted).mockRejectedValue(new Error("host unreachable"));
+
+    render(<Modals />);
+
+    await waitFor(() =>
+      expect(vi.mocked(terminalListPersisted)).toHaveBeenCalled(),
+    );
+    await act(async () => {});
+    expect(screen.queryByText(/kills tmux/)).toBeNull();
+    // Adversarial finding 5: "no error state" must be asserted, not implied
+    // — the inline failure element renders with role="alert".
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Delete task" })).toBeTruthy();
+  });
+});
+

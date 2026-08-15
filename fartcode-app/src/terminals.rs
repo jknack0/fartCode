@@ -548,14 +548,40 @@ impl<R: tauri::Runtime> TerminalManager<R> {
                 .filter_map(|e| e.tmux_session_id.clone())
                 .collect()
         };
-        let live = match self.remote_tmux_for_task(task_id) {
-            Some(remote) => remote.list_sessions_by_prefix(&prefix),
-            None => fartcode_core::pty::tmux::list_tmux_sessions_by_prefix(&prefix),
-        };
-        live.iter()
+        self.live_task_sessions(task_id, &prefix)
+            .iter()
             .filter(|s| !owned.contains(&s.session_id))
             .count()
     }
+
+    /// Live tmux sessions under the task's terminal prefix, listed on the
+    /// session host when the task's remote route resolves (E12-05), else on
+    /// the LOCAL server — including when route resolution FAILS, so a
+    /// broken remote route under-reports rather than errors (grill
+    /// decision 4 reads that as best-effort silence). No tmux / no server
+    /// → empty.
+    fn live_task_sessions(
+        &self,
+        task_id: &str,
+        prefix: &str,
+    ) -> Vec<fartcode_core::pty::tmux::TmuxSessionInfo> {
+        match self.remote_tmux_for_task(task_id) {
+            Some(remote) => remote.list_sessions_by_prefix(prefix),
+            None => fartcode_core::pty::tmux::list_tmux_sessions_by_prefix(prefix),
+        }
+    }
+
+    /// #134: decoded ids of ALL the task's live persisted tmux sessions —
+    /// shown by this process or not, attached or not — exactly the set
+    /// `close_task`'s prefix sweep will kill. Deliberately NOT gated on the
+    /// project's tmux setting (grill decision 1): the delete confirm must
+    /// report what delete DOES, and the sweep kills by prefix regardless of
+    /// what the setting says today.
+    pub fn persisted_sessions(&self, project_id: &str, task_id: &str) -> Vec<String> {
+        let prefix = format!("{project_id}:{task_id}:terminal:");
+        persisted_session_ids(&self.live_task_sessions(task_id, &prefix), &prefix)
+    }
+
 
     /// The tmux server a task's durable sessions live on when its workspace
     /// is remote (E12-05 AC12); `None` for local tasks. Prefers a live
@@ -757,6 +783,26 @@ impl<R: tauri::Runtime> crate::step_engine::AgentLiveness for TerminalManager<R>
     }
 }
 
+/// Pure half of [`TerminalManager::persisted_sessions`] (#134): keeps only
+/// ids under `prefix`, sorted by slot number — unparsable suffixes last, in
+/// id order. Attached sessions are kept: the deletion sweep kills the whole
+/// prefix, attached or not.
+fn persisted_session_ids(
+    live: &[fartcode_core::pty::tmux::TmuxSessionInfo],
+    prefix: &str,
+) -> Vec<String> {
+    let mut ids: Vec<String> = live
+        .iter()
+        .filter(|s| s.session_id.starts_with(prefix))
+        .map(|s| s.session_id.clone())
+        .collect();
+    ids.sort_by_key(|id| {
+        let slot = id[prefix.len()..].parse::<u32>().ok();
+        (slot.is_none(), slot.unwrap_or(0), id.clone())
+    });
+    ids
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -781,5 +827,36 @@ mod tests {
         // Not a slot id: no panic, no claim.
         assert_eq!(release_slot(&slots, "t1", "garbage"), None);
         assert_eq!(release_slot(&slots, "t1", "p:t:terminal:x"), None);
+    }
+
+    /// #134 AC1: the persisted listing keeps only ids under the task's
+    /// prefix, INCLUDES attached sessions (the delete sweep kills those
+    /// too), sorts by slot number, and keeps a prefix-matching id whose
+    /// suffix doesn't parse (sorted last — the confirm falls back to the
+    /// full decoded id for it).
+    #[test]
+    fn persisted_session_ids_filters_decodes_and_sorts_by_slot() {
+        use fartcode_core::pty::tmux::TmuxSessionInfo;
+        let s = |id: &str, attached: bool| TmuxSessionInfo {
+            session_id: id.to_string(),
+            attached,
+        };
+        let live = vec![
+            s("p1:t1:terminal:2", false),
+            // Near-miss prefix (t10 vs t1) — the trailing segment matters.
+            s("p1:t10:terminal:0", false),
+            // Unparsable slot suffix — kept, sorted after numeric slots.
+            s("p1:t1:terminal:x", false),
+            // Attached — still listed: deletion kills attached sessions too.
+            s("p1:t1:terminal:0", true),
+        ];
+        assert_eq!(
+            persisted_session_ids(&live, "p1:t1:terminal:"),
+            vec![
+                "p1:t1:terminal:0".to_string(),
+                "p1:t1:terminal:2".to_string(),
+                "p1:t1:terminal:x".to_string(),
+            ]
+        );
     }
 }

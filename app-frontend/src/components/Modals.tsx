@@ -25,6 +25,7 @@ import {
   remoteBrowse,
   sshConnectionList,
   terminalListForTask,
+  terminalListPersisted,
   terminalOpenAgent,
   taskShip,
   terminalWrite,
@@ -583,6 +584,15 @@ function truncate(name: string, max = 36): string {
   return `${name.slice(0, head)}…${name.slice(-tail)}`;
 }
 
+/** #134 kill-row label: `terminal <slot>` from the decoded session id's
+ * suffix; the full decoded id when the suffix doesn't parse — never the
+ * opaque `fartCode-<base64>` tmux name (ADR-0026). */
+function tmuxSessionLabel(id: string, projectId: string, taskId: string): string {
+  const prefix = `${projectId}:${taskId}:terminal:`;
+  const suffix = id.startsWith(prefix) ? id.slice(prefix.length) : "";
+  return /^\d+$/.test(suffix) ? `terminal ${suffix}` : id;
+}
+
 /** 7a delete/archive confirm — the one place that itemizes. ⌘⌫ deletes
  * (the app's only red action label), `a` archives instead (worktree +
  * branch survive; restore via ⌘K). */
@@ -603,6 +613,10 @@ function DeleteTaskConfirm({
   useUi((s) => s.bindingsVersion);
   const [agentRunning, setAgentRunning] = useState(false);
   const [terminalCount, setTerminalCount] = useState(0);
+  // #134: live persisted tmux sessions the delete sweep will kill — from
+  // the tmux server, so restarts and orphans are covered (the in-memory
+  // list above knows nothing about those).
+  const [persistedSessions, setPersistedSessions] = useState<string[]>([]);
   const [commentCount, setCommentCount] = useState(0);
   // #135: board cards whose dispatch link points at this task — the FK
   // clears `linked_task_id` silently, so the confirm must say so.
@@ -623,6 +637,13 @@ function DeleteTaskConfirm({
         if (cancelled) return;
         setAgentRunning(ts.some((t) => t.kind === "agent" && t.running));
         setTerminalCount(ts.length);
+      })
+      .catch(() => {});
+    // Best-effort like every probe here (grill decision 4): an unreachable
+    // session host reads as no rows, never an error state.
+    terminalListPersisted(taskId)
+      .then((ids) => {
+        if (!cancelled) setPersistedSessions(ids);
       })
       .catch(() => {});
     listLineComments(taskId)
@@ -755,6 +776,9 @@ function DeleteTaskConfirm({
               <div key={c.id}>unlinks card "{truncate(c.title)}"</div>
             ))}
             {countParts.length > 0 && <div>deletes {countParts.join(" · ")}</div>}
+            {persistedSessions.map((id) => (
+              <div key={id}>{`kills tmux ${tmuxSessionLabel(id, projectId, taskId)}`}</div>
+            ))}
           </div>
           {error && (
             <p className="fc-modal-error" role="alert">

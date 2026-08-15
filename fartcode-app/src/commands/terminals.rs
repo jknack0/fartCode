@@ -348,6 +348,37 @@ pub fn terminal_surviving_blocking<R: tauri::Runtime>(
     Ok(terminals.surviving_session_count(&ctx.project_id, task_id))
 }
 
+/// The task's live persisted tmux session ids — decoded, slot-ordered,
+/// exactly what the delete sweep will kill (#134). Deliberately NOT gated
+/// on the project's tmux setting (grill decision 1): the sweep kills by
+/// prefix regardless of the setting, so the confirm must list regardless.
+/// Best-effort: no tmux / no server / unreachable remote host → `[]`,
+/// never an error.
+#[tauri::command]
+pub async fn terminal_list_persisted(
+    terminals: State<'_, Arc<TerminalManager>>,
+    app: State<'_, Arc<App>>,
+    task_id: String,
+) -> Result<Vec<String>, String> {
+    let terminals = terminals.inner().clone();
+    let app = app.inner().clone();
+    // Off the IPC thread (#80): this shells out to `tmux list-sessions`
+    // (or round-trips the remote host's tmux server).
+    off_main_thread(move || terminal_list_persisted_blocking(&terminals, &app, &task_id)).await
+}
+
+/// `terminal_list_persisted`'s body, off the IPC thread. Generic over the
+/// Tauri runtime so tests can drive it with `tauri::test::MockRuntime`.
+pub fn terminal_list_persisted_blocking<R: tauri::Runtime>(
+    terminals: &TerminalManager<R>,
+    app: &App,
+    task_id: &str,
+) -> Result<Vec<String>, String> {
+    let ctx = resolve_task_context(&app.db, task_id)?;
+    Ok(terminals.persisted_sessions(&ctx.project_id, task_id))
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::{agent_auto_approve, terminal_program};
@@ -428,5 +459,47 @@ mod tests {
         };
         let (_, args) = terminal_program(&settings, "/bin/zsh");
         assert_eq!(args, vec!["-c".to_string(), "omp".to_string()]);
+    }
+
+    /// #134 AC3 error arm: an unknown task is an Err, not a silent [].
+    #[test]
+    fn list_persisted_errors_for_an_unknown_task() {
+        let app = App::init(Some(":memory:")).unwrap();
+        let terminals =
+            crate::terminals::TerminalManager::new(tauri::test::mock_app().handle().clone());
+        let err = super::terminal_list_persisted_blocking(&terminals, &app, "ghost").unwrap_err();
+        assert!(err.contains("task not found"), "{err}");
+    }
+
+    /// #134 AC3: the listing is deliberately NOT gated on the project's
+    /// tmux setting (grill decision 1) — the blocking fn reads no settings
+    /// and probes regardless. Hermetically (no live session under this
+    /// prefix) the probe surfaces as Ok([]); the live-session arm is proven
+    /// by the real-tmux integration test
+    /// (`tests/persisted_sessions_integration.rs`).
+    #[test]
+    fn list_persisted_probes_a_tmux_off_task_and_returns_ok() {
+        let app = App::init(Some(":memory:")).unwrap();
+        {
+            let conn = app.db.conn().lock().unwrap();
+            conn.execute(
+                "INSERT INTO projects (id, name, path) VALUES ('p1', 'p', '/tmp/p134')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO tasks (id, project_id, name, status) VALUES ('t1', 'p1', 'demo', 'in_progress')",
+                [],
+            )
+            .unwrap();
+        }
+        let terminals =
+            crate::terminals::TerminalManager::new(tauri::test::mock_app().handle().clone());
+        // No tmux-settings gate: the call reaches the live listing and
+        // returns it (empty here) instead of short-circuiting on settings.
+        assert_eq!(
+            super::terminal_list_persisted_blocking(&terminals, &app, "t1"),
+            Ok(vec![])
+        );
     }
 }

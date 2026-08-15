@@ -543,6 +543,15 @@ export function terminalListForTask(taskId: string): Promise<TaskTerminalDto[]> 
   return invoke("terminal_list_for_task", { taskId });
 }
 
+/** The task's live persisted tmux session ids — decoded
+ * (`{project}:{task}:terminal:{slot}`), slot-ordered, exactly what the
+ * delete sweep will kill (#134). Deliberately NOT gated on the project's
+ * tmux setting; best-effort `[]` when tmux or the session host is
+ * unavailable. */
+export function terminalListPersisted(taskId: string): Promise<string[]> {
+  return invoke("terminal_list_persisted", { taskId });
+}
+
 /** Runs the task's lifecycle script (`setup`/`run`/`teardown`) as a
  * terminal in the task worktree (env contract included); reattaches an
  * in-flight run of the same type. Returns the terminal id. */
