@@ -671,9 +671,11 @@ fn resolve_agent(
 }
 
 /// The step's prompt: the reference packet (built by the SAME builder as
-/// dispatch), framed by the column's step_prompt when one is set, and — for
-/// a consenting project whose card has a dossier — ending with the
-/// feature-log append instruction (E19-02, #71; ADR-0038 item 2).
+/// dispatch), framed by the column's step_prompt when one is set, carrying
+/// the latest downstream review findings on a send-back re-entry
+/// ([`reviewer_findings`]), and — for a consenting project whose card has
+/// a dossier — ending with the feature-log append instruction (E19-02,
+/// #71; ADR-0038 item 2).
 ///
 /// The instruction is injected HERE rather than seeded into
 /// `SEED_COLUMNS[].step_prompt` at project-create time, which is where the
@@ -692,8 +694,75 @@ fn step_prompt_for(app: &App, column: &BoardColumn, issue: &Issue) -> String {
         .map(|b| b.title.clone())
         .collect();
     let packet = build_dispatch_prompt(issue, &finished);
-    let composed = compose_step_prompt(column.step_prompt.as_deref(), &packet);
+    let mut composed = compose_step_prompt(column.step_prompt.as_deref(), &packet);
+    if let Some(findings) = reviewer_findings(app, column, issue) {
+        composed = format!("{composed}\n\n---\n\n{findings}");
+    }
     crate::skills::with_append_instruction(app, issue, &column.name, composed)
+}
+
+/// Rework hardening: when a step column DOWNSTREAM of the one being
+/// entered has already written a dossier section — on the seeded board,
+/// the Adversarial findings — a re-entry into this earlier step quotes
+/// that section into its launch prompt. "The plan is in the dossier" is
+/// not enough once a hostile pass has ruled on the work: the implementer
+/// must be handed the verdict, not trusted to go looking for it.
+///
+/// Stateless by design. The presence of a later step's section IS the
+/// evidence of a send-back — no previous-column threading, no flag to go
+/// stale, and a second rework loop naturally picks the NEWEST findings
+/// (last matching section wins). A first pass through the column is a
+/// no-op: no downstream section exists yet.
+///
+/// Reading follows the data, same posture as the ⌘K indexer: a dossier
+/// only exists under consent, and [`crate::dossier_index::dossier_source`]
+/// resolves only a file carrying THIS card's marker — a stranger's
+/// document at the slug path is never quoted. Every failure path returns
+/// `None`: findings are memory, not a gate, and must not fail a launch.
+fn reviewer_findings(app: &App, column: &BoardColumn, issue: &Issue) -> Option<String> {
+    let rel = issue
+        .dossier_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())?;
+    // Step columns positioned after the one being entered — the ones whose
+    // dossier sections prove the card came BACK here. Headings are
+    // generated from column names (`skills::append_instruction`), so
+    // matching against current names stays consistent across renames.
+    let later: Vec<String> = app
+        .columns
+        .list_for_project(&issue.project_id)
+        .ok()?
+        .into_iter()
+        .filter(|c| c.kind == ColumnKind::AgentStep && c.position > column.position)
+        .map(|c| c.name)
+        .collect();
+    if later.is_empty() {
+        return None;
+    }
+    let path = crate::dossier_index::dossier_source(app, issue, rel)?;
+    let content = std::fs::read_to_string(&path).ok()?;
+    // Convention heading: `## <Column> — <date>`. Exact name or
+    // name-plus-space covers both, fence-safe via the shared parser.
+    let section = fartcode_core::dossiers::sections(&content)
+        .into_iter()
+        .rev()
+        .find(|s| {
+            later
+                .iter()
+                .any(|n| s.heading == *n || s.heading.starts_with(&format!("{n} ")))
+        })?;
+    if section.body.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "# Reviewer findings — address before settling\n\n\
+         This card was sent back after a later review step ran. The findings \
+         below are quoted from the dossier's `## {}` section. Address every \
+         finding — fix it, or record in the dossier why it stands. Do not \
+         settle with a finding silently ignored.\n\n{}",
+        section.heading, section.body
+    ))
 }
 
 /// The engine's move: enter `column_id`, then do what the column says.
@@ -1676,6 +1745,92 @@ mod tests {
             review.id
         );
     }
+
+    /// Rework hardening: a card sent back to Implement after the hostile
+    /// pass carries the reviewer's findings IN the launch prompt — the
+    /// downstream dossier section is quoted, not merely pointed at.
+    #[test]
+    fn reentry_prompt_carries_downstream_review_findings() {
+        let repo = tempfile::tempdir().unwrap();
+        let app = App::init(Some(":memory:")).unwrap();
+        {
+            let conn = app.db.conn().lock().unwrap();
+            conn.execute(
+                "INSERT INTO projects (id, name, path) VALUES ('p1', 'proj', ?1)",
+                [repo.path().to_str().unwrap()],
+            )
+            .unwrap();
+            fartcode_core::issues::columns::seed_default_columns(&conn, "p1").unwrap();
+        }
+        let issue = new_issue(&app, "card");
+        with_task(&app, "t1");
+        app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
+
+        // Dossier in the project checkout (as after a send-back with the
+        // worktree torn down), with the Adversarial findings appended —
+        // exactly what ADVERSARIAL_PROMPT instructs the reviewer to write.
+        let header = fartcode_core::dossiers::backfilled_header(&issue, None);
+        let placed =
+            fartcode_core::dossiers::place_dossier(repo.path(), &issue, &header, None).unwrap();
+        app.issues
+            .update(
+                &issue.id,
+                fartcode_core::issues::IssuePatch {
+                    dossier_path: Some(Some(placed.rel_path.clone())),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let file = repo.path().join(&placed.rel_path);
+        let mut content = std::fs::read_to_string(&file).unwrap();
+        content.push_str(
+            "\n## Adversarial — 2026-08-14\n\n- CRITICAL: unbounded retry loop in poller.rs:42\n",
+        );
+        std::fs::write(&file, content).unwrap();
+
+        let implement = column(&app, "Implement");
+        let mut rx = app.event_bus.subscribe();
+        enter_column_from_command(&app, &issue.id, &implement.id, None).unwrap();
+        let events = step_events(&mut rx);
+        assert!(
+            matches!(&events[..], [InternalEvent::StepLaunch { prompt, .. }]
+                if prompt.contains("Reviewer findings")
+                && prompt.contains("unbounded retry loop in poller.rs:42")),
+            "the Adversarial findings must ride the Implement prompt, got {events:?}"
+        );
+
+        // Control: a card whose dossier has only EARLIER-step sections
+        // (Plan) gets no findings block — a first pass is not a rework.
+        let fresh = new_issue(&app, "fresh card");
+        with_task(&app, "t2");
+        app.issues.set_linked_task(&fresh.id, Some("t2")).unwrap();
+        let header = fartcode_core::dossiers::backfilled_header(&fresh, None);
+        let placed =
+            fartcode_core::dossiers::place_dossier(repo.path(), &fresh, &header, None).unwrap();
+        app.issues
+            .update(
+                &fresh.id,
+                fartcode_core::issues::IssuePatch {
+                    dossier_path: Some(Some(placed.rel_path.clone())),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let file = repo.path().join(&placed.rel_path);
+        let mut content = std::fs::read_to_string(&file).unwrap();
+        content.push_str("\n## Plan — 2026-08-13\n\n- ordered steps here\n");
+        std::fs::write(&file, content).unwrap();
+
+        let mut rx = app.event_bus.subscribe();
+        enter_column_from_command(&app, &fresh.id, &implement.id, None).unwrap();
+        let events = step_events(&mut rx);
+        assert!(
+            matches!(&events[..], [InternalEvent::StepLaunch { prompt, .. }]
+                if !prompt.contains("Reviewer findings")),
+            "an earlier step's section must not read as a send-back, got {events:?}"
+        );
+    }
+
 
     #[test]
     fn enter_shelf_is_inert_and_run_step_launches_in_the_linked_task() {
