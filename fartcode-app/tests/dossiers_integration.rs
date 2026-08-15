@@ -541,8 +541,7 @@ fn step_events_append_one_timeline_line_each() {
 
     let text = fx.dossier_text(&issue.id);
     assert_eq!(
-        text.matches("Implement · launched · claude")
-            .count(),
+        text.matches("Implement · launched · claude").count(),
         1,
         "one launch line with column, provider and model:\n{text}"
     );
@@ -659,11 +658,7 @@ fn a_column_move_records_both_endpoints_from_the_event() {
         1,
         "the first move remembers where it came from:\n{text}"
     );
-    assert_eq!(
-        text.matches("column · Review → Ship").count(),
-        1,
-        "{text}"
-    );
+    assert_eq!(text.matches("column · Review → Ship").count(), 1, "{text}");
 
     // A non-column update fires IssueUpdated but no move event, so it adds
     // nothing — the appender records facts, it does not echo events.

@@ -18,6 +18,7 @@ import {
   createTaskFromComment,
   gitCommitState,
   issueEnterColumn,
+  issueList,
   listLineComments,
   listProjectBranches,
   listProviders,
@@ -603,6 +604,9 @@ function DeleteTaskConfirm({
   const [agentRunning, setAgentRunning] = useState(false);
   const [terminalCount, setTerminalCount] = useState(0);
   const [commentCount, setCommentCount] = useState(0);
+  // #135: board cards whose dispatch link points at this task — the FK
+  // clears `linked_task_id` silently, so the confirm must say so.
+  const [linkedCards, setLinkedCards] = useState<{ id: string; title: string }[]>([]);
   const [branch, setBranch] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -626,10 +630,20 @@ function DeleteTaskConfirm({
         if (!cancelled) setCommentCount(cs.length);
       })
       .catch(() => {});
+    issueList(projectId)
+      .then((issues) => {
+        if (cancelled) return;
+        setLinkedCards(
+          issues
+            .filter((i) => i.linkedTaskId === taskId)
+            .map((i) => ({ id: i.id, title: i.title })),
+        );
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [taskId]);
+  }, [projectId, taskId]);
 
   const workspaceId = isWorktree ? task?.workspaceId : null;
   useEffect(() => {
@@ -737,6 +751,9 @@ function DeleteTaskConfirm({
                   : "removes the worktree"}
               </div>
             )}
+            {linkedCards.map((c) => (
+              <div key={c.id}>unlinks card "{truncate(c.title)}"</div>
+            ))}
             {countParts.length > 0 && <div>deletes {countParts.join(" · ")}</div>}
           </div>
           {error && (

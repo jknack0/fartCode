@@ -113,10 +113,7 @@ fn run(root: &Path, args: &[&str]) -> Result<String, Error> {
     if output.status.success() {
         Ok(format!("{stdout}{stderr}"))
     } else {
-        Err(Error::Git(format!(
-            "git {label} failed: {}",
-            stderr.trim()
-        )))
+        Err(Error::Git(format!("git {label} failed: {}", stderr.trim())))
     }
 }
 
@@ -128,8 +125,16 @@ mod tests {
     use std::process::Command;
 
     fn git(dir: &Path, args: &[&str]) {
-        let out = Command::new("git").current_dir(dir).args(args).output().unwrap();
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     fn init_repo(tmp: &tempfile::TempDir) -> PathBuf {
@@ -160,9 +165,17 @@ mod tests {
         assert!(!outcome.pushed, "no remote configured");
         assert!(dir.join("b.txt").exists());
         // One squash commit, clean tree.
-        let log = Command::new("git").current_dir(&dir).args(["log", "--oneline"]).output().unwrap();
+        let log = Command::new("git")
+            .current_dir(&dir)
+            .args(["log", "--oneline"])
+            .output()
+            .unwrap();
         assert_eq!(String::from_utf8_lossy(&log.stdout).lines().count(), 2);
-        let status = Command::new("git").current_dir(&dir).args(["status", "--porcelain"]).output().unwrap();
+        let status = Command::new("git")
+            .current_dir(&dir)
+            .args(["status", "--porcelain"])
+            .output()
+            .unwrap();
         assert!(status.stdout.is_empty(), "root left clean");
     }
 
@@ -182,9 +195,16 @@ mod tests {
         let err = squash_merge_and_push(&dir, "feat", "Ship: feature", "origin").unwrap_err();
         assert!(err.to_string().contains("failed"), "typed conflict: {err}");
         // Cleanup: no half-merged state survives.
-        let status = Command::new("git").current_dir(&dir).args(["status", "--porcelain"]).output().unwrap();
+        let status = Command::new("git")
+            .current_dir(&dir)
+            .args(["status", "--porcelain"])
+            .output()
+            .unwrap();
         assert!(status.stdout.is_empty(), "reset --merge cleaned the root");
-        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "main side\n");
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "main side\n"
+        );
     }
 
     #[test]
@@ -202,6 +222,9 @@ mod tests {
         // Shipping the checked-out branch itself is refused.
         git(&dir, &["checkout", "--", "a.txt"]);
         let err = squash_merge_and_push(&dir, "main", "Ship: main", "origin").unwrap_err();
-        assert!(err.to_string().contains("checked out at the project root"), "{err}");
+        assert!(
+            err.to_string().contains("checked out at the project root"),
+            "{err}"
+        );
     }
 }

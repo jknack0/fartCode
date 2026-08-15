@@ -82,7 +82,10 @@ fn test_migration_runner_idempotent() {
     // Compared against the first count, not a literal: idempotency is the
     // property under test, and a hardcoded number goes stale on every new
     // migration (it did — #142 found this test red on main after 0013).
-    assert_eq!(migrations2, migrations, "re-init must not re-apply migrations");
+    assert_eq!(
+        migrations2, migrations,
+        "re-init must not re-apply migrations"
+    );
 }
 
 #[test]

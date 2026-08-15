@@ -511,8 +511,15 @@ pub fn delete_task_blocking<R: tauri::Runtime>(
         delete_worktree: delete_worktree.unwrap_or(true),
         delete_branch: delete_branch.unwrap_or(false),
     };
+    // #135: the delete hands the sweep the card ids it FK-unlinked,
+    // captured inside its own transaction (pass-2 finding 1: any capture
+    // outside the tx races concurrent link writes) and delivered at
+    // row-commit time, before the seconds-wide worktree teardown (pass-3
+    // fix). The hook never fires on Err — fail-closed (#66) holds.
     app.deletion
-        .delete_task(project_id, task_id, &options)
+        .delete_task(project_id, task_id, &options, |ids| {
+            crate::step_engine::on_task_deleted(app, ids)
+        })
         .map_err(|e| e.to_string())?;
     // E2-12: deleting a task closes its interactive terminals; ADR-0025:
     // and sweeps its tmux sessions (surviving orphans from crashes too).
@@ -522,7 +529,10 @@ pub fn delete_task_blocking<R: tauri::Runtime>(
 
 #[cfg(test)]
 mod tests {
-    use super::first_line_title;
+    use super::*;
+    use fartcode_core::events::{EventBus, InternalEvent};
+    use fartcode_core::issues::columns::{ColumnKind, ColumnStore, NewColumn, OnEnter, OnSettle};
+    use fartcode_core::issues::NewIssue;
 
     #[test]
     fn first_line_title_strips_model_wrappers() {
@@ -545,5 +555,377 @@ mod tests {
         assert_eq!(first_line_title(b""), "");
         // 80-char cap.
         assert_eq!(first_line_title("x".repeat(200).as_bytes()).len(), 80);
+    }
+
+    fn app() -> Arc<App> {
+        App::init(Some(":memory:")).expect("app init")
+    }
+
+    /// MockRuntime terminal manager — same pattern as the
+    /// `commands::projects` tests (a Wry manager panics off the main
+    /// thread, so tests drive `delete_task_blocking` directly).
+    fn manager() -> Arc<crate::terminals::TerminalManager<tauri::test::MockRuntime>> {
+        Arc::new(crate::terminals::TerminalManager::new(
+            tauri::test::mock_app().handle().clone(),
+        ))
+    }
+
+    /// A no-op ACP runtime (ported from `commands::projects` tests):
+    /// task deletion only calls `stop_task`, and the fixture task owns
+    /// no conversations, so the adapter resolver never fires.
+    fn acp_runtime(app: &Arc<App>) -> Arc<crate::acp_runtime::AcpRuntime> {
+        struct NoEvents;
+        impl fartcode_acp::session::SessionEvents for NoEvents {
+            fn update(&self, _: &str, _: &fartcode_acp::client::SessionUpdateEvent) {}
+            fn transcript_changed(&self, _: &str, _: &fartcode_acp::LiveModels) {}
+            fn permission_requested(
+                &self,
+                _: &str,
+                _: &fartcode_acp::session::PermissionRequestedEvent,
+            ) {
+            }
+        }
+        crate::acp_runtime::AcpRuntime::new(
+            app.conversations.clone(),
+            app.tasks.clone(),
+            app.db.clone(),
+            app.provider_accounts.clone(),
+            Arc::new(NoEvents),
+            Arc::new(|provider: &str| {
+                Err(fartcode_acp::Error::InvalidState(format!(
+                    "no adapter in tests: {provider}"
+                )))
+            }),
+        )
+    }
+
+    /// Board fixture mirroring `step_engine::tests`: project `p1` with
+    /// default columns, a `project-root` workspace, a raw task row, and
+    /// a "Plan" queue column for parks.
+    fn seed_fixture(app: &App, task_id: &str) {
+        {
+            let conn = app.db.conn().lock().unwrap();
+            conn.execute_batch(
+                "INSERT INTO projects (id, name, path) VALUES ('p1', 'proj', '/tmp/proj');",
+            )
+            .unwrap();
+            fartcode_core::issues::columns::seed_default_columns(&conn, "p1").unwrap();
+            // `project-root` kind: TaskStore::delete requires a non-null
+            // workspace_id, and this kind skips every worktree branch.
+            conn.execute(
+                "INSERT INTO workspaces (id, kind, path)
+                 VALUES ('w1', 'project-root', '/tmp/proj')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO tasks (id, project_id, name, status, workspace_id)
+                 VALUES (?1, 'p1', 't', 'in_progress', 'w1')",
+                [task_id],
+            )
+            .unwrap();
+        }
+        ColumnStore::new(app.db.clone())
+            .create(NewColumn {
+                project_id: "p1".into(),
+                name: "Plan".into(),
+                kind: ColumnKind::AgentStep,
+                counts_as_done: false,
+                is_landing: false,
+                on_enter: Some(OnEnter::Queue),
+                on_settle: Some(OnSettle::Hold),
+                advance_to: None,
+                step_prompt: None,
+                step_provider: None,
+                step_model: None,
+                step_effort: None,
+                step_tools: None,
+            })
+            .unwrap();
+    }
+
+    /// A card parked on the "Plan" queue column and linked to `task_id`.
+    fn parked_card(app: &App, title: &str, task_id: &str) -> fartcode_core::issues::Issue {
+        let issue = app
+            .issues
+            .create(NewIssue {
+                project_id: "p1".into(),
+                title: title.into(),
+                body: None,
+                acceptance: Vec::new(),
+                lane: None,
+                provider: None,
+                model: None,
+                prd_path: None,
+                prd_section: None,
+                external_ref: None,
+                dossier_path: None,
+            })
+            .unwrap();
+        let queue = ColumnStore::new(app.db.clone())
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name == "Plan")
+            .expect("seed_fixture created the Plan queue column");
+        crate::step_engine::enter_column_from_command(app, &issue.id, &queue.id, None).unwrap();
+        app.issues
+            .set_linked_task(&issue.id, Some(task_id))
+            .unwrap();
+        issue
+    }
+
+    fn parked_linked_issue(app: &App, task_id: &str) -> fartcode_core::issues::Issue {
+        seed_fixture(app, task_id);
+        parked_card(app, "card", task_id)
+    }
+
+    /// Drains the bus into just the `StepQueueCleared` issue ids.
+    fn cleared_events(rx: &mut tokio::sync::broadcast::Receiver<InternalEvent>) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            if let InternalEvent::StepQueueCleared { issue_id, .. } = ev {
+                out.push(issue_id);
+            }
+        }
+        out
+    }
+
+    /// #135 wiring: deleting a task sweeps the linked card's park with
+    /// the cleared event (the sweep itself is unit-proven in
+    /// `step_engine::tests`; the #66 lesson is that call sites are where
+    /// these bugs live). The card survives with the link FK-nulled.
+    #[test]
+    fn delete_task_unparks_the_linked_card() {
+        let app = app();
+        let issue = parked_linked_issue(&app, "t1");
+        assert!(app.steps.peek_park(&issue.id).is_some());
+        let mut rx = app.event_bus.subscribe();
+        let terminals = manager();
+
+        delete_task_blocking(
+            &app,
+            &terminals,
+            &acp_runtime(&app),
+            "p1",
+            "t1",
+            Some(false),
+            Some(false),
+        )
+        .expect("delete_task");
+
+        assert!(app.steps.peek_park(&issue.id).is_none(), "park swept");
+        assert_eq!(cleared_events(&mut rx), vec![issue.id.clone()]);
+        let card = app.issues.get(&issue.id).unwrap().expect("card survives");
+        assert!(card.linked_task_id.is_none(), "FK cleared the link");
+    }
+
+    /// #135 AC3 (fail-closed, #66): a delete that errors before the row
+    /// is gone leaves park, registry, and link untouched — the sweep
+    /// must only run after a successful row delete.
+    #[test]
+    fn failed_delete_leaves_the_park_untouched() {
+        let app = app();
+        let issue = parked_linked_issue(&app, "t1");
+        app.db
+            .conn()
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER block_task_delete BEFORE DELETE ON tasks\n                 BEGIN SELECT RAISE(ABORT, 'blocked by test'); END;",
+            )
+            .unwrap();
+        let mut rx = app.event_bus.subscribe();
+        let terminals = manager();
+
+        let err = delete_task_blocking(
+            &app,
+            &terminals,
+            &acp_runtime(&app),
+            "p1",
+            "t1",
+            Some(false),
+            Some(false),
+        )
+        .expect_err("trigger blocks the row delete");
+
+        assert!(err.contains("blocked"), "{err}");
+        assert!(
+            app.steps.peek_park(&issue.id).is_some(),
+            "park survives the failed delete"
+        );
+        assert!(
+            cleared_events(&mut rx).is_empty(),
+            "no spurious cleared event"
+        );
+        assert_eq!(
+            app.issues
+                .get(&issue.id)
+                .unwrap()
+                .unwrap()
+                .linked_task_id
+                .as_deref(),
+            Some("t1")
+        );
+    }
+
+    /// A card LAUNCHED (not parked) into the seeded run-mode "Quick"
+    /// column, linked to `task_id` — its trace is registry-only.
+    fn launched_card(app: &App, title: &str, task_id: &str) -> fartcode_core::issues::Issue {
+        let issue = app
+            .issues
+            .create(NewIssue {
+                project_id: "p1".into(),
+                title: title.into(),
+                body: None,
+                acceptance: Vec::new(),
+                lane: None,
+                provider: None,
+                model: None,
+                prd_path: None,
+                prd_section: None,
+                external_ref: None,
+                dossier_path: None,
+            })
+            .unwrap();
+        app.issues
+            .set_linked_task(&issue.id, Some(task_id))
+            .unwrap();
+        let quick = ColumnStore::new(app.db.clone())
+            .list_for_project("p1")
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name == "Quick")
+            .expect("seeded Quick column");
+        crate::step_engine::enter_column_from_command(app, &issue.id, &quick.id, None).unwrap();
+        issue
+    }
+
+    /// Adversarial finding 4: AC3's "registry untouched" half. A
+    /// launched-but-unparked card's trace is registry-only — the park
+    /// proxy cannot see it, so assert the registry directly across a
+    /// delete that fails before the row is gone.
+    #[test]
+    fn failed_delete_leaves_the_registry_untouched() {
+        let app = app();
+        seed_fixture(&app, "t1");
+        let issue = launched_card(&app, "card", "t1");
+        assert!(
+            app.steps.peek_park(&issue.id).is_none(),
+            "launched, not parked"
+        );
+        assert!(app.steps.has_state(&issue.id), "registry entry exists");
+        app.db
+            .conn()
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER block_task_delete BEFORE DELETE ON tasks
+                 BEGIN SELECT RAISE(ABORT, 'blocked by test'); END;",
+            )
+            .unwrap();
+        let terminals = manager();
+
+        delete_task_blocking(
+            &app,
+            &terminals,
+            &acp_runtime(&app),
+            "p1",
+            "t1",
+            Some(false),
+            Some(false),
+        )
+        .expect_err("trigger blocks the row delete");
+
+        assert!(
+            app.steps.has_state(&issue.id),
+            "registry survives the failed delete"
+        );
+    }
+
+    /// Adversarial pass 2, finding 1: the sweep hook receives the
+    /// FK-unlinked ids from INSIDE `delete_task`, right after the rows
+    /// commit — not seconds later behind worktree teardown, where a
+    /// confirm-born launch could be destroyed by a stale sweep.
+    #[test]
+    fn delete_task_hands_unlinked_ids_to_the_sweep_hook() {
+        let app = app();
+        seed_fixture(&app, "t1");
+        let a = parked_card(&app, "card a", "t1");
+        let b = parked_card(&app, "card b", "t1");
+        let seen = std::sync::Mutex::new(Vec::<String>::new());
+
+        app.deletion
+            .delete_task(
+                "p1",
+                "t1",
+                &DeleteTaskOptions {
+                    delete_worktree: false,
+                    delete_branch: false,
+                },
+                |ids| seen.lock().unwrap().extend(ids.iter().cloned()),
+            )
+            .expect("delete_task");
+
+        let mut got = seen.into_inner().unwrap();
+        got.sort();
+        let mut want = vec![a.id.clone(), b.id.clone()];
+        want.sort();
+        assert_eq!(got, want);
+    }
+
+    /// Adversarial pass 2, finding 2: the idempotent early return
+    /// (double-delete) succeeds WITHOUT invoking the sweep hook — a
+    /// vanished task has already had its links FK-nulled.
+    #[test]
+    fn the_sweep_hook_stays_silent_for_a_missing_task() {
+        let app = app();
+        seed_fixture(&app, "t1");
+        let called = std::sync::Mutex::new(false);
+
+        app.deletion
+            .delete_task(
+                "p1",
+                "no-such-task",
+                &DeleteTaskOptions {
+                    delete_worktree: false,
+                    delete_branch: false,
+                },
+                |_ids| *called.lock().unwrap() = true,
+            )
+            .expect("missing task is a quiet no-op");
+
+        assert!(!*called.lock().unwrap(), "hook must not fire");
+    }
+
+    /// Adversarial finding 3 (plural pin): every card linked to the task
+    /// is swept, not just the first — two parks, two cleared events.
+    #[test]
+    fn delete_task_sweeps_every_linked_card() {
+        let app = app();
+        seed_fixture(&app, "t1");
+        let a = parked_card(&app, "card a", "t1");
+        let b = parked_card(&app, "card b", "t1");
+        let mut rx = app.event_bus.subscribe();
+        let terminals = manager();
+
+        delete_task_blocking(
+            &app,
+            &terminals,
+            &acp_runtime(&app),
+            "p1",
+            "t1",
+            Some(false),
+            Some(false),
+        )
+        .expect("delete_task");
+
+        assert!(app.steps.peek_park(&a.id).is_none(), "first park swept");
+        assert!(app.steps.peek_park(&b.id).is_none(), "second park swept");
+        let mut cleared = cleared_events(&mut rx);
+        cleared.sort();
+        let mut want = vec![a.id.clone(), b.id.clone()];
+        want.sort();
+        assert_eq!(cleared, want);
     }
 }

@@ -103,11 +103,21 @@ impl TaskDeletionService {
     /// Deletes a task with full teardown (reference `deleteTask`). Idempotent:
     /// a vanished task is a clean no-op. All process/git cleanup failures are
     /// non-fatal warnings — the rows are the contract.
+    /// `on_unlinked` is the step-engine sweep hook (#135): invoked
+    /// exactly once with the card ids the row delete FK-unlinked,
+    /// immediately after the rows commit (between steps 5 and 6) — never
+    /// on the idempotent early return and never on an error. Placement is
+    /// load-bearing: steps 6–7 can take seconds, and a sweep delayed
+    /// behind them destroys launches born in that window (adversarial
+    /// pass 2, finding 1). Ordering note (finding 4): `TaskDeleted` is
+    /// emitted by the row delete itself, so it precedes the hook by
+    /// microseconds, not by the teardown gap.
     pub fn delete_task(
         &self,
         project_id: &str,
         task_id: &str,
         options: &DeleteTaskOptions,
+        on_unlinked: impl FnOnce(&[String]),
     ) -> Result<(), Error> {
         // 1. Idempotent early return (double-delete, delete-during-provision).
         if self.tasks.get(task_id)?.is_none() {
@@ -128,8 +138,13 @@ impl TaskDeletionService {
             tracing::warn!(error = %e, "view-state tabs delete failed (non-fatal)");
         }
 
-        // 5. Rows: task + (workspace when unused) + cascade + events.
-        self.tasks.delete(task_id)?;
+        // 5. Rows: task + (workspace when unused) + cascade + events —
+        //    returning the card ids the delete FK-unlinked (#135: captured
+        //    inside the delete transaction, so the step-engine sweep and
+        //    concurrent link writes cannot race).
+        let unlinked = self.tasks.delete(task_id)?;
+        // 5.5: sweep at row-commit time — see the doc comment.
+        on_unlinked(&unlinked);
 
         // 6. Worktree removal (only for worktree-kind workspaces).
         let mut worktree_removed = false;

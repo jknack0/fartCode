@@ -215,7 +215,10 @@ mod tests {
                 saw_while_archived = true;
             }
         }
-        assert!(!saw_while_archived, "archived task's worktree must be unwatched");
+        assert!(
+            !saw_while_archived,
+            "archived task's worktree must be unwatched"
+        );
 
         // Restore: the loop must re-register from the task row alone.
         let bus = BroadcastEventBus::new(8);

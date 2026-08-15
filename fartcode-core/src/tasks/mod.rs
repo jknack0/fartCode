@@ -150,8 +150,12 @@ pub trait TaskStore: Send + Sync {
     fn archive(&self, id: &str) -> Result<Task, Error>;
     fn restore(&self, id: &str) -> Result<Task, Error>;
 
-    /// Hard delete; conversations/terminals cascade via FK.
-    fn delete(&self, id: &str) -> Result<(), Error>;
+    /// Hard delete; conversations/terminals cascade via FK. Returns the
+    /// ids of board cards whose `linked_task_id` the delete FK-nulled,
+    /// captured INSIDE the delete transaction (#135: the step-engine
+    /// sweep needs them, and any capture outside the tx races concurrent
+    /// link/unlink writes).
+    fn delete(&self, id: &str) -> Result<Vec<String>, Error>;
 
     /// Idempotent provision fast-path: re-provision re-fires
     /// `task:provisioned` and touches `last_interacted_at` (reference
@@ -483,13 +487,14 @@ impl TaskStore for DbTaskStore {
         Ok(task)
     }
 
-    fn delete(&self, id: &str) -> Result<(), Error> {
+    fn delete(&self, id: &str) -> Result<Vec<String>, Error> {
         // Atomic boundary mirroring `create()`: one guard + one tx across
         // the workspace snapshot, task DELETE, sibling COUNT, and workspace
         // cleanup — the COUNT → workspace-DELETE TOCTOU is closed because
         // the guard spans it all. Scoped so guard + tx drop before the
-        // post-commit event (mutex is not reentrant).
-        {
+        // post-commit event (mutex is not reentrant). #135 closes the
+        // linked-card capture into the same boundary.
+        let unlinked = {
             let mut conn = self
                 .db
                 .conn()
@@ -511,8 +516,16 @@ impl TaskStore for DbTaskStore {
                 )
                 .optional()?;
             let Some((wid, kind)) = workspace else {
-                return Ok(());
+                // Vanished task: the FK already nulled any links.
+                return Ok(Vec::new());
             };
+            // #135: the cards this delete is about to unlink, read under
+            // the same tx that fires the `ON DELETE SET NULL` — no link
+            // written on another thread can slip between capture and null.
+            let unlinked: Vec<String> = tx
+                .prepare("SELECT id FROM issues WHERE linked_task_id = ?1")?
+                .query_map([id], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
             tx.execute("DELETE FROM tasks WHERE id = ?1", [id])?;
             // Tear down the workspace row when no sibling tasks remain; a
             // `project-root` workspace outlives every task (reference
@@ -538,11 +551,12 @@ impl TaskStore for DbTaskStore {
                 }
             }
             tx.commit()?;
-        }
+            unlinked
+        };
         self.event_bus
             .send(InternalEvent::TaskDeleted { id: id.into() });
         lifecycle::telemetry("task_deleted", &[("task_id", id.into())]);
-        Ok(())
+        Ok(unlinked)
     }
 
     fn provision(&self, id: &str) -> Result<(), Error> {
@@ -565,5 +579,86 @@ impl TaskStore for DbTaskStore {
         });
         lifecycle::telemetry("task_provisioned", &[("task_id", id.into())]);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::SqliteDb;
+    use crate::events::BroadcastEventBus;
+    use crate::issues::{IssueStore, NewIssue};
+
+    /// One db, one bus: the task store under test plus an issue store on
+    /// the same rows (mirrors the `issues::tests` fixture).
+    fn fixture() -> (DbTaskStore, Arc<IssueStore>) {
+        let db: Arc<dyn Db> = SqliteDb::init(Some(":memory:")).unwrap();
+        let bus = Arc::new(BroadcastEventBus::new(16));
+        {
+            let conn = db.conn().lock().unwrap();
+            conn.execute_batch(
+                "INSERT INTO projects (id, name, path) VALUES ('p1', 'proj', '/tmp/proj');\n                 INSERT INTO workspaces (id, kind, path)\n                     VALUES ('w1', 'project-root', '/tmp/proj');\n                 INSERT INTO tasks (id, project_id, name, status, workspace_id)\n                     VALUES ('t1', 'p1', 't', 'in_progress', 'w1');",
+            )
+            .unwrap();
+            crate::issues::columns::seed_default_columns(&conn, "p1").unwrap();
+        }
+        (
+            DbTaskStore::new(db.clone(), bus.clone()),
+            Arc::new(IssueStore::new(db, bus)),
+        )
+    }
+
+    fn card(issues: &IssueStore, title: &str) -> crate::issues::Issue {
+        issues
+            .create(NewIssue {
+                project_id: "p1".into(),
+                title: title.into(),
+                body: None,
+                acceptance: Vec::new(),
+                lane: None,
+                provider: None,
+                model: None,
+                prd_path: None,
+                prd_section: None,
+                external_ref: None,
+                dossier_path: None,
+            })
+            .unwrap()
+    }
+
+    /// #135 adversarial finding 1: the linked-card capture must be
+    /// ATOMIC with the row delete — same transaction, so no link created
+    /// or removed on another thread can slip between capture and FK
+    /// SET NULL. The contract: `delete` returns the ids it unlinked.
+    #[test]
+    fn delete_returns_the_card_ids_it_unlinked() {
+        let (tasks, issues) = fixture();
+        let a = card(&issues, "a");
+        let b = card(&issues, "b");
+        // Never-linked bystander: exists so over-capture would surface in
+        // the `got == want` equality below.
+        let _bystander = card(&issues, "c");
+        issues.set_linked_task(&a.id, Some("t1")).unwrap();
+        issues.set_linked_task(&b.id, Some("t1")).unwrap();
+
+        let mut got = tasks.delete("t1").unwrap();
+        got.sort();
+        let mut want = vec![a.id.clone(), b.id.clone()];
+        want.sort();
+        assert_eq!(got, want);
+
+        // FK nulled inside the same transaction. (The never-linked
+        // bystander needs no null assertion — over-capture is policed by
+        // the `got == want` equality above, since `c` exists to be
+        // wrongly captured.)
+        assert!(issues.get(&a.id).unwrap().unwrap().linked_task_id.is_none());
+    }
+
+    /// The idempotent early return (double-delete) reports nothing to
+    /// sweep — a vanished task has already had its links FK-nulled.
+    #[test]
+    fn delete_of_a_missing_task_returns_no_ids() {
+        let (tasks, _issues) = fixture();
+        assert_eq!(tasks.delete("no-such-task").unwrap(), Vec::<String>::new());
     }
 }

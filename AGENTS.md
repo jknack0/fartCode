@@ -127,3 +127,5 @@ React + Vite + TypeScript. Zustand for state. CodeMirror 6 for the editor (with
 `reference/emdash/` is a clone of `generalaction/emdash` (Electron + TS). Read the
 matching `agents/risky-areas/*.md` page before touching DB, PTY, SSH, or
 provider-spawning code.
+
+**Feature log:** this project records per-feature decisions under `docs/features/` — read the one for the feature you are touching, and append your own section before you finish. Conventions: `.claude/skills/feature-log/SKILL.md`. <!-- fartcode:feature-log-pointer v2 · written by fartCode (ADR-0038). Delete this line to remove it; fartCode re-adds it only if the convention version changes, and not at all once feature dossiers are off in its project settings. -->

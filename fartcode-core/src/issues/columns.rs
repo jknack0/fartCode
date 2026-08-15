@@ -1153,10 +1153,7 @@ mod tests {
             columns[4].advance_to.as_deref(),
             Some(adversarial.id.as_str())
         );
-        assert_eq!(
-            columns[5].advance_to.as_deref(),
-            Some(review.id.as_str())
-        );
+        assert_eq!(columns[5].advance_to.as_deref(), Some(review.id.as_str()));
         // Every agent step rides the project-default agent (the old
         // claude·haiku Quick pin is gone — pipeline overhaul).
         assert!(columns.iter().all(|c| c.step_provider.is_none()));
@@ -1991,7 +1988,15 @@ mod tests {
         let names: Vec<&str> = after.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(
             names,
-            vec!["Idea", "Grill", "Quick", "Implement", "Adversarial", "Review", "Ship"]
+            vec![
+                "Idea",
+                "Grill",
+                "Quick",
+                "Implement",
+                "Adversarial",
+                "Review",
+                "Ship"
+            ]
         );
         let positions: Vec<i64> = after.iter().map(|c| c.position).collect();
         assert_eq!(positions, vec![0, 1, 2, 3, 4, 5, 6]);

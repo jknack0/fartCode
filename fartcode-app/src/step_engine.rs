@@ -508,9 +508,12 @@ impl StepEngine {
         parks
     }
 
-    /// Test-only visibility: does ANY engine state exist for the issue?
+    /// Test-only visibility: does ANY engine state exist for the issue —
+    /// park, registry entry, consumed set, or chain? `pub(crate)` so the
+    /// command tests can assert the registry half of fail-closed (#135
+    /// adversarial finding 4).
     #[cfg(test)]
-    fn has_state(&self, issue_id: &str) -> bool {
+    pub(crate) fn has_state(&self, issue_id: &str) -> bool {
         let st = self.lock();
         st.parked.contains_key(issue_id)
             || st.launches.contains_key(issue_id)
@@ -1469,6 +1472,21 @@ pub fn on_project_deleted(app: &App, project_id: &str) {
     }
 }
 
+/// Task deleted (#135): the task's death strands the parks and
+/// registry traces of the cards that dispatched into it, so sweep each
+/// linked card like `on_issue_deleted` does. Takes issue ids the caller
+/// captured BEFORE the row delete — the `ON DELETE SET NULL` FK clears
+/// `linked_task_id`, so a post-delete query finds nothing, and sweeping
+/// before a fallible delete would break fail-closed (#66: a refused
+/// delete must leave park and registry untouched).
+pub fn on_task_deleted(app: &App, linked_issue_ids: &[String]) {
+    for issue_id in linked_issue_ids {
+        if let Some(parked) = app.steps.forget_issue(issue_id) {
+            app.event_bus.send(cleared_event(parked));
+        }
+    }
+}
+
 /// Column edit removed its queue-ness (fix round, finding 14 —
 /// `on_enter` queue→run or kind away from agent_step): every park held on
 /// the column is dropped with `StepQueueCleared`. When the column is
@@ -1622,13 +1640,17 @@ mod tests {
         let issue = new_issue(&app, "card");
         with_task(&app, "t1");
         app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
-        app.steps.install_liveness(Arc::new(BusyAgents(vec!["t1".to_string()])));
+        app.steps
+            .install_liveness(Arc::new(BusyAgents(vec!["t1".to_string()])));
 
         let adversarial = column(&app, "Adversarial");
         let outcome = enter_column_from_command(&app, &issue.id, &adversarial.id, None).unwrap();
 
         assert_eq!(outcome.step, "queued");
-        assert!(outcome.launch.is_none(), "no launch the frontend cannot honor");
+        assert!(
+            outcome.launch.is_none(),
+            "no launch the frontend cannot honor"
+        );
         let events = step_events(&mut rx);
         assert!(
             matches!(&events[..], [InternalEvent::StepQueued { column_id, reason, .. }]
@@ -1652,7 +1674,8 @@ mod tests {
         let issue = new_issue(&app, "card");
         with_task(&app, "t1");
         app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
-        app.steps.install_liveness(Arc::new(BusyAgents(vec!["t1".to_string()])));
+        app.steps
+            .install_liveness(Arc::new(BusyAgents(vec!["t1".to_string()])));
         let adversarial = column(&app, "Adversarial");
         let review = column(&app, "Review");
         enter_column_from_command(&app, &issue.id, &adversarial.id, None).unwrap();
@@ -2571,6 +2594,61 @@ mod tests {
             &step_events(&mut rx)[..],
             [InternalEvent::StepQueueCleared { issue_id, .. }] if issue_id == &parked_card.id
         ));
+    }
+
+    /// #135 AC1: deleting a task drops the parked step of the linked
+    /// card (with the cleared event) — the park must not outlive the
+    /// task it was waiting to dispatch into.
+    #[test]
+    fn on_task_deleted_drops_linked_park_and_emits_cleared() {
+        let app = fixture();
+        let issue = new_issue(&app, "card");
+        let plan = make_step(&app, "Plan", OnEnter::Queue, OnSettle::Hold, None);
+        enter_column_from_command(&app, &issue.id, &plan.id, None).unwrap();
+        with_task(&app, "t1");
+        app.issues.set_linked_task(&issue.id, Some("t1")).unwrap();
+        assert!(app.steps.peek_park(&issue.id).is_some());
+        let mut rx = app.event_bus.subscribe();
+
+        // Command order (delete_task_blocking): row delete first, then
+        // the sweep with ids captured before the FK nulled the link.
+        app.db
+            .conn()
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM tasks WHERE id = 't1'", [])
+            .unwrap();
+        on_task_deleted(&app, std::slice::from_ref(&issue.id));
+
+        assert!(!app.steps.has_state(&issue.id), "every trace swept");
+        assert!(matches!(
+            &step_events(&mut rx)[..],
+            [InternalEvent::StepQueueCleared { issue_id, .. }] if issue_id == &issue.id
+        ));
+        let err = confirm_step(&app, &issue.id).unwrap_err();
+        assert!(err.contains("no parked step"));
+    }
+
+    /// #135 AC2: a launched-but-unparked card linked to the deleted task
+    /// loses its registry entry, consumed set, and chain — mirroring the
+    /// project-deletion sweep (final round 4a) — with no spurious
+    /// cleared event (there was no park to announce).
+    #[test]
+    fn on_task_deleted_sweeps_launched_unparked_registry() {
+        let app = fixture();
+        let issue = new_issue(&app, "card");
+        with_task(&app, "t9");
+        app.issues.set_linked_task(&issue.id, Some("t9")).unwrap();
+        let quick = column(&app, "Quick");
+        enter_column_from_command(&app, &issue.id, &quick.id, None).unwrap();
+        settle_issues_for_task(&app, "t9", Some("pty:x")); // populate consumed
+        assert!(app.steps.has_state(&issue.id));
+        let mut rx = app.event_bus.subscribe();
+
+        on_task_deleted(&app, std::slice::from_ref(&issue.id));
+
+        assert!(!app.steps.has_state(&issue.id), "launched-unparked swept");
+        assert!(step_events(&mut rx).is_empty(), "no park, no cleared event");
     }
 
     /// #82: a chain of run-mode columns stops at the depth cap. Default

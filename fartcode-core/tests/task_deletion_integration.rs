@@ -280,7 +280,12 @@ fn delete_removes_worktree_rows_view_state_and_reaps_session() {
     });
 
     fx.deletion
-        .delete_task(&fx.project_id, &task_id, &DeleteTaskOptions::default())
+        .delete_task(
+            &fx.project_id,
+            &task_id,
+            &DeleteTaskOptions::default(),
+            |_| {},
+        )
         .unwrap();
 
     // Process reaped (the simulated launcher observed the cancel).
@@ -323,7 +328,12 @@ fn delete_branch_only_when_created_from_different_branch() {
 
     // Default options: worktree removed, branch KEPT.
     fx.deletion
-        .delete_task(&fx.project_id, &task_id, &DeleteTaskOptions::default())
+        .delete_task(
+            &fx.project_id,
+            &task_id,
+            &DeleteTaskOptions::default(),
+            |_| {},
+        )
         .unwrap();
     assert!(
         fx.branch_exists("fartCode/branching"),
@@ -340,6 +350,7 @@ fn delete_branch_only_when_created_from_different_branch() {
                 delete_worktree: true,
                 delete_branch: true,
             },
+            |_| {},
         )
         .unwrap();
     assert!(
@@ -382,7 +393,12 @@ fn sibling_task_keeps_worktree_but_row_is_deleted() {
     assert_eq!(task_b.workspace_id.as_deref(), Some(ws_id.as_str()));
 
     fx.deletion
-        .delete_task(&fx.project_id, &task_a, &DeleteTaskOptions::default())
+        .delete_task(
+            &fx.project_id,
+            &task_a,
+            &DeleteTaskOptions::default(),
+            |_| {},
+        )
         .unwrap();
 
     // Task row gone; sibling intact.
@@ -403,13 +419,23 @@ fn double_delete_is_idempotent() {
     let (task_id, worktree) = fx.create_provisioned("once", "fartCode/once");
 
     fx.deletion
-        .delete_task(&fx.project_id, &task_id, &DeleteTaskOptions::default())
+        .delete_task(
+            &fx.project_id,
+            &task_id,
+            &DeleteTaskOptions::default(),
+            |_| {},
+        )
         .unwrap();
     assert!(!worktree.exists());
 
     // Second delete: clean no-op, no panic, rows still gone.
     fx.deletion
-        .delete_task(&fx.project_id, &task_id, &DeleteTaskOptions::default())
+        .delete_task(
+            &fx.project_id,
+            &task_id,
+            &DeleteTaskOptions::default(),
+            |_| {},
+        )
         .unwrap();
     assert_eq!(fx.count("tasks"), 0);
     assert_eq!(fx.task_workspace_count(), 0);
@@ -441,6 +467,7 @@ fn delete_during_provision_is_safe() {
             &fx.project_id,
             &created.task.id,
             &DeleteTaskOptions::default(),
+            |_| {},
         )
         .unwrap();
 
@@ -465,7 +492,12 @@ fn project_root_workspace_is_never_deleted() {
     let ws_id = task.workspace_id.clone().unwrap();
 
     fx.deletion
-        .delete_task(&fx.project_id, &task.id, &DeleteTaskOptions::default())
+        .delete_task(
+            &fx.project_id,
+            &task.id,
+            &DeleteTaskOptions::default(),
+            |_| {},
+        )
         .unwrap();
 
     assert!(fx.tasks.get(&task.id).unwrap().is_none(), "task deleted");

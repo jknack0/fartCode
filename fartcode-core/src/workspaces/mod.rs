@@ -290,7 +290,6 @@ pub(crate) fn watch_target_for_task(
     })
 }
 
-
 // -- Public store -----------------------------------------------------------
 
 /// Workspace-row access for services holding the shared DB handle. Cheap to
@@ -575,6 +574,8 @@ mod tests {
         assert_eq!(restored.workspace_id, "w1");
         assert_eq!(restored.worktree, PathBuf::from("/wt1"));
         assert!(watch_target_for_task(db.as_ref(), "t2").unwrap().is_none());
-        assert!(watch_target_for_task(db.as_ref(), "missing").unwrap().is_none());
+        assert!(watch_target_for_task(db.as_ref(), "missing")
+            .unwrap()
+            .is_none());
     }
 }
