@@ -245,7 +245,9 @@ export async function ensureShipped(issue: IssueDto, column: BoardColumnDto): Pr
  * finishes instead of waiting for a manual delete. Esc/keep leaves the
  * card in Done with its worktree intact; delete tears the task and
  * worktree down (the card survives — linked_task_id nulls via FK) so the
- * card can rest in Closed. Shared by every entry surface: board drag,
+ * card can rest in Done, the terminal shelf (migration 0014 folded the
+ * old 'Closed' shelf into it; Done carries no seedLane, so landing there
+ * directly never re-opens this confirm). Shared by every entry surface: board drag,
  * card-detail advance, and the task header's advance/move (both funnel
  * through enterColumn above). */
 export function maybeOfferWorktreeCleanup(issue: IssueDto, column: BoardColumnDto): void {

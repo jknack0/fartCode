@@ -99,6 +99,13 @@
             "when": 1800000000013,
             "tag": "0013_closed_column",
             "breakpoints": true
+        },
+        {
+            "idx": 14,
+            "version": "6",
+            "when": 1800000000014,
+            "tag": "0014_done_column",
+            "breakpoints": true
         }
     ]
 }

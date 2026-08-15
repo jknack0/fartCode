@@ -67,8 +67,8 @@ fn test_migration_runner_idempotent() {
         .query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))
         .unwrap();
     assert_eq!(
-        migrations, 14,
-        "all journal migrations (0000–0013) should have been applied"
+        migrations, 15,
+        "all journal migrations (0000–0014) should have been applied"
     );
 
     // Running init again on the same file is a no-op.
