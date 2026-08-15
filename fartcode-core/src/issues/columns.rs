@@ -268,9 +268,14 @@ struct SeedColumn {
 const GRILL_PROMPT: &str = "You are running a grill session, not implementing anything. \
      Interrogate this idea until it is fully specified: ask ONE question at a time in the \
      conversation and wait for the answer before asking the next — hunt gaps, hidden \
-     assumptions, edge cases, scope cuts, failure modes, and what 'done' means. Push back \
-     on vague answers. When the idea is hardened, write the result into the issue's \
-     dossier: the sharpened problem statement, the decisions made, and a numbered \
+     assumptions, edge cases, scope cuts, failure modes, and what 'done' means. Ask every \
+     question as multiple choice via the ask_user_question tool: 2-4 options, each with a \
+     short label and a description of what it means or costs; put the option YOU would \
+     choose first and append '(Recommended)' to its label. Do not author an 'Other' \
+     option — the tool appends one. If that tool is unavailable, ask the same question as \
+     labelled options (A, B, C…) in plain text and name your pick. Push back on vague \
+     answers. When the idea is hardened, write the result into the issue's dossier: \
+     the sharpened problem statement, the decisions made, and a numbered \
      acceptance-criteria list precise enough to write failing tests from. Do not write \
      code and do not modify anything else in the repo.";
 
