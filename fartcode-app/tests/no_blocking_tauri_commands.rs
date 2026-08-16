@@ -133,7 +133,7 @@ const MUST_OFFLOAD: &[(&str, &str)] = &[
     ("create_task", "create_with_provision → git fetch + git worktree add (no bound: a cold remote freezes the UI)"),
     ("delete_task", "teardown_sessions → 5s TEARDOWN_WAIT spin-sleep per leaf, tmux kills, git worktree remove"),
     ("git_push", "fartcode_git::remote → git push over the network with no timeout"),
-    ("git_create_pr", "pushes when unpublished, then resolves the compare URL — network"),
+    ("git_create_pr", "pushes when unpublished + keyring/gh token read, before the async GitHub call — network"),
     ("git_fetch", "git fetch over the network with no timeout"),
     ("git_pull", "git pull --ff-only over the network with no timeout"),
     ("terminal_open", "tmux slot probe (list_tmux_sessions_by_prefix) + PTY spawn"),

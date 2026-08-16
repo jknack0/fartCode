@@ -21,7 +21,7 @@ use fartcode_core::pr_sync::PrSyncStore;
 use fartcode_core::Error;
 use std::sync::Mutex;
 
-use crate::commit::PrLookup;
+use crate::commit::{self, CreatePrOutcome, PrLookup, PrPrep};
 use crate::pr_target;
 use crate::remote;
 
@@ -49,6 +49,45 @@ impl PrLookup for CachedPrLookup {
         };
         self.store.open_pr_url(&owner, &repo_name, branch)
     }
+}
+
+/// Full "Commit, push & open PR" backend (#132). With a GitHub token the
+/// PR is created via the REST API against the repo's default branch and
+/// seeded into the sync cache (the PR tab and the PR-open guard see it
+/// immediately; the next sync pass fills files/commits/checks). Without a
+/// token the outcome degrades to the browser compare form — exactly the
+/// pre-#132 behaviour. `prep` comes from [`commit::prepare_pr`], run off
+/// the main thread by the caller.
+pub async fn create_pr_on_github(
+    store: &PrSyncStore,
+    workspace_id: &str,
+    prep: PrPrep,
+    gh_token: Option<String>,
+) -> Result<CreatePrOutcome, Error> {
+    let Some(gh_token) = gh_token else {
+        return commit::compare_outcome(&prep);
+    };
+    let Some((owner, repo)) = parse_github_slug(&prep.remote_url) else {
+        return Err(Error::Git(
+            "PR creation supports GitHub remotes only in Phase 0 (E8 wires other hosts)".into(),
+        ));
+    };
+    let client = GitHubClient::new(gh_token)?;
+    let base = client.default_branch(&owner, &repo).await?;
+    let title = if prep.title.is_empty() {
+        prep.branch.clone()
+    } else {
+        prep.title.clone()
+    };
+    let dto = client
+        .create_pull_request(&owner, &repo, &prep.branch, &base, &title, &prep.body)
+        .await?;
+    store.upsert(Some(workspace_id), &owner, &repo, &dto)?;
+    Ok(CreatePrOutcome {
+        url: dto.url.clone(),
+        pushed: prep.pushed,
+        created: true,
+    })
 }
 
 /// Sync targets currently in flight (per workspace) — the "no duplicate
@@ -277,6 +316,26 @@ mod tests {
         sync_workspace(&store, "w1", repo.path(), "origin")
             .await
             .unwrap();
+        assert!(store.list_for_workspace("w1").unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_pr_without_token_degrades_to_the_compare_form() {
+        let db: Arc<dyn Db> = SqliteDb::init(Some(":memory:")).unwrap();
+        let bus = Arc::new(BroadcastEventBus::new(16));
+        let store = PrSyncStore::new(db, bus as Arc<dyn EventBus>);
+        let prep = PrPrep {
+            branch: "feat/x".into(),
+            pushed: true,
+            remote_url: "git@github.com:o/r.git".into(),
+            title: "t".into(),
+            body: String::new(),
+        };
+        let out = create_pr_on_github(&store, "w1", prep, None).await.unwrap();
+        assert!(!out.created);
+        assert!(out.pushed);
+        assert_eq!(out.url, "https://github.com/o/r/compare/feat/x?expand=1");
+        // Nothing was written to the cache — no PR exists yet.
         assert!(store.list_for_workspace("w1").unwrap().is_empty());
     }
 

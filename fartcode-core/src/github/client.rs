@@ -159,6 +159,43 @@ impl GitHubClient {
         ))
     }
 
+    /// The repository's default branch — the base for created PRs (#132).
+    pub async fn default_branch(&self, owner: &str, repo: &str) -> Result<String, Error> {
+        #[derive(serde::Deserialize)]
+        struct GhRepo {
+            default_branch: String,
+        }
+        let url = format!("{}/repos/{owner}/{repo}", self.api_base);
+        let info = self
+            .get_json_opt::<GhRepo>(&url)
+            .await?
+            .ok_or_else(|| Error::Github(format!("repository {owner}/{repo} not found on GitHub")))?;
+        Ok(info.default_branch)
+    }
+
+    /// Creates a pull request (#132 — the "Commit, push & open PR" row).
+    /// Returns the created PR as the same DTO the sync engine stores
+    /// (sub-resources empty; the next sync pass fills them).
+    pub async fn create_pull_request(
+        &self,
+        owner: &str,
+        repo: &str,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: &str,
+    ) -> Result<PrDto, Error> {
+        let url = format!("{}/repos/{owner}/{repo}/pulls", self.api_base);
+        let payload = serde_json::json!({
+            "title": title,
+            "head": head,
+            "base": base,
+            "body": body,
+        });
+        let pr: GhPullRequest = self.post_json(&url, &payload).await?;
+        Ok(to_pr_dto(pr, vec![], vec![], vec![], vec![], vec![]))
+    }
+
     // -- transport ----------------------------------------------------------
 
     /// GET returning parsed JSON; 404 → `Ok(None)` (absence is data).
@@ -213,6 +250,65 @@ impl GitHubClient {
             .map_err(|e| Error::Github(format!("invalid JSON from GitHub: {e}")))
             .map(Some)
     }
+
+    /// POST with a JSON payload. Non-2xx surfaces GitHub's own error
+    /// message when the body carries one (422 validation — "A pull request
+    /// already exists", "No commits between ...", ...).
+    async fn post_json<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        payload: &serde_json::Value,
+    ) -> Result<T, Error> {
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", format!("Bearer {}", self.token))
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", "fartCode")
+            .json(payload)
+            .send()
+            .await
+            .map_err(|e| Error::Github(format!("request failed: {e}")))?;
+
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(Error::GithubAuth(
+                "GitHub rejected the token (401) — re-import with 'gh auth token'".into(),
+            ));
+        }
+        let body = response
+            .text()
+            .await
+            .map_err(|e| Error::Github(format!("response body: {e}")))?;
+        if !status.is_success() {
+            return Err(Error::Github(match github_error_detail(&body) {
+                Some(detail) => format!("GitHub refused the request ({status}): {detail}"),
+                None => format!("GitHub API error: {status}"),
+            }));
+        }
+        serde_json::from_str(&body)
+            .map_err(|e| Error::Github(format!("invalid JSON from GitHub: {e}")))
+    }
+}
+
+/// GitHub's human-readable error from an error body: `message` plus the
+/// first `errors[].message` when present (422 validation payloads).
+fn github_error_detail(body: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let message = value.get("message")?.as_str()?.to_string();
+    let detail = value
+        .get("errors")
+        .and_then(|e| e.as_array())
+        .and_then(|errors| {
+            errors
+                .iter()
+                .find_map(|e| e.get("message").and_then(|m| m.as_str()))
+        });
+    Some(match detail {
+        Some(detail) => format!("{message}: {detail}"),
+        None => message,
+    })
 }
 
 /// Percent-encodes the reserved characters GitHub rejects in query values
@@ -261,6 +357,20 @@ mod tests {
     fn url_encoding_keeps_slashes_and_escapes_the_rest() {
         assert_eq!(urlencoding("feat/x-y.z~1"), "feat/x-y.z~1");
         assert_eq!(urlencoding("a b&c#d"), "a%20b%26c%23d");
+    }
+
+    #[test]
+    fn github_error_detail_surfaces_message_and_first_error() {
+        let body = r#"{"message":"Validation Failed","errors":[{"message":"A pull request already exists for o:b."}]}"#;
+        assert_eq!(
+            github_error_detail(body).as_deref(),
+            Some("Validation Failed: A pull request already exists for o:b.")
+        );
+        assert_eq!(
+            github_error_detail(r#"{"message":"Not Found"}"#).as_deref(),
+            Some("Not Found")
+        );
+        assert_eq!(github_error_detail("not json"), None);
     }
 
     #[test]

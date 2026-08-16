@@ -9,6 +9,7 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-shell";
 import { gitCreatePr } from "../lib/tauri";
+import { usePr } from "../store/pr";
 import { useChanges } from "../store/changes";
 import { useCommitState } from "../store/commit-state";
 
@@ -58,9 +59,11 @@ export default function CommitCard({ workspaceId }: { workspaceId: string }) {
     if (then === "pr") {
       setPhase("creating-pr");
       try {
-        // Push-when-unpublished + PR-open guard live in the backend
-        // (fartcode_git::commit::create_pr); the browser finishes the PR.
+        // Push-when-unpublished + PR-open guard live in the backend, which
+        // creates the PR via the GitHub API when a token is configured
+        // (#132) — the compare form in the browser is the no-token fallback.
         const outcome = await gitCreatePr(workspaceId);
+        if (outcome.created) void usePr.getState().refetch(workspaceId);
         await open(outcome.url);
         setPhase("idle");
       } catch (e) {
@@ -154,7 +157,7 @@ export default function CommitCard({ workspaceId }: { workspaceId: string }) {
             }}
           >
             <span className="fc-krow-label">
-              {phase === "creating-pr" ? "Opening PR…" : "Commit, push & open PR"}
+              {phase === "creating-pr" ? "Creating PR…" : "Commit, push & open PR"}
             </span>
             <span className="fc-krow-key">⌘⇧↵</span>
           </div>

@@ -178,26 +178,43 @@ pub fn push(worktree: &Path, push_remote: &str) -> Result<PushOutcome, Error> {
     })
 }
 
-/// Result of [`create_pr`] — the URL the UI opens in the browser, and
-/// whether the branch had to be published first.
+/// Result of the create-PR flow — the URL the UI opens in the browser,
+/// whether the branch had to be published first, and whether the PR was
+/// actually created via the GitHub API (#132) or the URL is only the
+/// browser compare form (no token — the pre-#132 fallback).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreatePrOutcome {
     pub url: String,
     pub pushed: bool,
+    pub created: bool,
 }
 
-/// Phase 0 "Create PR" (E4-06 stub-level integration point): ensures the
+/// Everything the create-PR flow needs from git before it may talk to the
+/// GitHub API (#132): PR-open guard applied, branch published, remote URL,
+/// and the HEAD commit's message for the PR title/body. Blocking (git
+/// subprocesses) — callers keep it off the main thread.
+#[derive(Debug, Clone)]
+pub struct PrPrep {
+    pub branch: String,
+    pub pushed: bool,
+    pub remote_url: String,
+    /// HEAD commit subject — the PR title (empty falls back to the branch).
+    pub title: String,
+    /// HEAD commit body — the PR description.
+    pub body: String,
+}
+
+/// Git half of "Commit, push & open PR" (E4-06 → #132): ensures the
 /// branch is published (pushes first when it isn't — ticket: "pushes
 /// first when the branch isn't on the remote"), refuses when the PR-open
-/// guard says a PR already exists, and returns the GitHub compare URL for
-/// the branch. Full PR creation (GitHub API, draft flag, ...) lands with
-/// E4-07/E8; until then the browser does the last step.
-pub fn create_pr(
+/// guard says a PR already exists, and collects what the GitHub API call
+/// needs (remote URL, HEAD message).
+pub fn prepare_pr(
     worktree: &Path,
     push_remote: &str,
     lookup: &dyn PrLookup,
-) -> Result<CreatePrOutcome, Error> {
+) -> Result<PrPrep, Error> {
     let branch = CliGit
         .current_branch(worktree)?
         .ok_or_else(|| Error::Git("cannot create a PR from a detached HEAD".into()))?;
@@ -228,14 +245,55 @@ pub fn create_pr(
         true
     };
 
-    let remote_url = run(worktree, &["remote", "get-url", push_remote])?;
-    let url = github_compare_url(remote_url.trim(), &branch).ok_or_else(|| {
+    let remote_url = run(worktree, &["remote", "get-url", push_remote])?
+        .trim()
+        .to_string();
+    // HEAD commit message → PR title/body (what `gh pr create --fill` does).
+    let message = run(worktree, &["log", "-1", "--format=%B"])?;
+    let (title, body) = split_head_message(&message);
+
+    Ok(PrPrep {
+        branch,
+        pushed,
+        remote_url,
+        title,
+        body,
+    })
+}
+
+/// `%B` head message → (subject, body).
+fn split_head_message(message: &str) -> (String, String) {
+    let mut parts = message.trim().splitn(2, '\n');
+    let title = parts.next().unwrap_or("").trim().to_string();
+    let body = parts.next().unwrap_or("").trim().to_string();
+    (title, body)
+}
+
+/// The no-token fallback (and the whole pre-#132 story): maps the prep to
+/// the GitHub compare form URL — the browser does the last step.
+pub fn compare_outcome(prep: &PrPrep) -> Result<CreatePrOutcome, Error> {
+    let url = github_compare_url(&prep.remote_url, &prep.branch).ok_or_else(|| {
         Error::Git(
             "PR creation supports GitHub remotes only in Phase 0 (E8 wires other hosts)".into(),
         )
     })?;
+    Ok(CreatePrOutcome {
+        url,
+        pushed: prep.pushed,
+        created: false,
+    })
+}
 
-    Ok(CreatePrOutcome { url, pushed })
+/// [`prepare_pr`] + [`compare_outcome`]: the create-PR flow without a
+/// GitHub token. The API path is `crate::pr_sync::create_pr_on_github`
+/// (#132); it shares the same prep.
+pub fn create_pr(
+    worktree: &Path,
+    push_remote: &str,
+    lookup: &dyn PrLookup,
+) -> Result<CreatePrOutcome, Error> {
+    let prep = prepare_pr(worktree, push_remote, lookup)?;
+    compare_outcome(&prep)
 }
 
 /// Maps a GitHub remote URL (ssh or https) to
@@ -498,6 +556,7 @@ mod tests {
 
         let out = create_pr(repo.path(), "origin", &StubPrLookup).unwrap();
         assert!(!out.pushed);
+        assert!(!out.created);
         let branch = state(repo.path(), "origin", &StubPrLookup)
             .unwrap()
             .branch
@@ -505,6 +564,25 @@ mod tests {
         assert_eq!(
             out.url,
             format!("https://github.com/o/r/compare/{branch}?expand=1")
+        );
+    }
+
+    #[test]
+    fn prepare_pr_carries_head_message_as_title_and_body() {
+        let (repo, _bare) = remote_fixture();
+        std::fs::write(repo.path().join("tracked.txt"), "widget\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "Add widget\n\nLong body here"]);
+
+        let prep = prepare_pr(repo.path(), "origin", &StubPrLookup).unwrap();
+        assert!(prep.pushed); // unpublished branch → pushed first
+        assert_eq!(prep.title, "Add widget");
+        assert_eq!(prep.body, "Long body here");
+        assert!(prep.remote_url.contains("/"));
+
+        assert_eq!(
+            split_head_message("only subject\n"),
+            ("only subject".to_string(), String::new())
         );
     }
 

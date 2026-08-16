@@ -1030,6 +1030,9 @@ export function gitCommit(workspaceId: string, message: string): Promise<GitComm
 export interface GitCreatePrOutcomeDto {
   url: string;
   pushed: boolean;
+  /** True when the PR was created via the GitHub API (#132); false when
+   * `url` is only the browser compare form (no token fallback). */
+  created: boolean;
 }
 
 export function gitPush(workspaceId: string): Promise<GitPushOutcomeDto> {

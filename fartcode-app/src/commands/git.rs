@@ -191,24 +191,43 @@ pub async fn git_push(
     .await
 }
 
-/// Phase 0 "Commit & Create PR" backend (E4-06): pushes when the branch
-/// isn't published, applies the PR-open guard (sync cache), and returns the
-/// GitHub compare URL for the browser to finish the job.
+/// "Commit, push & open PR" backend (E4-06 → #132): pushes when the branch
+/// isn't published, applies the PR-open guard (sync cache), then creates
+/// the PR via the GitHub API when a token is available — the URL opened in
+/// the browser is the real PR. Without a token (or with
+/// `FARTCODE_PR_IN_BROWSER` set) it degrades to the GitHub compare form,
+/// the pre-#132 behaviour.
 #[tauri::command]
 pub async fn git_create_pr(
     app: State<'_, Arc<App>>,
     workspace_id: String,
 ) -> Result<fartcode_git::commit::CreatePrOutcome, String> {
     let app = app.inner().clone();
-    off_main_thread(move || {
-        let worktree = workspace_path(&app, &workspace_id)?;
-        let push_remote = project_push_remote(&app, &workspace_id)?;
-        let lookup = fartcode_git::pr_sync::CachedPrLookup {
-            store: app.pr_sync.clone(),
-        };
-        fartcode_git::commit::create_pr(&worktree, &push_remote, &lookup).map_err(String::from)
-    })
-    .await
+    // Blocking half (git subprocesses + keyring/gh token read) off-thread…
+    let (prep, gh_token) = {
+        let app = app.clone();
+        let workspace_id = workspace_id.clone();
+        off_main_thread(move || {
+            let worktree = workspace_path(&app, &workspace_id)?;
+            let push_remote = project_push_remote(&app, &workspace_id)?;
+            let lookup = fartcode_git::pr_sync::CachedPrLookup {
+                store: app.pr_sync.clone(),
+            };
+            let prep = fartcode_git::commit::prepare_pr(&worktree, &push_remote, &lookup)
+                .map_err(String::from)?;
+            let gh_token = if std::env::var_os("FARTCODE_PR_IN_BROWSER").is_some() {
+                None
+            } else {
+                fartcode_core::github::token::resolve_token().unwrap_or(None)
+            };
+            Ok((prep, gh_token))
+        })
+        .await?
+    };
+    // …then the async API half (reqwest — nothing blocking left).
+    fartcode_git::pr_sync::create_pr_on_github(&app.pr_sync, &workspace_id, prep, gh_token)
+        .await
+        .map_err(String::from)
 }
 
 /// Fetches the push remote (E4-08 footer).
@@ -746,8 +765,13 @@ mod tests {
             &["remote", "set-url", "origin", "git@github.com:o/r.git"],
         );
 
+        // Hermetic: force the no-token compare fallback so the test never
+        // reaches the GitHub API, whatever the machine's keyring/gh state.
+        std::env::set_var("FARTCODE_PR_IN_BROWSER", "1");
         let out = f.ok("git_create_pr", json!({ "workspaceId": f.workspace_id }));
+        std::env::remove_var("FARTCODE_PR_IN_BROWSER");
         assert_eq!(out["pushed"], false);
+        assert_eq!(out["created"], false);
         assert_eq!(
             out["url"],
             format!("https://github.com/o/r/compare/{}?expand=1", f.branch())
