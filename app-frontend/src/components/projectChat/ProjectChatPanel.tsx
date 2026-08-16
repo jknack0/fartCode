@@ -6,7 +6,8 @@
 // with the transcript/composer voice scoped under .pm-chat.
 
 import { useEffect, useState } from "react";
-import { acpStart, listProviders } from "../../lib/tauri";
+import { acpStart, getAppSetting, listProviders } from "../../lib/tauri";
+import type { ProviderDto } from "../../lib/tauri";
 import { hint } from "../../lib/useCommands";
 import { useConversations } from "../../store/conversations";
 import { useUi } from "../../store/ui";
@@ -15,6 +16,7 @@ import ConversationView from "../ConversationView";
 export default function ProjectChatPanel({ projectId }: { projectId: string }) {
   const ownerKey = `project:${projectId}`;
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [provider, setProvider] = useState<ProviderDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Re-render on keymap edits so the header chord stays live (E14).
   useUi((s) => s.bindingsVersion);
@@ -24,10 +26,18 @@ export default function ProjectChatPanel({ projectId }: { projectId: string }) {
     let cancelled = false;
     (async () => {
       try {
-        const provider = (await listProviders()).find((p) =>
+        // #126: honor the defaultAgent app setting when it names an
+        // ACP-capable provider; otherwise fall back to the first ACP entry
+        // in the registry (the PM chat has no TUI path).
+        const acp = (await listProviders()).filter((p) =>
           p.capabilities.includes("acp"),
         );
-        if (!provider) throw new Error("no ACP-capable provider available");
+        if (acp.length === 0) throw new Error("no ACP-capable provider available");
+        const wanted = (await getAppSetting("defaultAgent").catch(() => null)) as
+          | string
+          | null;
+        const provider = acp.find((p) => p.id === wanted) ?? acp[0];
+        if (!cancelled) setProvider(provider);
         const conv = await useConversations
           .getState()
           .ensureProject(projectId, provider.id);
@@ -48,7 +58,12 @@ export default function ProjectChatPanel({ projectId }: { projectId: string }) {
       <header className="project-chat-header">
         <span>PM</span>
         <span className="fc-changes-header-side">
-          <span className="pm-chat-scope">project root · {chord}</span>
+          <span className="pm-chat-scope">
+            {provider
+              ? `${provider.name}${provider.defaultModel ? ` · ${provider.defaultModel}` : ""} · `
+              : ""}
+            {`project root · ${chord}`}
+          </span>
           <button
             className="fc-sheet-close"
             aria-label="Close panel"
