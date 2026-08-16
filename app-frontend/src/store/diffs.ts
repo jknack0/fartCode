@@ -53,6 +53,9 @@ interface DiffsState {
   dirtyByTab: Record<string, true>;
   /** Last save failure per tab (rendered as a header chip). */
   saveErrorByTab: Record<string, string>;
+  /** Tabs whose disk content changed while the editor was dirty (#130 —
+   * the "changed on disk" badge; reload-vs-keep resolves it). */
+  externalByTab: Record<string, true>;
   /** Live text selection per tab (null when collapsed). */
   selectionByTab: Record<string, DiffSelection | null>;
   mode: DiffMode;
@@ -65,6 +68,8 @@ interface DiffsState {
   refresh: (tabId: string) => Promise<void>;
   markDirty: (tabId: string) => void;
   clearDirty: (tabId: string) => void;
+  markExternal: (tabId: string) => void;
+  clearExternal: (tabId: string) => void;
   /** ⌘S: write the editor's worktree-side document to disk. The refresh
    * after the write arrives via the watcher's files:changed event. */
   save: (tabId: string) => Promise<void>;
@@ -96,6 +101,7 @@ export const useDiffs = create<DiffsState>((set, get) => {
     byTab: {},
     dirtyByTab: {},
     saveErrorByTab: {},
+    externalByTab: {},
     selectionByTab: {},
     mode: "split",
     modeLoaded: false,
@@ -118,14 +124,24 @@ export const useDiffs = create<DiffsState>((set, get) => {
         const byTab = { ...s.byTab };
         const dirtyByTab = { ...s.dirtyByTab };
         const saveErrorByTab = { ...s.saveErrorByTab };
+        const externalByTab = { ...s.externalByTab };
         const selectionByTab = { ...s.selectionByTab };
         delete paramsByTab[tabId];
         delete previewTabs[tabId];
         delete byTab[tabId];
         delete dirtyByTab[tabId];
         delete saveErrorByTab[tabId];
+        delete externalByTab[tabId];
         delete selectionByTab[tabId];
-        return { paramsByTab, previewTabs, byTab, dirtyByTab, saveErrorByTab, selectionByTab };
+        return {
+          paramsByTab,
+          previewTabs,
+          byTab,
+          dirtyByTab,
+          saveErrorByTab,
+          externalByTab,
+          selectionByTab,
+        };
       }),
 
     ensure: async (tabId, params) => {
@@ -154,6 +170,19 @@ export const useDiffs = create<DiffsState>((set, get) => {
         return { dirtyByTab };
       }),
 
+    markExternal: (tabId) =>
+      set((s) =>
+        s.externalByTab[tabId] ? s : { externalByTab: { ...s.externalByTab, [tabId]: true } },
+      ),
+
+    clearExternal: (tabId) =>
+      set((s) => {
+        if (!s.externalByTab[tabId]) return s;
+        const externalByTab = { ...s.externalByTab };
+        delete externalByTab[tabId];
+        return { externalByTab };
+      }),
+
     save: async (tabId) => {
       const params = get().paramsByTab[tabId];
       const view = getDiffView(tabId);
@@ -165,6 +194,9 @@ export const useDiffs = create<DiffsState>((set, get) => {
           diffViewWorktreeDoc(view),
         );
         get().clearDirty(tabId);
+        // Saving overwrites the disk version deliberately — any pending
+        // divergence badge is resolved (#130).
+        get().clearExternal(tabId);
         set((s) => {
           if (!s.saveErrorByTab[tabId]) return s;
           const saveErrorByTab = { ...s.saveErrorByTab };

@@ -88,6 +88,37 @@
   cursor: help;
 }
 
+/* #130: an external write landed while the tab was dirty — divergence
+   warning in the working amber, with mono-word reload/keep actions. */
+.diff-header .diff-badge.external {
+  background: none;
+  color: var(--status-in-progress);
+  cursor: help;
+}
+
+.diff-header .diff-external-actions {
+  flex: none;
+  display: flex;
+  gap: 10px;
+}
+
+.diff-header .diff-external-actions button {
+  flex: none;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.diff-header .diff-external-actions button:hover {
+  color: var(--foreground);
+}
+
 .diff-header .diff-save-error {
   flex: none;
   padding: 0;

@@ -39,7 +39,20 @@ import { useDiffs, type DiffParams } from "../store/diffs";
 import { useLineComments } from "../store/line-comments";
 import { useTabs, type PaneId } from "../store/tabs";
 import { useUi } from "../store/ui";
-import type { LineCommentDto } from "../lib/tauri";
+import type { FileDiffDto, LineCommentDto } from "../lib/tauri";
+
+// #130: did the *disk* content behind this diff change relative to what
+// the mounted view was built from? A refresh while dirty always differs
+// from the editor (the user's edits), so payloads are compared instead.
+function sameDiskContent(a: FileDiffDto, b: FileDiffDto | null): boolean {
+  return (
+    !!b &&
+    a.oldExists === b.oldExists &&
+    a.newExists === b.newExists &&
+    (a.oldContent ?? "") === (b.oldContent ?? "") &&
+    (a.newContent ?? "") === (b.newContent ?? "")
+  );
+}
 
 function formatSize(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -280,6 +293,7 @@ export default function DiffView({
     (parsed ? { ...parsed, origPath: null } : null);
   const entry = useDiffs((s) => s.byTab[tabId]);
   const dirty = useDiffs((s) => !!s.dirtyByTab[tabId]);
+  const external = useDiffs((s) => !!s.externalByTab[tabId]);
   const saveError = useDiffs((s) => s.saveErrorByTab[tabId] ?? null);
   const mode = useDiffs((s) => s.mode);
   const setMode = useDiffs((s) => s.setMode);
@@ -296,6 +310,10 @@ export default function DiffView({
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | MergeView | null>(null);
+  // The payload the mounted view was built from (#130): the dirty-deferral
+  // branch compares against it to tell a genuine external write apart from
+  // an unrelated refresh event.
+  const builtPayloadRef = useRef<FileDiffDto | null>(null);
   const markerMountsRef = useRef<MarkerMount[]>([]);
   const [buildError, setBuildError] = useState<string | null>(null);
   const [thread, setThread] = useState<"before" | "after" | null>(null);
@@ -378,10 +396,20 @@ export default function DiffView({
         current.b === worktree &&
         (current.a === null || current.a === baseline)
       ) {
+        // Editor and disk agree — any pending divergence badge is stale.
+        builtPayloadRef.current = payload;
+        useDiffs.getState().clearExternal(tabId);
         return;
       }
-      // An in-progress edit wins over a clobbering rebuild.
-      if (useDiffs.getState().dirtyByTab[tabId]) return;
+      // An in-progress edit wins over a clobbering rebuild — but when the
+      // disk content genuinely moved under the dirty editor (#130), badge
+      // the header so the next ⌘S is an informed overwrite.
+      if (useDiffs.getState().dirtyByTab[tabId]) {
+        if (!sameDiskContent(payload, builtPayloadRef.current)) {
+          useDiffs.getState().markExternal(tabId);
+        }
+        return;
+      }
     }
 
     let cancelled = false;
@@ -476,6 +504,7 @@ export default function DiffView({
         previous?.destroy();
         if (previous) unregisterDiffView(tabId, previous);
         viewRef.current = view;
+        builtPayloadRef.current = payload;
         registerDiffView(tabId, view);
 
         // Register comment-gutter mounts so the comments effect can
@@ -507,7 +536,9 @@ export default function DiffView({
       cancelled = true;
       markerMountsRef.current = [];
     };
-  }, [tabId, active, payload, mode, editable]);
+    // `external` is a dependency so resolving the badge (reload/keep)
+    // re-runs the deferral logic — reload falls through to a rebuild.
+  }, [tabId, active, payload, mode, editable, external]);
 
   // Tear the view down on unmount (the keyed effect above only destroys
   // when replacing, so hidden/unbuilt tabs are covered here).
@@ -546,6 +577,36 @@ export default function DiffView({
         {payload && !payload.oldExists && <span className="diff-badge added">added</span>}
         {payload && !payload.newExists && <span className="diff-badge deleted">deleted</span>}
         {dirty && <span className="diff-badge dirty" title="Unsaved changes — ⌘S to save">●</span>}
+        {external && (
+          <>
+            <span
+              className="diff-badge external"
+              title="This file changed on disk while you have unsaved edits — reload discards your edits; keep leaves them (⌘S then overwrites the disk version)"
+            >
+              changed on disk
+            </span>
+            <span className="diff-external-actions">
+              <button
+                onClick={() => {
+                  useDiffs.getState().clearDirty(tabId);
+                  useDiffs.getState().clearExternal(tabId);
+                }}
+                title="Discard your unsaved edits and show the disk version"
+              >
+                reload
+              </button>
+              <button
+                onClick={() => {
+                  builtPayloadRef.current = payload;
+                  useDiffs.getState().clearExternal(tabId);
+                }}
+                title="Keep your unsaved edits — ⌘S will overwrite the disk version"
+              >
+                keep
+              </button>
+            </span>
+          </>
+        )}
         {saveError && (
           <span className="diff-save-error" title={saveError}>
             save failed
