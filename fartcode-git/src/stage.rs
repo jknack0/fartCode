@@ -43,13 +43,16 @@ pub fn unstage(worktree: &Path, paths: &[String]) -> Result<(), Error> {
 }
 
 /// Reverts paths to their index state. Tracked paths go through
-/// `git restore --worktree -- <paths>`; untracked paths are deleted from
-/// disk (the only way to "discard" something git never recorded) — the UI
-/// confirms before calling this. A path that is neither tracked nor
-/// present on disk is an error (typo guard).
+/// `git restore --worktree -- <paths>`; untracked paths are moved into the
+/// worktree's holding pen (`.fartCode/trash/<epoch-millis>/<path>`) instead
+/// of being deleted, so a mistaken discard is recoverable by hand (#129).
+/// The pen carries a `*` gitignore so trashed files never resurface as
+/// untracked changes. A path that is neither tracked nor present on disk
+/// is an error (typo guard).
 pub fn discard(worktree: &Path, paths: &[String]) -> Result<(), Error> {
     validate_paths(paths)?;
     let mut tracked: Vec<&str> = Vec::new();
+    let mut batch: Option<std::path::PathBuf> = None;
     for path in paths {
         if crate::CliGit.is_tracked(worktree, path)? {
             tracked.push(path);
@@ -60,11 +63,19 @@ pub fn discard(worktree: &Path, paths: &[String]) -> Result<(), Error> {
                     "path is neither tracked nor on disk: {path}"
                 )));
             }
-            if full.is_dir() {
-                std::fs::remove_dir_all(&full)?;
-            } else {
-                std::fs::remove_file(&full)?;
+            let batch_dir = match &batch {
+                Some(dir) => dir.clone(),
+                None => {
+                    let dir = new_trash_batch(worktree)?;
+                    batch = Some(dir.clone());
+                    dir
+                }
+            };
+            let dest = batch_dir.join(path);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
             }
+            std::fs::rename(&full, &dest)?;
         }
     }
     if !tracked.is_empty() {
@@ -73,6 +84,35 @@ pub fn discard(worktree: &Path, paths: &[String]) -> Result<(), Error> {
         git_stdout(worktree, &args)?;
     }
     Ok(())
+}
+
+/// Creates a fresh per-discard batch directory under the worktree's trash
+/// pen (`.fartCode/trash/`). `.fartCode/` is fartCode's gitignored internals
+/// dir; the pen additionally writes its own `*` gitignore so it stays
+/// invisible to git even in repos that never ignored `.fartCode/`. Batch
+/// names are epoch millis, `-<n>` suffixed on collision.
+fn new_trash_batch(worktree: &Path) -> Result<std::path::PathBuf, Error> {
+    let root = worktree.join(".fartCode").join("trash");
+    std::fs::create_dir_all(&root)?;
+    std::fs::write(root.join(".gitignore"), "*\n")?;
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    for n in 0u32.. {
+        let name = if n == 0 {
+            millis.to_string()
+        } else {
+            format!("{millis}-{n}")
+        };
+        let dir = root.join(name);
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    unreachable!("u32 batch suffixes exhausted")
 }
 
 fn validate_paths(paths: &[String]) -> Result<(), Error> {
@@ -146,8 +186,19 @@ mod tests {
         assert_eq!(snap.unstaged[0].status, ChangeStatus::Added); // untracked again
     }
 
+    /// Resolves a worktree-relative path inside the (single) trash batch.
+    fn trashed(worktree: &Path, rel: &str) -> std::path::PathBuf {
+        let root = worktree.join(".fartCode").join("trash");
+        let batch = std::fs::read_dir(&root)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .find(|e| e.file_type().unwrap().is_dir())
+            .expect("trash batch dir");
+        batch.path().join(rel)
+    }
+
     #[test]
-    fn discard_restores_modified_and_deletes_untracked() {
+    fn discard_restores_modified_and_trashes_untracked() {
         let repo = repo_fixture();
         std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
         std::fs::write(repo.path().join("untracked.txt"), "bye\n").unwrap();
@@ -157,7 +208,30 @@ mod tests {
             std::fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
             "one\ntwo\nthree\n"
         );
+        // Untracked file is moved to the holding pen, not destroyed (#129).
         assert!(!repo.path().join("untracked.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(trashed(repo.path(), "untracked.txt")).unwrap(),
+            "bye\n"
+        );
+        // The pen self-ignores: status stays clean despite files in it.
+        let snap = status(repo.path()).unwrap();
+        assert!(snap.staged.is_empty() && snap.unstaged.is_empty());
+    }
+
+    #[test]
+    fn discard_trashes_untracked_directory_recoverably() {
+        let repo = repo_fixture();
+        let dir = repo.path().join("newdir");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("inner.txt"), "keep me\n").unwrap();
+
+        discard(repo.path(), &paths(&["newdir"])).unwrap();
+        assert!(!dir.exists());
+        assert_eq!(
+            std::fs::read_to_string(trashed(repo.path(), "newdir/inner.txt")).unwrap(),
+            "keep me\n"
+        );
         let snap = status(repo.path()).unwrap();
         assert!(snap.staged.is_empty() && snap.unstaged.is_empty());
     }

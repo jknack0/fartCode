@@ -445,7 +445,7 @@ function DiscardConfirm({
         Discard changes to <span className="fc-confirm-path">{target.path}</span>?
         <span className="fc-confirm-sub">
           {target.hasUntracked
-            ? "The file is untracked — discarding deletes it."
+            ? "The file is untracked — it moves to .fartCode/trash."
             : "Unstaged edits to this file are lost."}
         </span>
       </div>
