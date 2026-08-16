@@ -26,9 +26,12 @@ export default function TicketEditCard({
   projectId: string;
 }) {
   const [state, setState] = useState<CardState>({ kind: "loading" });
+  // #125: second-confirm gate for an empty-acceptance edit (clears all criteria).
+  const [confirmClear, setConfirmClear] = useState(false);
   const { busy: applying, error, run } = useAsyncSubmit();
 
   useEffect(() => {
+    setConfirmClear(false);
     const edit = parseTicketEdit(raw);
     if (!edit) {
       setState({ kind: "invalid" });
@@ -62,7 +65,18 @@ export default function TicketEditCard({
 
   const { edit, issue } = state;
 
+  // #125: "acceptance": [] is a FULL replacement that wipes every existing
+  // criterion — never present it as a plain "(0)"; make apply a two-step.
+  const clearsAcceptance =
+    edit.acceptance !== null &&
+    edit.acceptance.length === 0 &&
+    (issue?.acceptance.length ?? 0) > 0;
+
   const apply = () => {
+    if (clearsAcceptance && !confirmClear) {
+      setConfirmClear(true);
+      return;
+    }
     const patch: Parameters<typeof issueUpdate>[1] = {};
     if (edit.title !== null) patch.title = edit.title;
     if (edit.body !== null) patch.body = edit.body;
@@ -112,7 +126,11 @@ export default function TicketEditCard({
       {edit.acceptance !== null && (
         <div className="ticket-edit-field">
           <span className="ticket-edit-label">
-            Acceptance ({edit.acceptance.length})
+            {edit.acceptance.length === 0
+              ? issue && issue.acceptance.length > 0
+                ? `Acceptance — clears all ${issue.acceptance.length} criteria`
+                : "Acceptance — empty"
+              : `Acceptance (${edit.acceptance.length})`}
           </span>
           <ul className="ticket-edit-ac">
             {edit.acceptance.map((ac, i) => (
@@ -124,13 +142,20 @@ export default function TicketEditCard({
       {issue === null && (
         <p className="error">Issue not found on this board — apply will fail.</p>
       )}
+      {confirmClear && (
+        <p className="error">
+          Applying clears all {issue?.acceptance.length} acceptance criteria —
+          apply again to confirm.
+        </p>
+      )}
       {error && <p className="error">{error}</p>}
       <div className="proposal-card-footer">
         <button className="proposal-dismiss" onClick={dismiss}>
           esc dismiss
         </button>
         <button className="proposal-approve" disabled={applying} onClick={apply}>
-          <span className="key">↵</span> {applying ? "applying…" : "apply"}
+          <span className="key">↵</span>{" "}
+          {applying ? "applying…" : confirmClear ? "confirm clear" : "apply"}
         </button>
       </div>
     </div>
