@@ -13,6 +13,7 @@
 // "<provider> · …" (no chip).
 import { useEffect, useState } from "react";
 import { useLineComments } from "../store/line-comments";
+import { ConfirmDelete } from "./Modals";
 import { useSidebar } from "../store/sidebar";
 import { commentAuthor, type LineCommentDto } from "../lib/tauri";
 
@@ -35,6 +36,9 @@ export default function CommentThread({
 }) {
   const comments = useLineComments((s) => s.byTask[taskId] ?? []);
   const tasksByProject = useSidebar((s) => s.tasksByProject);
+  // #131: delete is guarded — the pending comment gets the fc-confirm
+  // overlay (reused ConfirmDelete) instead of vanishing on one click.
+  const [pendingDelete, setPendingDelete] = useState<LineCommentDto | null>(null);
 
   // Elapsed meta ("· 1m") stays fresh without any store churn: a slow
   // re-render tick, not an animation.
@@ -62,7 +66,19 @@ export default function CommentThread({
   }
 
   return (
-    <div className="lc-thread" onKeyDown={(e) => e.key === "Escape" && onClose()}>
+    <div
+      className="lc-thread"
+      onKeyDown={(e) => {
+        if (e.key !== "Escape") return;
+        // Esc peels one layer: pending confirm first, then the thread.
+        if (pendingDelete) {
+          e.stopPropagation();
+          setPendingDelete(null);
+        } else {
+          onClose();
+        }
+      }}
+    >
       <div className="lc-thread-header">
         <span className="lc-thread-label">comments</span>
         <span className="lc-thread-path" title={filePath}>
@@ -75,8 +91,22 @@ export default function CommentThread({
       </div>
       {threads.length === 0 && <p className="lc-empty">no comments on this side</p>}
       {threads.map((c) => (
-        <CommentRow key={c.id} comment={c} taskById={taskById} />
+        <CommentRow
+          key={c.id}
+          comment={c}
+          taskById={taskById}
+          onDelete={() => setPendingDelete(c)}
+        />
       ))}
+      {pendingDelete && (
+        <ConfirmDelete
+          title="Delete comment"
+          name={truncate(pendingDelete.content)}
+          message={deleteMessage(pendingDelete, taskById)}
+          onConfirm={() => useLineComments.getState().remove(pendingDelete.id)}
+          onClose={() => setPendingDelete(null)}
+        />
+      )}
     </div>
   );
 }
@@ -84,9 +114,11 @@ export default function CommentThread({
 function CommentRow({
   comment,
   taskById,
+  onDelete,
 }: {
   comment: LineCommentDto;
   taskById: Record<string, LinkedTask>;
+  onDelete: () => void;
 }) {
   const linked = comment.linkedTaskId ? taskById[comment.linkedTaskId] : null;
   const switchTo = useSidebar((s) => s.switchToTask);
@@ -156,7 +188,7 @@ function CommentRow({
             <button
               className="lc-action danger"
               title="Delete comment"
-              onClick={() => void useLineComments.getState().remove(comment.id)}
+              onClick={onDelete}
             >
               ✗
             </button>
@@ -166,6 +198,25 @@ function CommentRow({
       </div>
     </div>
   );
+}
+
+/** #131: the confirm body must name what the delete orphans — the linked
+ * task survives but loses the comment that spawned it. */
+function deleteMessage(
+  comment: LineCommentDto,
+  taskById: Record<string, LinkedTask>,
+): string {
+  if (comment.linkedTaskId) {
+    const linked = taskById[comment.linkedTaskId];
+    return linked
+      ? `Linked task "${linked.name}" is kept but loses the comment that spawned it.`
+      : "Its linked task was already deleted; only the note is removed.";
+  }
+  return "This can't be undone.";
+}
+
+function truncate(s: string, n = 40): string {
+  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 }
 
 /** Meta vocabulary: the design says "running", the store says
