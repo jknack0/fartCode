@@ -54,7 +54,9 @@ pub struct CommitState {
     /// open PR. (E8 supplies the repository URL; Phase 0 assumes it.)
     pub can_create_pr: bool,
     /// Upstream shorthand (`origin/feat-x`) when the branch tracks one —
-    /// E4-08 footer: pull/push affordances key off this.
+    /// rendered with `ahead`/`behind` as the footer hint line's `↑n ↓n
+    /// <upstream>` sync segment (#133); the pull/push verbs themselves
+    /// moved to the ⌘K palette.
     pub upstream: Option<String>,
     /// Commits ahead of / behind the upstream (0/0 without one).
     pub ahead: u32,

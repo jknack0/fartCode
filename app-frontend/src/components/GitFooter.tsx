@@ -1,6 +1,7 @@
 // Changes-panel footer (restyled to design_handoff_v2 §5d): the everyday
 // git verbs (fetch/pull/push/publish) left this footer for the ⌘K palette —
-// what remains is the mono hint line, the add-remote mini-form for the
+// what remains is the mono hint line (prefixed, when an upstream exists,
+// by the ↑n ↓n <upstream> sync segment — #133), the add-remote mini-form for the
 // no-remote edge (still driven by the shared CommitState DTO), and inline
 // errors (the repo has no toast system).
 import { useState } from "react";
@@ -80,6 +81,7 @@ export default function GitFooter({ workspaceId }: { workspaceId: string }) {
         </p>
       )}
       <p className="fc-footer-hint">
+        {st?.upstream != null && `↑${st.ahead} ↓${st.behind} ${st.upstream} · `}
         d discards after a confirm · fetch / pull / push in {paletteKey}
       </p>
     </div>
